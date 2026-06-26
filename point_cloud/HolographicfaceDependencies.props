@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="UserMacros">
+    <HolographicfaceThirdPartyRoot>$(MSBuildThisFileDirectory)..\</HolographicfaceThirdPartyRoot>
+    <HolographicfaceDependencyPath>$(HolographicfaceThirdPartyRoot)PCL 1.12.1-rc1\bin;$(HolographicfaceThirdPartyRoot)PCL 1.12.1-rc1\3rdParty\VTK\bin;$(HolographicfaceThirdPartyRoot)PCL 1.12.1-rc1\3rdParty\FLANN\bin;$(HolographicfaceThirdPartyRoot)PCL 1.12.1-rc1\3rdParty\Qhull\bin;$(HolographicfaceThirdPartyRoot)PCL 1.12.1-rc1\3rdParty\OpenNI2\Tools;$(HolographicfaceThirdPartyRoot)opencv450\opencv\build\x64\vc15\bin;$(HolographicfaceThirdPartyRoot)OSG365\bin;$(HolographicfaceThirdPartyRoot)OE32\bin</HolographicfaceDependencyPath>
+    <HolographicfaceDebuggerEnvironment>PATH=$(HolographicfaceDependencyPath);%PATH%</HolographicfaceDebuggerEnvironment>
+    <HolographicfaceCopyRuntimeDlls>false</HolographicfaceCopyRuntimeDlls>
+  </PropertyGroup>
+  <PropertyGroup>
+    <LocalDebuggerEnvironment>$(HolographicfaceDebuggerEnvironment)</LocalDebuggerEnvironment>
+    <LocalDebuggerMergeEnvironment>true</LocalDebuggerMergeEnvironment>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(HolographicfaceCopyRuntimeDlls)'=='true'">
+    <HolographicfaceRuntimeDll Include="$(HolographicfaceThirdPartyRoot)PCL 1.12.1-rc1\bin\*.dll" />
+    <HolographicfaceRuntimeDll Include="$(HolographicfaceThirdPartyRoot)PCL 1.12.1-rc1\3rdParty\VTK\bin\*.dll" />
+    <HolographicfaceRuntimeDll Include="$(HolographicfaceThirdPartyRoot)PCL 1.12.1-rc1\3rdParty\FLANN\bin\*.dll" />
+    <HolographicfaceRuntimeDll Include="$(HolographicfaceThirdPartyRoot)PCL 1.12.1-rc1\3rdParty\Qhull\bin\*.dll" />
+    <HolographicfaceRuntimeDll Include="$(HolographicfaceThirdPartyRoot)PCL 1.12.1-rc1\3rdParty\OpenNI2\Tools\*.dll" />
+    <HolographicfaceRuntimeDll Include="$(HolographicfaceThirdPartyRoot)opencv450\opencv\build\x64\vc15\bin\*.dll" />
+    <HolographicfaceRuntimeDll Include="$(HolographicfaceThirdPartyRoot)OSG365\bin\*.dll" />
+    <HolographicfaceRuntimeDll Include="$(HolographicfaceThirdPartyRoot)OE32\bin\*.dll" />
+  </ItemGroup>
+  <Target Name="CopyHolographicfaceRuntimeDlls" AfterTargets="Build" Condition="'$(HolographicfaceCopyRuntimeDlls)'=='true' and '$(ConfigurationType)'=='Application' and '$(TargetDir)'!=''">
+    <Message Text="Copying Holographicface runtime DLLs to $(TargetDir)" Importance="High" />
+    <Copy SourceFiles="@(HolographicfaceRuntimeDll)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" Retries="2" RetryDelayMilliseconds="1000" />
+  </Target>
+</Project>

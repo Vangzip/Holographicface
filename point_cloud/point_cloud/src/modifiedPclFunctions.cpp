@@ -242,7 +242,7 @@ int testsaveOBJFile(const std::string &file_name, const pcl::TextureMesh &tex_me
     m_fs << "Kd "<< tex_mesh.tex_materials[m].tex_Kd.r << " " << tex_mesh.tex_materials[m].tex_Kd.g << " " << tex_mesh.tex_materials[m].tex_Kd.b << std::endl; // defines the diffuse color of the material to be (r,g,b).
     m_fs << "Ks "<< tex_mesh.tex_materials[m].tex_Ks.r << " " << tex_mesh.tex_materials[m].tex_Ks.g << " " << tex_mesh.tex_materials[m].tex_Ks.b << std::endl; // defines the specular color of the material to be (r,g,b). This color shows up in highlights.
     //m_fs << "d " << tex_mesh.tex_materials[m].tex_d << std::endl; // defines the transparency of the material to be alpha.
-    m_fs << "Tr " << 0.0 << std::endl; // defines the shininess of the material to be s.
+    m_fs << "d " << 1.0 << std::endl; // keep exported textures fully opaque for OBJ readers such as OSG.
     m_fs << "Ns "<< tex_mesh.tex_materials[m].tex_Ns  << std::endl; // defines the shininess of the material to be s.
     m_fs << "illum "<< tex_mesh.tex_materials[m].tex_illum << std::endl; // denotes the illumination model used by the material.
     // illum = 1 indicates a flat material with no specular highlights, so the value of Ks is not used.

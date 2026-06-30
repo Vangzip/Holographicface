@@ -142,9 +142,9 @@ int main(int argc, char *argv[]){
     //viewer->setUpViewOnSingleScreen();
     
     //»ÒÉ«±³¾°
-    //viewer->getCamera()->setClearColor(osg::Vec4f(0.3f,0.3f,0.3f, 1.0f));
+    viewer->getCamera()->setClearColor(osg::Vec4f(0.3f,0.3f,0.3f, 1.0f));
 	//ºÚÉ«±³¾°
-    viewer->getCamera()->setClearColor(osg::Vec4f(0.0f, 0.0f, 0.0f, 1.0f));
+    //viewer->getCamera()->setClearColor(osg::Vec4f(0.0f, 0.0f, 0.0f, 1.0f));
     setMasterViewerGraphicsContext(viewer, 100, 100, resolution, resolution);
 
 #if 0	
@@ -167,9 +167,9 @@ int main(int argc, char *argv[]){
 
     viewer->getCamera()->setPostDrawCallback(new CaptureDrawCallback(pImage, resolution));
 
-    //osg::StateSet* state = viewer->getCamera()->getOrCreateStateSet();
+    osg::StateSet* state = viewer->getCamera()->getOrCreateStateSet();
     //state->setMode(GL_BLEND, osg::StateAttribute::ON);
-    //state->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::PROTECTED);
+    state->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::PROTECTED);
 
 
     list<string> listfile;

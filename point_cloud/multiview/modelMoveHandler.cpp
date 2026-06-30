@@ -256,7 +256,9 @@ bool modelMoveHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIAction
                                            //ss >> filedir;                                           
 
 										   //cout << filedir << endl;
-                                           osgDB::writeImageFile(*m_pImage, filedir);//图片写入到当前程序目录下
+                                           osg::ref_ptr<osg::Image> outputImage = new osg::Image(*m_pImage, osg::CopyOp::DEEP_COPY_ALL);
+                                           outputImage->flipVertical();
+                                           osgDB::writeImageFile(*outputImage, filedir);//图片写入到当前程序目录下
                                            num++;
 
     }break;

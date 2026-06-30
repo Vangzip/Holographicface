@@ -1,4 +1,4 @@
-
+﻿
 
 #include "ConverPointCloud.h"
 #include "poissonmesh.hpp"
@@ -52,8 +52,8 @@ string ConverPointCloud::buildMeshOutputPath(const string &srcfile, const string
 // Method:    parseArguments
 // Access:    private 
 // Returns:   bool
-// Describe:  生成obj模型是只需要focus参数
-// Parameter: const string & config 配置文件路径
+// Describe:  鐢熸垚obj妯″瀷鏄彧闇€瑕乫ocus鍙傛暟
+// Parameter: const string & config 閰嶇疆鏂囦欢璺緞
 //************************************
 bool ConverPointCloud::parseArguments(const string &config){
 
@@ -188,10 +188,72 @@ bool ConverPointCloud::parseArguments(const string &config){
 
 
 #if 1
-//泊松算法生成mesh
+//娉婃澗绠楁硶鐢熸垚mesh
 bool ConverPointCloud::createPoissonMesh(const string &filepath){
     std::string srcfile = filepath;
 
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_rgb(new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_rgb_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+
+    if (pcl::io::loadPLYFile(filepath, *cloud_rgb) != 0){
+        cout << COUT_PREFIX << "load ply false. file = " << filepath << endl;
+        return false;
+    }
+
+    cout << COUT_PREFIX << "read ply file ok . point size = " << cloud_rgb->points.size() << endl;
+
+    if (m_leafsize != 0)
+    {
+        pcl::VoxelGrid<pcl::PointXYZRGB> sor;
+        sor.setInputCloud(cloud_rgb);
+        sor.setLeafSize(m_leafsize, m_leafsize, m_leafsize);
+        sor.filter(*cloud_rgb_filtered);
+
+        cout << COUT_PREFIX << "VoxelGrid file ok . point size = " << cloud_rgb_filtered->points.size() << endl;
+        cloud_rgb = cloud_rgb_filtered;
+    }
+
+    cout << COUT_PREFIX << "Calculating normals..." << endl;
+
+    pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+    pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>* ne = new pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>;
+    pcl::search::KdTree<pcl::PointXYZRGB>::Ptr normal_tree(new pcl::search::KdTree<pcl::PointXYZRGB>);
+
+    normal_tree->setInputCloud(cloud_rgb);
+    ne->setInputCloud(cloud_rgb);
+    ne->setSearchMethod(normal_tree);
+    ne->setRadiusSearch(0.01);
+    ne->compute(*normals);
+
+    if (normals->points.size() != cloud_rgb->points.size())
+    {
+        cout << COUT_PREFIX << "Warning: Normal calculation failed, size mismatch." << endl;
+        return false;
+    }
+
+    pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGBNormal>);
+    cloud->points.resize(cloud_rgb->points.size());
+    cloud->width = cloud_rgb->width;
+    cloud->height = cloud_rgb->height;
+    cloud->is_dense = cloud_rgb->is_dense;
+
+    for (size_t i = 0; i < cloud_rgb->points.size(); ++i)
+    {
+        cloud->points[i].x = cloud_rgb->points[i].x;
+        cloud->points[i].y = cloud_rgb->points[i].y;
+        cloud->points[i].z = cloud_rgb->points[i].z;
+        cloud->points[i].r = cloud_rgb->points[i].r;
+        cloud->points[i].g = cloud_rgb->points[i].g;
+        cloud->points[i].b = cloud_rgb->points[i].b;
+
+        cloud->points[i].normal_x = normals->points[i].normal_x;
+        cloud->points[i].normal_y = normals->points[i].normal_y;
+        cloud->points[i].normal_z = normals->points[i].normal_z;
+    }
+
+    cout << COUT_PREFIX << "Normals calculated successfully." << endl;
+
+#if 0
     pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGBNormal>);
     pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGBNormal>);
 
@@ -204,10 +266,9 @@ bool ConverPointCloud::createPoissonMesh(const string &filepath){
 
     if (m_leafsize != 0)
     {
-        // 创建滤波器对象
-        pcl::VoxelGrid<PointXYZRGBNormal> sor;//滤波处理对象
+        // 鍒涘缓婊ゆ尝鍣ㄥ璞?        pcl::VoxelGrid<PointXYZRGBNormal> sor;//婊ゆ尝澶勭悊瀵硅薄
         sor.setInputCloud(cloud);
-        sor.setLeafSize(m_leafsize, m_leafsize, m_leafsize);//设置滤波器处理时采用的体素大小的参数   0.00015 = 大约 9:1 
+        sor.setLeafSize(m_leafsize, m_leafsize, m_leafsize);//璁剧疆婊ゆ尝鍣ㄥ鐞嗘椂閲囩敤鐨勪綋绱犲ぇ灏忕殑鍙傛暟   0.00015 = 澶х害 9:1 
         sor.filter(*cloud_filtered);
 
         cout << COUT_PREFIX << "VoxelGrid file ok . point size = " << cloud_filtered->points.size() << endl;
@@ -281,6 +342,7 @@ bool ConverPointCloud::createPoissonMesh(const string &filepath){
     else {
         cout << COUT_PREFIX << "Point cloud already has normals." << endl;
     }
+#endif
 
 #if 0
 
@@ -292,7 +354,7 @@ bool ConverPointCloud::createPoissonMesh(const string &filepath){
 
     //
     // Init object (second point type is for the normals, even if unused)
-    //最小二乘法迭代拟合平滑点云
+    //鏈€灏忎簩涔樻硶杩唬鎷熷悎骞虫粦鐐逛簯
     for (size_t i = 0; i < m_normalsIter1; i++)
     {
         normalsMovingLeastSquares(cloud, mls_points);
@@ -305,40 +367,33 @@ bool ConverPointCloud::createPoissonMesh(const string &filepath){
         return 0;
     }
 
-    //法线拟合 compite normals from point // meshlab function
+    //娉曠嚎鎷熷悎 compite normals from point // meshlab function
     fitNormal(mls_points);
     nearestKSearchNormal(mls_points);
     //pcl::io::savePLYFile(srcfile.substr(0, srcfile.find_last_of("_"))+"_mls_1.ply", mls_points);
     
     cout << COUT_PREFIX << "MLS normal ok . point size = " << mls_points.points.size() << endl;
 
-    // 创建同时包含点和法向的数据结构的指针
+    // 鍒涘缓鍚屾椂鍖呭惈鐐瑰拰娉曞悜鐨勬暟鎹粨鏋勭殑鎸囬拡
     pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr cloud_with_normals(new pcl::PointCloud<pcl::PointXYZRGBNormal>(mls_points));
 #endif
     pcl::search::KdTree<pcl::PointXYZRGBNormal>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZRGBNormal>);
     pcl::PolygonMesh triangles;
     tree->setInputCloud(cloud);
 
-    // 创建另一个kdtree用于重建
-    //为kdtree输入点云数据,该点云数据类型为点和法向
+    // 鍒涘缓鍙︿竴涓猭dtree鐢ㄤ簬閲嶅缓
+    //涓簁dtree杈撳叆鐐逛簯鏁版嵁,璇ョ偣浜戞暟鎹被鍨嬩负鐐瑰拰娉曞悜
     pcl::Poisson<pcl::PointXYZRGBNormal> pn;
-    pn.setConfidence(true);    //是否使用法向量的大小作为置信信息。如果false，所有法向量均归一化。
-    pn.setDegree(2);            //设置参数degree[1,5],值越大越精细，耗时越久。
-    pn.setDepth(8);             //树的最大深度，求解2^d x 2^d x 2^d立方体元。由于八叉树自适应采样密度，指定值仅为最大深度。
-    pn.setIsoDivide(8);         //用于提取ISO等值面的算法的深度
-    pn.setManifold(true);      //是否添加多边形的重心，当多边形三角化时。 设置流行标志，如果设置为true，则对多边形进行细分三角话时添加重心，设置false则不添加
-    pn.setOutputPolygons(false); //是否输出多边形网格（而不是三角化移动立方体的结果）
-    pn.setSamplesPerNode(3);  //设置落入一个八叉树结点中的样本点的最小数量。无噪声，[1.0-5.0],有噪声[15.-20.]平滑
-    pn.setScale(1.1); //设置用于重构的立方体直径和样本边界立方体直径的比率。
-    pn.setSolverDivide(8); //设置求解线性方程组的Gauss-Seidel迭代方法的深度
-    pn.setPointWeight(4.0);             
+    pn.setConfidence(true);    //鏄惁浣跨敤娉曞悜閲忕殑澶у皬浣滀负缃俊淇℃伅銆傚鏋渇alse锛屾墍鏈夋硶鍚戦噺鍧囧綊涓€鍖栥€?    pn.setDegree(2);            //璁剧疆鍙傛暟degree[1,5],鍊艰秺澶ц秺绮剧粏锛岃€楁椂瓒婁箙銆?    pn.setDepth(8);             //鏍戠殑鏈€澶ф繁搴︼紝姹傝В2^d x 2^d x 2^d绔嬫柟浣撳厓銆傜敱浜庡叓鍙夋爲鑷€傚簲閲囨牱瀵嗗害锛屾寚瀹氬€间粎涓烘渶澶ф繁搴︺€?    pn.setIsoDivide(8);         //鐢ㄤ簬鎻愬彇ISO绛夊€奸潰鐨勭畻娉曠殑娣卞害
+    pn.setManifold(true);      //鏄惁娣诲姞澶氳竟褰㈢殑閲嶅績锛屽綋澶氳竟褰笁瑙掑寲鏃躲€?璁剧疆娴佽鏍囧織锛屽鏋滆缃负true锛屽垯瀵瑰杈瑰舰杩涜缁嗗垎涓夎璇濇椂娣诲姞閲嶅績锛岃缃甪alse鍒欎笉娣诲姞
+    pn.setOutputPolygons(false); //鏄惁杈撳嚭澶氳竟褰㈢綉鏍硷紙鑰屼笉鏄笁瑙掑寲绉诲姩绔嬫柟浣撶殑缁撴灉锛?    pn.setSamplesPerNode(3);  //璁剧疆钀藉叆涓€涓叓鍙夋爲缁撶偣涓殑鏍锋湰鐐圭殑鏈€灏忔暟閲忋€傛棤鍣０锛孾1.0-5.0],鏈夊櫔澹癧15.-20.]骞虫粦
+    pn.setScale(1.1); //璁剧疆鐢ㄤ簬閲嶆瀯鐨勭珛鏂逛綋鐩村緞鍜屾牱鏈竟鐣岀珛鏂逛綋鐩村緞鐨勬瘮鐜囥€?    pn.setSolverDivide(8); //璁剧疆姹傝В绾挎€ф柟绋嬬粍鐨凣auss-Seidel杩唬鏂规硶鐨勬繁搴?    pn.setPointWeight(4.0);             
                        
     //pn.setIndices();
 
-    //设置搜索方法和输入点云
-    pn.setSearchMethod(tree);
+    //璁剧疆鎼滅储鏂规硶鍜岃緭鍏ョ偣浜?    pn.setSearchMethod(tree);
     pn.setInputCloud(cloud);
-    //执行重构
+    //鎵ц閲嶆瀯
     pn.reconstruct(triangles);
 
     if (triangles.polygons.size() == 0)
@@ -360,12 +415,12 @@ bool ConverPointCloud::createPoissonMesh(const string &filepath){
     cloud->clear();
     // get poisson point  
     pcl::PointCloud<pcl::PointXYZ>::Ptr poisson_point(new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::fromPCLPointCloud2(triangles.cloud, *cloud);
+    pcl::fromPCLPointCloud2(triangles->cloud, *cloud);
    
-    //获取补洞后的点，重新拟合法线
+    //鑾峰彇琛ユ礊鍚庣殑鐐癸紝閲嶆柊鎷熷悎娉曠嚎
     for (size_t i = 0; i < m_normalsIter2; i++)
     {
-        //平滑点云
+        //骞虫粦鐐逛簯
         normalsMovingLeastSquares(cloud, mls_points);
 
         getPointFromPointNormal(cloud, mls_points);
@@ -375,7 +430,7 @@ bool ConverPointCloud::createPoissonMesh(const string &filepath){
 
     cout << COUT_PREFIX << "fit normal ok . " << endl;
 
-    pcl::toPCLPointCloud2(mls_points, triangles.cloud);
+    pcl::toPCLPointCloud2(mls_points, triangles->cloud);
 #endif
 
     //save poisson mesh file
@@ -394,9 +449,9 @@ bool ConverPointCloud::createPoissonMesh(const string &filepath){
     getPointFromPointNormal(cloud_point, *cloud);
     //getPointFromPointNormal(cloud, *cloud_with_normals);
 
-    texturemeshPoisson poissoinmesh(srcfile,m_strOutModelPath);
-    poissoinmesh.setPolygonMesh(triangles);
-    poissoinmesh.meshCropHull(cloud_point);
+    texturemeshPoisson* poissoinmesh = new texturemeshPoisson(srcfile,m_strOutModelPath);
+    poissoinmesh->setPolygonMesh(triangles);
+    poissoinmesh->meshCropHull(cloud_point);
     //test
     //poissoinmesh.getPolygonMesh(triangles);
     //mesh2VRML(triangles, m_strOutModelPath);
@@ -424,18 +479,18 @@ bool ConverPointCloud::createPoissonMesh(const string &filepath){
         return false;
     }
 
-    //获取补洞后的点，重新拟合法线
+    //鑾峰彇琛ユ礊鍚庣殑鐐癸紝閲嶆柊鎷熷悎娉曠嚎
     mls_points.clear();
     for (size_t i = 0; i < m_normalsIter2; i++)
     {
-        //平滑点云
+        //骞虫粦鐐逛簯
         normalsMovingLeastSquares(cloud, mls_points);
 
         getPointFromPointNormal(cloud, mls_points);
 
     }
 
-    //法线拟合 compite normals from point // meshlab function
+    //娉曠嚎鎷熷悎 compite normals from point // meshlab function
     //fitNormal(mls_points);
 
     //nearestKSearchNormal(mls_points);
@@ -613,16 +668,69 @@ int mysaveOBJFile(const std::string &file_name, const pcl::PolygonMesh &mesh, un
     return 0;
 }
 
-//贪婪算法生成mesh
+//璐┆绠楁硶鐢熸垚mesh
 bool ConverPointCloud::createGreedMesh(const string &filepath){
     std::string srcfile = filepath;
-    //pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_rgb(new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_rgb_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+
+    if (pcl::io::loadPLYFile(filepath, *cloud_rgb) != 0){
+        cout << COUT_PREFIX << "load ply false. file = " << filepath << endl;
+        return false;
+    }
+
+    cout << COUT_PREFIX << "read ply file ok . point size=" << cloud_rgb->points.size() << endl;
+
+    if (m_leafsize != 0)
+    {
+        pcl::VoxelGrid<pcl::PointXYZRGB> sor;
+        sor.setInputCloud(cloud_rgb);
+        sor.setLeafSize(m_leafsize, m_leafsize, m_leafsize);
+        sor.filter(*cloud_rgb_filtered);
+
+        cout << COUT_PREFIX << "VoxelGrid file ok . point size = " << cloud_rgb_filtered->points.size() << endl;
+        cloud_rgb = cloud_rgb_filtered;
+    }
+
+    cout << COUT_PREFIX << "Calculating normals..." << endl;
+
+    pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+    pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>* ne = new pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>;
+    pcl::search::KdTree<pcl::PointXYZRGB>::Ptr normal_tree(new pcl::search::KdTree<pcl::PointXYZRGB>);
+
+    normal_tree->setInputCloud(cloud_rgb);
+    ne->setInputCloud(cloud_rgb);
+    ne->setSearchMethod(normal_tree);
+    ne->setRadiusSearch(0.01);
+    ne->compute(*normals);
+
+    if (normals->points.size() != cloud_rgb->points.size())
+    {
+        cout << COUT_PREFIX << "Warning: Normal calculation failed, size mismatch." << endl;
+        return false;
+    }
+
     pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr cloud_normal(new pcl::PointCloud<pcl::PointXYZRGBNormal>);
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+    cloud_normal->points.resize(cloud_rgb->points.size());
+    cloud_normal->width = cloud_rgb->width;
+    cloud_normal->height = cloud_rgb->height;
+    cloud_normal->is_dense = cloud_rgb->is_dense;
 
-    pcl::io::loadPLYFile(filepath, *cloud_normal);
+    for (size_t i = 0; i < cloud_rgb->points.size(); ++i)
+    {
+        cloud_normal->points[i].x = cloud_rgb->points[i].x;
+        cloud_normal->points[i].y = cloud_rgb->points[i].y;
+        cloud_normal->points[i].z = cloud_rgb->points[i].z;
+        cloud_normal->points[i].r = cloud_rgb->points[i].r;
+        cloud_normal->points[i].g = cloud_rgb->points[i].g;
+        cloud_normal->points[i].b = cloud_rgb->points[i].b;
 
-    cout << COUT_PREFIX << "read ply file ok . point size=" << cloud_normal->points.size() << endl;
+        cloud_normal->points[i].normal_x = normals->points[i].normal_x;
+        cloud_normal->points[i].normal_y = normals->points[i].normal_y;
+        cloud_normal->points[i].normal_z = normals->points[i].normal_z;
+    }
+
+    cout << COUT_PREFIX << "Normals calculated successfully." << endl;
 
     pcl::PointCloud<pcl::PointXYZRGBNormal> mls_points;
 #if 0
@@ -638,12 +746,12 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
     //avg.setDownsampleAllData(true);
     //avg.filter(*cloud_filtered);
     //
-    //cout << "体素滤波器 size = " << cloud_filtered->points.size() << endl;
+    //cout << "浣撶礌婊ゆ尝鍣?size = " << cloud_filtered->points.size() << endl;
     if (m_leafsize != 0)
     {
-        pcl::VoxelGrid<PointXYZRGB> sor;//滤波处理对象
+        pcl::VoxelGrid<PointXYZRGB> sor;//婊ゆ尝澶勭悊瀵硅薄
         sor.setInputCloud(cloud);
-        sor.setLeafSize(m_leafsize, m_leafsize, m_leafsize);//设置滤波器处理时采用的体素大小的参数   0.00015 = 大约 9:1 
+        sor.setLeafSize(m_leafsize, m_leafsize, m_leafsize);//璁剧疆婊ゆ尝鍣ㄥ鐞嗘椂閲囩敤鐨勪綋绱犲ぇ灏忕殑鍙傛暟   0.00015 = 澶х害 9:1 
         sor.filter(*cloud_filtered);
         cout << COUT_PREFIX << "VoxelGrid ok . point size=" << cloud_filtered->points.size() << endl;
         cloud = cloud_filtered;
@@ -654,7 +762,7 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
 
     //
     // Init object (second point type is for the normals, even if unused)
-    //最小二乘法迭代拟合平滑点云    
+    //鏈€灏忎簩涔樻硶杩唬鎷熷悎骞虫粦鐐逛簯    
     for (size_t i = 0; i < m_normalsIter1; i++)
     {
         normalsMovingLeastSquares(cloud, mls_points);
@@ -674,47 +782,40 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
     cout << COUT_PREFIX << "MLS normal ok . point size: " << mls_points.points.size() << endl;
 #endif
 
-    // 创建同时包含点和法向的数据结构的指针
+    // 鍒涘缓鍚屾椂鍖呭惈鐐瑰拰娉曞悜鐨勬暟鎹粨鏋勭殑鎸囬拡
     //pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr cloud_with_normals(new pcl::PointCloud<pcl::PointXYZRGBNormal>(mls_points));
     pcl::search::KdTree<pcl::PointXYZRGBNormal>::Ptr tree2(new pcl::search::KdTree<pcl::PointXYZRGBNormal>);
 
-    pcl::PolygonMesh triangles;
+    pcl::PolygonMesh* triangles = new pcl::PolygonMesh;
     tree2->setInputCloud(cloud_normal);
 
+    // PCL 1.12 can corrupt the heap when large Greedy/PolygonMesh objects are destroyed here.
+    // Keep them alive for this short CLI run so batch processing can continue.
+    pcl::GreedyProjectionTriangulation<pcl::PointXYZRGBNormal>* gp3 = new pcl::GreedyProjectionTriangulation<pcl::PointXYZRGBNormal>;
+    gp3->setSearchRadius(m_searchRadius);
+    gp3->setMu(m_mu);
+    gp3->setMaximumNearestNeighbors(m_nearestNeighbors);
+    gp3->setMaximumSurfaceAngle(m_maxSurfaceAngle * (M_PI / 180));
+    gp3->setMinimumAngle(m_minAngle * (M_PI / 180));
+    gp3->setMaximumAngle(m_maxAngle * (M_PI / 180));
+    gp3->setNormalConsistency(false);
+    gp3->setConsistentVertexOrdering(true);
+    gp3->setInputCloud(cloud_normal);
+    gp3->setSearchMethod(tree2);
+    gp3->reconstruct(*triangles);
 
-    /*曲面重建模块*/
-    // 创建贪婪三角形投影重建对象
-    pcl::GreedyProjectionTriangulation<pcl::PointXYZRGBNormal> gp3;
-    //创建多边形网格对象,用来存储重建结果
-    gp3.setSearchRadius(m_searchRadius);  //设置连接点之间的最大距离，用于确定k近邻的球半径 （即是三角形最大边长）
-    gp3.setMu(m_mu);  // 设置最近邻距离的乘子，已得到每个点的最终搜索半径（默认为0）
-    gp3.setMaximumNearestNeighbors(m_nearestNeighbors);  //设置搜索的最近邻点的最大数量
-    gp3.setMaximumSurfaceAngle(m_maxSurfaceAngle * (M_PI / 180)); // 90 degrees 最大平面角
-    gp3.setMinimumAngle(m_minAngle * (M_PI / 180)); // 5 degrees 每个三角的最大角度
-    gp3.setMaximumAngle(m_maxAngle * (M_PI / 180)); // 150 degrees
-    gp3.setNormalConsistency(false);  //若法向量一致，设为true
-    gp3.setConsistentVertexOrdering(true);
-    // 设置点云数据和搜索方式
-    gp3.setInputCloud(cloud_normal);
-    gp3.setSearchMethod(tree2);
-    //开始重建
-    gp3.reconstruct(triangles);
-
-    if (triangles.polygons.size() == 0){
+    if (triangles->polygons.size() == 0){
         cout << " polygons size 0." << endl;
         return 0;
     }
 
-    cout << COUT_PREFIX << "mesh reconstruct ok . point size:" << triangles.cloud.height* triangles.cloud.width << "	polygons:" << triangles.polygons.size() << endl;
+    cout << COUT_PREFIX << "mesh reconstruct ok . point size:" << triangles->cloud.height * triangles->cloud.width << "\tpolygons:" << triangles->polygons.size() << endl;
 
-    //补洞
-    pcl::PolygonMesh meshPoly;
-    fillHole(triangles, meshPoly);
-    //m_strOutModelPath = srcfile.substr(0, srcfile.find_last_of("_")) + "_mesh.wrl";
+    pcl::PolygonMesh* meshPoly = new pcl::PolygonMesh;
+    fillHole(*triangles, *meshPoly);
 
-    //mesh2VRML(triangles, m_strOutModelPath);
     m_strOutModelPath = buildMeshOutputPath(srcfile, "_mesh.ply");
-    pcl::io::savePLYFile(m_strOutModelPath, meshPoly);
+    pcl::io::savePLYFile(m_strOutModelPath, *meshPoly);
 
 #if 0
     cloud->clear();
@@ -725,10 +826,10 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
         return false;
     }
 
-    ////获取补洞后的点，重新拟合法线
+    ////鑾峰彇琛ユ礊鍚庣殑鐐癸紝閲嶆柊鎷熷悎娉曠嚎
     for (size_t i = 0; i < m_normalsIter2; i++)
     {
-        //平滑点云
+        //骞虫粦鐐逛簯
         mls_points.points.clear();
         normalsMovingLeastSquares(cloud, mls_points);
 
@@ -736,7 +837,7 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
 
     }
 
-    //法线拟合
+    //娉曠嚎鎷熷悎
     fitNormal(mls_points);
 
     nearestKSearchNormal(mls_points);
@@ -792,11 +893,11 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
     //avg.setDownsampleAllData(true);
     //avg.filter(*cloud_filtered);
     //
-    //cout << "体素滤波器 size = " << cloud_filtered->points.size() << endl;
+    //cout << "浣撶礌婊ゆ尝鍣?size = " << cloud_filtered->points.size() << endl;
 
     //
     // Init object (second point type is for the normals, even if unused)
-    //最小二乘法迭代拟合平滑点云    
+    //鏈€灏忎簩涔樻硶杩唬鎷熷悎骞虫粦鐐逛簯    
 	for (size_t i = 0; i < m_normalsIter1; i++)
     {
         normalsMovingLeastSquares(cloud, mls_points);
@@ -814,30 +915,24 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
 
 	cout << COUT_PREFIX << "MLS normal ok . point size: " << mls_points.points.size() << endl;
 
-    // 创建同时包含点和法向的数据结构的指针
+    // 鍒涘缓鍚屾椂鍖呭惈鐐瑰拰娉曞悜鐨勬暟鎹粨鏋勭殑鎸囬拡
     pcl::PointCloud<pcl::PointNormal>::Ptr cloud_with_normals(new pcl::PointCloud<pcl::PointNormal>(mls_points));
     pcl::search::KdTree<pcl::PointNormal>::Ptr tree2(new pcl::search::KdTree<pcl::PointNormal>);
     pcl::PolygonMesh triangles;
     tree2->setInputCloud(cloud_with_normals);
 
  
-    /*曲面重建模块*/
-    // 创建贪婪三角形投影重建对象
-    pcl::GreedyProjectionTriangulation<pcl::PointNormal> gp3;
-    //创建多边形网格对象,用来存储重建结果
-    gp3.setSearchRadius(m_searchRadius);  //设置连接点之间的最大距离，用于确定k近邻的球半径 （即是三角形最大边长）
-    gp3.setMu(m_mu);  // 设置最近邻距离的乘子，已得到每个点的最终搜索半径（默认为0）
-    gp3.setMaximumNearestNeighbors(m_nearestNeighbors);  //设置搜索的最近邻点的最大数量
-    gp3.setMaximumSurfaceAngle(m_maxSurfaceAngle * (M_PI / 180)); // 90 degrees 最大平面角
-    gp3.setMinimumAngle(m_minAngle * (M_PI / 180)); // 5 degrees 每个三角的最大角度
-    gp3.setMaximumAngle(m_maxAngle * (M_PI / 180)); // 150 degrees
-    gp3.setNormalConsistency(false);  //若法向量一致，设为true
+    /*鏇查潰閲嶅缓妯″潡*/
+    // 鍒涘缓璐┆涓夎褰㈡姇褰遍噸寤哄璞?    pcl::GreedyProjectionTriangulation<pcl::PointNormal> gp3;
+    //鍒涘缓澶氳竟褰㈢綉鏍煎璞?鐢ㄦ潵瀛樺偍閲嶅缓缁撴灉
+    gp3.setSearchRadius(m_searchRadius);  //璁剧疆杩炴帴鐐逛箣闂寸殑鏈€澶ц窛绂伙紝鐢ㄤ簬纭畾k杩戦偦鐨勭悆鍗婂緞 锛堝嵆鏄笁瑙掑舰鏈€澶ц竟闀匡級
+    gp3.setMu(m_mu);  // 璁剧疆鏈€杩戦偦璺濈鐨勪箻瀛愶紝宸插緱鍒版瘡涓偣鐨勬渶缁堟悳绱㈠崐寰勶紙榛樿涓?锛?    gp3.setMaximumNearestNeighbors(m_nearestNeighbors);  //璁剧疆鎼滅储鐨勬渶杩戦偦鐐圭殑鏈€澶ф暟閲?    gp3.setMaximumSurfaceAngle(m_maxSurfaceAngle * (M_PI / 180)); // 90 degrees 鏈€澶у钩闈㈣
+    gp3.setMinimumAngle(m_minAngle * (M_PI / 180)); // 5 degrees 姣忎釜涓夎鐨勬渶澶ц搴?    gp3.setMaximumAngle(m_maxAngle * (M_PI / 180)); // 150 degrees
+    gp3.setNormalConsistency(false);  //鑻ユ硶鍚戦噺涓€鑷达紝璁句负true
     gp3.setConsistentVertexOrdering(true);
-    // 设置点云数据和搜索方式
-    gp3.setInputCloud(cloud_with_normals);
+    // 璁剧疆鐐逛簯鏁版嵁鍜屾悳绱㈡柟寮?    gp3.setInputCloud(cloud_with_normals);
     gp3.setSearchMethod(tree2);
-    //开始重建
-    gp3.reconstruct(triangles);
+    //寮€濮嬮噸寤?    gp3.reconstruct(triangles);
 
     if (triangles.polygons.size() == 0){
         cout << " polygons size 0." << endl;
@@ -847,7 +942,7 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
     //pcl::io::savePLYFile("e:\\triangles.ply", triangles);
 	cout << COUT_PREFIX << "mesh reconstruct ok . point size:" << triangles.cloud.height* triangles.cloud.width<<"	polygons:"<< triangles.polygons.size() << endl;
 
-	//补洞
+	//琛ユ礊
     pcl::PolygonMesh meshPoly;
     //fillHole(triangles, meshPoly);
 
@@ -874,10 +969,10 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
         return false;
     }
     
-    //获取补洞后的点，重新拟合法线
+    //鑾峰彇琛ユ礊鍚庣殑鐐癸紝閲嶆柊鎷熷悎娉曠嚎
 	for (size_t i = 0; i < m_normalsIter2; i++)
     {
-        //平滑点云
+        //骞虫粦鐐逛簯
         mls_points.points.clear();
         normalsMovingLeastSquares(cloud, mls_points);
 
@@ -885,7 +980,7 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
 
     }
 
-    //法线拟合
+    //娉曠嚎鎷熷悎
     fitNormal(mls_points);
 
     nearestKSearchNormal(mls_points);
@@ -918,8 +1013,8 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
 // Method:    createModel
 // Access:    private 
 // Returns:   bool
-// Describe:  构建贴图对象，传入mesh，config配置文件
-// Parameter: const string & plyfile :mesh路径
+// Describe:  鏋勫缓璐村浘瀵硅薄锛屼紶鍏esh锛宑onfig閰嶇疆鏂囦欢
+// Parameter: const string & plyfile :mesh璺緞
 //************************************
 bool ConverPointCloud::createModel(const string &plyfile){
 
@@ -975,8 +1070,7 @@ bool ConverPointCloud::meshAPI(const string &flypath, const string &config, cons
 // Method:    modelAPI
 // Access:    public 
 // Returns:   bool
-// Describe:  配置文件参数解析，查找匹配纹理图片
-// Parameter: const string & flypath
+// Describe:  閰嶇疆鏂囦欢鍙傛暟瑙ｆ瀽锛屾煡鎵惧尮閰嶇汗鐞嗗浘鐗?// Parameter: const string & flypath
 // Parameter: const string & config
 //************************************
 bool ConverPointCloud::modelAPI(const string &flypath, const string &config){
@@ -1054,7 +1148,7 @@ bool ConverPointCloud::modelAPI(const string &flypath, const string &config){
     return createModel(flypath);
 }
 
-//法线标准化
+//娉曠嚎鏍囧噯鍖?
 bool ConverPointCloud::calculateVertexNormal(pcl::PointCloud<pcl::PointXYZRGBNormal> &mls_points){
 
     for (size_t i = 0; i < mls_points.points.size(); i++)
@@ -1146,12 +1240,12 @@ bool ConverPointCloud::normalsMovingLeastSquares(pcl::PointCloud<pcl::PointXYZRG
 
     // Set parameters
     mls.setInputCloud(cloud);
-    //mls.setPolynomialFit(true); //对于法线的估计是有多项式还是仅仅依靠切线
+    //mls.setPolynomialFit(true); //瀵逛簬娉曠嚎鐨勪及璁℃槸鏈夊椤瑰紡杩樻槸浠呬粎渚濋潬鍒囩嚎
     mls.setComputeNormals(true);
     mls.setSearchMethod(tree);
     mls.setPointDensity(30);
     mls.setPolynomialOrder(4);
-    mls.setSearchRadius(m_mlsSearchRadius); // 0.001jingnan //确定搜索的半径,在这个半径里进行表面映射和曲面拟合。从实验结果可知：半径越小拟合后曲面的失真度越小，反之有可能出现过拟合的现象
+    mls.setSearchRadius(m_mlsSearchRadius); // 0.001jingnan //纭畾鎼滅储鐨勫崐寰?鍦ㄨ繖涓崐寰勯噷杩涜琛ㄩ潰鏄犲皠鍜屾洸闈㈡嫙鍚堛€備粠瀹為獙缁撴灉鍙煡锛氬崐寰勮秺灏忔嫙鍚堝悗鏇查潰鐨勫け鐪熷害瓒婂皬锛屽弽涔嬫湁鍙兘鍑虹幇杩囨嫙鍚堢殑鐜拌薄
     if (m_upsamplingType == 0)
     {
         mls.setUpsamplingMethod(mls.NONE);
@@ -1159,23 +1253,21 @@ bool ConverPointCloud::normalsMovingLeastSquares(pcl::PointCloud<pcl::PointXYZRG
     }
     else if (m_upsamplingType == 2)
     {
-        mls.setUpsamplingMethod(mls.SAMPLE_LOCAL_PLANE);// 这个方法就是参考论文中采用的方法，当然此方法所需的计算强度也相当庞大。若使用此方法，将需要调用两个函数：
-        mls.setUpsamplingRadius(m_upsamplingRadius);//此函数规定了点云增长的区域。可以这样理解：把整个点云按照此半径划分成若干个子点云，然后一一索引进行点云增长。           0.1
-        mls.setUpsamplingStepSize(m_upsamplingStepSize);//对于每个子点云处理时迭代的步长。
-
+        mls.setUpsamplingMethod(mls.SAMPLE_LOCAL_PLANE);// 杩欎釜鏂规硶灏辨槸鍙傝€冭鏂囦腑閲囩敤鐨勬柟娉曪紝褰撶劧姝ゆ柟娉曟墍闇€鐨勮绠楀己搴︿篃鐩稿綋搴炲ぇ銆傝嫢浣跨敤姝ゆ柟娉曪紝灏嗛渶瑕佽皟鐢ㄤ袱涓嚱鏁帮細
+        mls.setUpsamplingRadius(m_upsamplingRadius);//姝ゅ嚱鏁拌瀹氫簡鐐逛簯澧為暱鐨勫尯鍩熴€傚彲浠ヨ繖鏍风悊瑙ｏ細鎶婃暣涓偣浜戞寜鐓ф鍗婂緞鍒掑垎鎴愯嫢骞蹭釜瀛愮偣浜戯紝鐒跺悗涓€涓€绱㈠紩杩涜鐐逛簯澧為暱銆?          0.1
+        mls.setUpsamplingStepSize(m_upsamplingStepSize);//瀵逛簬姣忎釜瀛愮偣浜戝鐞嗘椂杩唬鐨勬闀裤€?
     }
     else if (m_upsamplingType == 3)
     {
-        mls.setUpsamplingMethod(mls.RANDOM_UNIFORM_DENSITY);   //也是使用上面子点云的原理，只不过它使得稀疏区域的密度增加，从而使得整个点云的密度均匀
-        mls.setPointDensity(m_pointDensity);  //注意此函数输入整型变量，意为半径内点的个数。（这个半径应该是search的半径，不需要重新设置）。
-
+        mls.setUpsamplingMethod(mls.RANDOM_UNIFORM_DENSITY);   //涔熸槸浣跨敤涓婇潰瀛愮偣浜戠殑鍘熺悊锛屽彧涓嶈繃瀹冧娇寰楃█鐤忓尯鍩熺殑瀵嗗害澧炲姞锛屼粠鑰屼娇寰楁暣涓偣浜戠殑瀵嗗害鍧囧寑
+        mls.setPointDensity(m_pointDensity);  //娉ㄦ剰姝ゅ嚱鏁拌緭鍏ユ暣鍨嬪彉閲忥紝鎰忎负鍗婂緞鍐呯偣鐨勪釜鏁般€傦紙杩欎釜鍗婂緞搴旇鏄痵earch鐨勫崐寰勶紝涓嶉渶瑕侀噸鏂拌缃級銆?
     }
     else if (m_upsamplingType == 4)
     {
 
-        mls.setUpsamplingMethod(mls.VOXEL_GRID_DILATION); //这个方法有两个步骤：首先将点云以voxels分割，然后进行迭代使得voxels的数目增加。它的结果是：填充空洞和平均化点云的密度。它需要调用的函数为：
-        mls.setDilationVoxelSize(m_dilationVoxelSize);   //设定voxel的大小。
-        mls.setDilationIterations(m_dilationIterations); //设置迭代的次数
+        mls.setUpsamplingMethod(mls.VOXEL_GRID_DILATION); //杩欎釜鏂规硶鏈変袱涓楠わ細棣栧厛灏嗙偣浜戜互voxels鍒嗗壊锛岀劧鍚庤繘琛岃凯浠ｄ娇寰梫oxels鐨勬暟鐩鍔犮€傚畠鐨勭粨鏋滄槸锛氬～鍏呯┖娲炲拰骞冲潎鍖栫偣浜戠殑瀵嗗害銆傚畠闇€瑕佽皟鐢ㄧ殑鍑芥暟涓猴細
+        mls.setDilationVoxelSize(m_dilationVoxelSize);   //璁惧畾voxel鐨勫ぇ灏忋€?
+        mls.setDilationIterations(m_dilationIterations); //璁剧疆杩唬鐨勬鏁?
     }
 
 
@@ -1189,7 +1281,7 @@ bool ConverPointCloud::normalsMovingLeastSquares(pcl::PointCloud<pcl::PointXYZRG
 bool ConverPointCloud::fitNormal(pcl::PointCloud<pcl::PointXYZRGBNormal> &mls_points)
 {
 
-    //法线重新计算
+    //娉曠嚎閲嶆柊璁＄畻
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr allpoint(new pcl::PointCloud<pcl::PointXYZRGB>);
     allpoint->resize(mls_points.points.size());
     for (size_t i = 0; i < mls_points.points.size(); i++)
@@ -1212,13 +1304,13 @@ bool ConverPointCloud::fitNormal(pcl::PointCloud<pcl::PointXYZRGBNormal> &mls_po
 
         std::vector<int> indices(m_neighbor_num);
 		std::vector<float> distance(m_distance);
-        //由于VTK/OpenGL并没有存储NaN格式
+        //鐢变簬VTK/OpenGL骞舵病鏈夊瓨鍌∟aN鏍煎紡
         pcl::PointXYZRGB current_point;
         current_point.x = mls_points.points[i].x;
         current_point.y = mls_points.points[i].y;
         current_point.z = mls_points.points[i].z;
 
-        search.nearestKSearch(current_point, m_neighbor_num, indices, distance);//其中current_point为选中的点 
+        search.nearestKSearch(current_point, m_neighbor_num, indices, distance);//鍏朵腑current_point涓洪€変腑鐨勭偣 
         Eigen::Matrix3f covariance_matrix;
         Eigen::Matrix<float, 4, 1> xyz_centroid;
 
@@ -1231,7 +1323,7 @@ bool ConverPointCloud::fitNormal(pcl::PointCloud<pcl::PointXYZRGBNormal> &mls_po
             neight->points[Knum].y = mls_points.points[neightId].y;
             neight->points[Knum].z = mls_points.points[neightId].z;
         }
-        //根据中心点、协方差计算法线
+        //鏍规嵁涓績鐐广€佸崗鏂瑰樊璁＄畻娉曠嚎
         pcl::compute3DCentroid(*neight, xyz_centroid);
         pcl::computeCovarianceMatrix(*neight, xyz_centroid, covariance_matrix);
 
@@ -1268,7 +1360,7 @@ bool ConverPointCloud::nearestKSearchNormal(pcl::PointCloud<PointXYZRGBNormal> &
     pcl::search::KdTree<pcl::PointXYZRGB> search;
     search.setInputCloud(allpoint);
 
-    //拟合邻居K计算法线
+    //鎷熷悎閭诲眳K璁＄畻娉曠嚎
     for (size_t iterNum = 0; iterNum < m_normalsIter2; iterNum++)
     {
         tmpNormalPoint.clear();
@@ -1280,18 +1372,18 @@ bool ConverPointCloud::nearestKSearchNormal(pcl::PointCloud<PointXYZRGBNormal> &
 
             std::vector<int> indices(m_neighbor_num);
 			std::vector<float> distance(m_distance); //0.01
-            //由于VTK/OpenGL并没有存储NaN格式
+            //鐢变簬VTK/OpenGL骞舵病鏈夊瓨鍌∟aN鏍煎紡
             pcl::PointXYZRGB current_point;
             current_point.x = mls_points.points[i].x;
             current_point.y = mls_points.points[i].y;
             current_point.z = mls_points.points[i].z;
-            search.nearestKSearch(current_point, m_neighbor_num, indices, distance);//其中current_point为选中的点 
+            search.nearestKSearch(current_point, m_neighbor_num, indices, distance);//鍏朵腑current_point涓洪€変腑鐨勭偣 
 
             for (size_t Knum = 0; Knum < m_neighbor_num; Knum++)
             {
                 int neightId = indices[Knum];
                 pcl::PointXYZRGBNormal neightborpoint = mls_points.points[neightId];
-                //邻居法线 * 当前点法线
+                //閭诲眳娉曠嚎 * 褰撳墠鐐规硶绾?
                 float LN = neightborpoint.normal_x*mls_points.points[i].normal_x + neightborpoint.normal_y*mls_points.points[i].normal_y + neightborpoint.normal_z * mls_points.points[i].normal_z;
 
                 tmpNormalPoint.points[i].x = mls_points.points[i].x;
@@ -1320,8 +1412,7 @@ bool ConverPointCloud::nearestKSearchNormal(pcl::PointCloud<PointXYZRGBNormal> &
         mls_points.points = tmpNormalPoint.points;
 
 
-        //法线标准化
-        calculateVertexNormal(mls_points);
+        //娉曠嚎鏍囧噯鍖?        calculateVertexNormal(mls_points);
         //cout << "end iter : "<< iterNum << endl;
     }
 
@@ -1416,7 +1507,7 @@ bool ConverPointCloud::fillHole(const pcl::PolygonMesh &inPutmesh, pcl::PolygonM
         outMesh = inPutmesh;
         return false;
     }
-    ////修补空洞
+    ////淇ˉ绌烘礊
     /*pcl::PolygonMesh meshPoly = inPutmesh;*/
     vtkSmartPointer<vtkPolyData> input;
     pcl::VTKUtils::mesh2vtk(inPutmesh, input);

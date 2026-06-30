@@ -10,8 +10,8 @@
 
 
 
-template<typename Type> int
-parser(int argc, char *argv[], const string &name, Type &value){
+template<typename Type> 
+int parser(int argc, char *argv[], const string &name, Type &value){
     osg::ArgumentParser arguments(&argc, argv);
 
     int index = arguments.find(name) + 1;

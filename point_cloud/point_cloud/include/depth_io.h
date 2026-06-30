@@ -13,7 +13,6 @@ public:
     bool depthToPlyColor(const std::string &, const std::string &, const string &, const string &outputDir = string());
     string getFlyFile(){ return m_strFlyFileOut; };
 
-
     bool  depthToPcdCloreFileCorrectOrientation(const std::string &depthImageSrc, const std::string &colorImage);
 
 	bool parseArguments(const string &configfile);

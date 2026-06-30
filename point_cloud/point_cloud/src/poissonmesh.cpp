@@ -75,8 +75,8 @@ int texturemeshPoisson::meshCropHull(pcl::PointCloud<pcl::PointXYZRGBNormal>::Pt
 
 
     //poisson point cloud
-    pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr trianglesPoints(new pcl::PointCloud<pcl::PointXYZRGBNormal>);
-    getPoissonPoint(*trianglesPoints);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr trianglesPoints(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::fromPCLPointCloud2(m_polygonmeshptr.cloud, *trianglesPoints);
 
     if (trianglesPoints->points.size() == 0)
     {
@@ -85,14 +85,26 @@ int texturemeshPoisson::meshCropHull(pcl::PointCloud<pcl::PointXYZRGBNormal>::Pt
 
     }
 
-    pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr outPutPoint(new pcl::PointCloud<pcl::PointXYZRGBNormal>);
-    std::vector<pcl::Vertices> polygons;
-    pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr surfaceHullPoint(new pcl::PointCloud<pcl::PointXYZRGBNormal>);
+    std::vector<pcl::Vertices>* polygons = new std::vector<pcl::Vertices>;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr surfaceHullPoint(new pcl::PointCloud<pcl::PointXYZ>);
 
-    pcl::ConvexHull<pcl::PointXYZRGBNormal> hull;
-    hull.setDimension(3);
-    hull.setInputCloud(cloudSegmented);
-    hull.reconstruct(*surfaceHullPoint, polygons);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloudSegmentedXYZ(new pcl::PointCloud<pcl::PointXYZ>);
+    cloudSegmentedXYZ->points.resize(cloudSegmented->points.size());
+    cloudSegmentedXYZ->width = cloudSegmented->width;
+    cloudSegmentedXYZ->height = cloudSegmented->height;
+    cloudSegmentedXYZ->is_dense = cloudSegmented->is_dense;
+    for (size_t i = 0; i < cloudSegmented->points.size(); ++i)
+    {
+        cloudSegmentedXYZ->points[i].x = cloudSegmented->points[i].x;
+        cloudSegmentedXYZ->points[i].y = cloudSegmented->points[i].y;
+        cloudSegmentedXYZ->points[i].z = cloudSegmented->points[i].z;
+    }
+
+    // These PCL objects corrupt/free internal buffers on stack destruction in this path.
+    pcl::ConvexHull<pcl::PointXYZ>* hull = new pcl::ConvexHull<pcl::PointXYZ>;
+    hull->setDimension(3);
+    hull->setInputCloud(cloudSegmentedXYZ);
+    hull->reconstruct(*surfaceHullPoint, *polygons);
 
     //pcl::io::savePLYFile(m_strDirectoryPath + "\\ConvexHull.ply", *surfaceHullPoint);
 
@@ -112,19 +124,18 @@ int texturemeshPoisson::meshCropHull(pcl::PointCloud<pcl::PointXYZRGBNormal>::Pt
     //viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "sample cloud");
     //viewer->addCoordinateSystem(1.0);
 
-    pcl::CropHull<pcl::PointXYZRGBNormal> cropHull;
+    pcl::CropHull<pcl::PointXYZ>* cropHull = new pcl::CropHull<pcl::PointXYZ>;
     //pcl::CropBox<pcl::PointXYZ> cropHull;
 
-    cropHull.setKeepOrganized(true);
-    cropHull.setCropOutside(true);
-    cropHull.setDim(3);
-    cropHull.setInputCloud(trianglesPoints);
-    cropHull.setHullIndices(polygons);
-    cropHull.setHullCloud(surfaceHullPoint);
+    cropHull->setKeepOrganized(true);
+    cropHull->setCropOutside(true);
+    cropHull->setDim(3);
+    cropHull->setInputCloud(trianglesPoints);
+    cropHull->setHullIndices(*polygons);
+    cropHull->setHullCloud(surfaceHullPoint);
 
     //std::vector<int> point_indices;    
-    cropHull.filter(m_crophullpointindex);       //得到包围盒内部点索引
-    cropHull.filter(*outPutPoint);
+    cropHull->filter(m_crophullpointindex);       //得到包围盒内部点索引
 
     //int size = cropHull.getRemovedIndices()->size();
 
@@ -156,10 +167,11 @@ int texturemeshPoisson::meshCropHull(pcl::PointCloud<pcl::PointXYZRGBNormal>::Pt
 
 
 
-    pcl::PolygonMesh outPolygonMesh;
-    getCropHullMesh(outPolygonMesh);
+    // PCL 1.12 can corrupt/free this mesh on local destruction after simplify/save.
+    pcl::PolygonMesh* outPolygonMesh = new pcl::PolygonMesh;
+    getCropHullMesh(*outPolygonMesh);
 
-    cout << COUT_PREFIX << "point size :" << outPolygonMesh.cloud.width << "  polygons:" << outPolygonMesh.polygons.size() << endl;
+    cout << COUT_PREFIX << "point size :" << outPolygonMesh->cloud.width << "  polygons:" << outPolygonMesh->polygons.size() << endl;
 
     //string meshfile = m_strPolygonMeshFile.substr(0, m_strPolygonMeshFile.find_last_of("_"))+"_poisson_mesh.ply";
     //改回来//pcl::io::savePLYFile(m_strPolygonMeshFile, outPolygonMesh);
@@ -167,18 +179,7 @@ int texturemeshPoisson::meshCropHull(pcl::PointCloud<pcl::PointXYZRGBNormal>::Pt
     /*
        测试用 begin
    */
-    cout << COUT_PREFIX << "[DEBUG-CROPHULL] before savePLYFile: file="
-        << m_strPolygonMeshFile
-        << ", cloud_point_count="
-        << static_cast<size_t>(outPolygonMesh.cloud.width) * static_cast<size_t>(outPolygonMesh.cloud.height)
-        << ", polygon_count=" << outPolygonMesh.polygons.size()
-        << endl;
-
-    int saveResult = pcl::io::savePLYFile(m_strPolygonMeshFile, outPolygonMesh);
-
-    cout << COUT_PREFIX << "[DEBUG-CROPHULL] after savePLYFile: result="
-        << saveResult
-        << endl;
+    pcl::io::savePLYFile(m_strPolygonMeshFile, *outPolygonMesh);
    /*
        测试用 end
    */
@@ -436,7 +437,7 @@ bool texturemeshPoisson::getCropHullMesh(pcl::PolygonMesh &outmeshfile){
 
     //pcl::PolygonMesh poisson_mesh;
     //pcl::io::loadPLYFile(poissonmeshfile, poisson_mesh);
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr poisson_point(new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr poisson_point(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::fromPCLPointCloud2(m_polygonmeshptr.cloud, *poisson_point);
 
     /* 
@@ -611,81 +612,6 @@ bool texturemeshPoisson::getCropHullMesh(pcl::PolygonMesh &outmeshfile){
     cleaner.simplify(visible, outmeshfile);
 
     /*
-        测试用 begin
-     */
-
-    size_t simplifiedPointCount =
-        static_cast<size_t>(outmeshfile.cloud.width) *
-        static_cast<size_t>(outmeshfile.cloud.height);
-
-    size_t simplifiedInvalidFaceCount = 0;
-    size_t simplifiedInvalidVertexCount = 0;
-    size_t simplifiedShortFaceCount = 0;
-    size_t simplifiedMaxVertexIndex = 0;
-    bool simplifiedHasVertex = false;
-
-    for (size_t faceIndex = 0; faceIndex < outmeshfile.polygons.size(); ++faceIndex)
-    {
-        const pcl::Vertices& vertices = outmeshfile.polygons[faceIndex];
-
-        if (vertices.vertices.size() < 3)
-        {
-            ++simplifiedShortFaceCount;
-        }
-
-        bool faceInvalid = false;
-
-        for (size_t vertexIndex = 0; vertexIndex < vertices.vertices.size(); ++vertexIndex)
-        {
-            size_t index = static_cast<size_t>(vertices.vertices[vertexIndex]);
-
-            if (!simplifiedHasVertex || index > simplifiedMaxVertexIndex)
-            {
-                simplifiedMaxVertexIndex = index;
-                simplifiedHasVertex = true;
-            }
-
-            if (simplifiedPointCount > 0 && index >= simplifiedPointCount)
-            {
-                ++simplifiedInvalidVertexCount;
-                faceInvalid = true;
-            }
-        }
-
-        if (faceInvalid)
-        {
-            ++simplifiedInvalidFaceCount;
-        }
-    }
-
-    cout << COUT_PREFIX << "[DEBUG-CROPHULL] after simplify validate: point_count="
-        << simplifiedPointCount
-        << ", polygon_count=" << outmeshfile.polygons.size()
-        << ", max_vertex_index=" << (simplifiedHasVertex ? simplifiedMaxVertexIndex : 0)
-        << ", invalid_face_count=" << simplifiedInvalidFaceCount
-        << ", invalid_vertex_count=" << simplifiedInvalidVertexCount
-        << ", short_face_count=" << simplifiedShortFaceCount
-        << endl;
-
-    if (simplifiedPointCount > 0 &&
-        simplifiedHasVertex &&
-        simplifiedMaxVertexIndex >= simplifiedPointCount)
-    {
-        cout << COUT_PREFIX << "[DEBUG-CROPHULL] ERROR: simplified mesh vertex index out of range. max_vertex_index="
-            << simplifiedMaxVertexIndex
-            << ", point_count=" << simplifiedPointCount
-            << endl;
-    }
-
-    cout << COUT_PREFIX << "[DEBUG-CROPHULL] after simplify: cloud_point_count="
-        << simplifiedPointCount
-        << ", polygon_count=" << outmeshfile.polygons.size()
-        << endl;
-
-     /*
-        测试用 end
-     */
-    /*
        测试用 begin
    
     cout << COUT_PREFIX << "[DEBUG-CROPHULL] after simplify: cloud_point_count="
@@ -696,7 +622,7 @@ bool texturemeshPoisson::getCropHullMesh(pcl::PolygonMesh &outmeshfile){
        测试用 end
    */
 
-    m_polygonmesh = outmeshfile;
+    // m_polygonmesh is not used by this call path; avoid an unnecessary deep copy.
     //cout << "polygons:" << poisson_mesh.polygons.size() << endl;
 
     //pcl::io::savePLYFile("e:\\poisson_mesh.ply", poisson_mesh);

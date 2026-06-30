@@ -94,6 +94,7 @@ bool depthImage::depthToPlyColor(const std::string &depthImageSrc, const std::st
 
 	PointCloud::Ptr cloud(new PointCloud);
 	// 遍历深度图
+    /*
 	for (int m = 0; m < depth.rows; m++)
 	{
 		for (int n = 0; n <depth.cols; n++)
@@ -161,7 +162,79 @@ bool depthImage::depthToPlyColor(const std::string &depthImageSrc, const std::st
 		
 		}
 	}
+    */
+    if (rgb.empty())
+    {
+        cout << COUT_PREFIX << "RGB image empty: " << rgbPath << endl;
+        return false;
+    }
 
+    if (depth.empty())
+    {
+        cout << COUT_PREFIX << "Depth image empty: " << depthPath << endl;
+        return false;
+    }
+
+    if (rgb.cols != depth.cols || rgb.rows != depth.rows)
+    {
+        cout << COUT_PREFIX << "RGB and depth size mismatch." << endl;
+        cout << COUT_PREFIX << "RGB: " << rgb.cols << " x " << rgb.rows << endl;
+        cout << COUT_PREFIX << "Depth: " << depth.cols << " x " << depth.rows << endl;
+        return false;
+    }
+
+    if (depth.type() != CV_32FC3)
+    {
+        cout << COUT_PREFIX << "Error: expected CV_32FC3 tiff, but got type="
+            << depth.type() << ", channels=" << depth.channels() << endl;
+        return false;
+    }
+
+    for (int m = 0; m < depth.rows; m++)
+    {
+        for (int n = 0; n < depth.cols; n++)
+        {
+            cv::Vec3f xyz = depth.at<cv::Vec3f>(m, n);
+
+            float X = xyz[0];
+            float Y = xyz[1];
+            float Z = xyz[2];
+
+            if (!std::isfinite(X) || !std::isfinite(Y) || !std::isfinite(Z))
+            {
+                continue;
+            }
+
+            // 无效深度 / 背景
+            if (std::fabs(Z) < 1e-6f)
+            {
+                continue;
+            }
+
+            uchar b = rgb.ptr<uchar>(m)[n * 3];
+            uchar g = rgb.ptr<uchar>(m)[n * 3 + 1];
+            uchar r = rgb.ptr<uchar>(m)[n * 3 + 2];
+
+            // 过滤白色/浅色背景
+            if (r > 240 && g > 240 && b > 240)
+            {
+                continue;
+            }
+
+            Point p;
+
+            // 先按 tiff 里的 XYZ 直接生成点
+            p.x = X;
+            p.y = -Y;
+            p.z = -Z;
+
+            p.b = b;
+            p.g = g;
+            p.r = r;
+
+            cloud->points.push_back(p);
+        }
+    }
 	// 设置并保存点云
 	cloud->height = 1;
 	cloud->width = cloud->points.size();

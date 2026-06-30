@@ -812,30 +812,32 @@ void OdmTexturing::createTextures()
     float texture_width = image.cols;
     float texture_height = image.rows;
 
+    auto clampUv = [](Eigen::Vector2f& uv) {
+        if (uv(0) < 0.0f) uv(0) = 0.0f;
+        if (uv(0) > 1.0f) uv(0) = 1.0f;
+        if (uv(1) < 0.0f) uv(1) = 0.0f;
+        if (uv(1) > 1.0f) uv(1) = 1.0f;
+    };
+
     for (size_t i = 0; i < mesh_->tex_polygons[0].size(); i++)
     {
         Eigen::Vector2f uv1, uv2, uv3;
         
 
-        uv1(0) = 1.0 - (float)((focal * (meshCloud->points[mesh_->tex_polygons[0][i].vertices[0]].x / meshCloud->points[mesh_->tex_polygons[0][i].vertices[0]].z) + cx) / texture_width);
-        uv1(1) = 1.0 - (float)((focal * (meshCloud->points[mesh_->tex_polygons[0][i].vertices[0]].y / meshCloud->points[mesh_->tex_polygons[0][i].vertices[0]].z) + cy) / texture_height);
-        if (uv1(0)<0.0 || uv1(0)>1.0 || uv1(1)<0.0 || uv1(0)>1.0)
-        {
-            continue;
-        }
-        uv2(0) = 1.0 - (float)((focal * (meshCloud->points[mesh_->tex_polygons[0][i].vertices[1]].x / meshCloud->points[mesh_->tex_polygons[0][i].vertices[1]].z) + cx) / texture_width);
-        uv2(1) = 1.0 - (float)((focal * (meshCloud->points[mesh_->tex_polygons[0][i].vertices[1]].y / meshCloud->points[mesh_->tex_polygons[0][i].vertices[1]].z) + cy) / texture_height);
-        if (uv2(0)<0.0 || uv2(0)>1.0 || uv2(1)<0.0 || uv2(0)>1.0)
-        {
-            continue;
-        }
-        uv3(0) = 1.0 - (float)((focal * (meshCloud->points[mesh_->tex_polygons[0][i].vertices[2]].x / meshCloud->points[mesh_->tex_polygons[0][i].vertices[2]].z) + cx) / texture_width);
-        uv3(1) = 1.0 - (float)((focal * (meshCloud->points[mesh_->tex_polygons[0][i].vertices[2]].y / meshCloud->points[mesh_->tex_polygons[0][i].vertices[2]].z) + cy) / texture_height);
-        if (uv3(0)<0.0 || uv3(0)>1.0 || uv3(1)<0.0 || uv3(0)>1.0)
-        {
-            continue;
-        }
-       
+        const pcl::PointXYZ& p1 = meshCloud->points[mesh_->tex_polygons[0][i].vertices[0]];
+        const pcl::PointXYZ& p2 = meshCloud->points[mesh_->tex_polygons[0][i].vertices[1]];
+        const pcl::PointXYZ& p3 = meshCloud->points[mesh_->tex_polygons[0][i].vertices[2]];
+
+        uv1(0) = 1.0f - (float)((focal * (p1.x / p1.z) + cx) / texture_width);
+        uv1(1) = (float)((focal * (p1.y / p1.z) + cy) / texture_height);
+        uv2(0) = 1.0f - (float)((focal * (p2.x / p2.z) + cx) / texture_width);
+        uv2(1) = (float)((focal * (p2.y / p2.z) + cy) / texture_height);
+        uv3(0) = 1.0f - (float)((focal * (p3.x / p3.z) + cx) / texture_width);
+        uv3(1) = (float)((focal * (p3.y / p3.z) + cy) / texture_height);
+
+        clampUv(uv1);
+        clampUv(uv2);
+        clampUv(uv3);
         // Add uv coordinates to submesh
         textureCoordinatesVector[0].push_back(uv1);
         textureCoordinatesVector[0].push_back(uv2);

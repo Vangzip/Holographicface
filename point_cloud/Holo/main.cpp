@@ -34,6 +34,7 @@ struct HoloConfig {
     fs::path meshConfig;
     fs::path meshObj;
 
+    fs::path outputRoot;
     fs::path multiviewOutDir;
     fs::path elementalOutDir;
 
@@ -116,6 +117,10 @@ fs::path resolvePath(const fs::path& configDir, const std::string& value) {
     return path.lexically_normal();
 }
 
+fs::path resolvePathOrDefault(const fs::path& baseDir, const std::string& value, const std::string& fallback) {
+    return resolvePath(baseDir, trim(value).empty() ? fallback : value);
+}
+
 std::map<std::string, std::string> readIni(const fs::path& configPath) {
     std::ifstream input(configPath);
     if (!input) {
@@ -157,8 +162,9 @@ void applyConfig(HoloConfig& config, const fs::path& configPath) {
     config.depthConfig = resolvePath(configDir, get("depth_config"));
     config.meshConfig = resolvePath(configDir, get("mesh_config"));
     config.meshObj = resolvePath(configDir, get("mesh_obj"));
-    config.multiviewOutDir = resolvePath(configDir, get("multiview_out_dir"));
-    config.elementalOutDir = resolvePath(configDir, get("elemental_out_dir"));
+    config.outputRoot = resolvePathOrDefault(configDir, get("output_root"), "output");
+    config.multiviewOutDir = resolvePathOrDefault(config.outputRoot, get("multiview_out_dir"), "multiview");
+    config.elementalOutDir = resolvePathOrDefault(config.outputRoot, get("elemental_out_dir"), "elemental");
 
     if (!get("model_type").empty()) config.modelType = get("model_type");
     config.multiviewAngle = parseInt(get("multiview_angle"), config.multiviewAngle);
@@ -166,8 +172,8 @@ void applyConfig(HoloConfig& config, const fs::path& configPath) {
     config.multiviewResolution = parseInt(get("multiview_resolution"), config.multiviewResolution);
     config.targetRows = parseInt(get("target_rows"), config.targetRows);
     config.targetCols = parseInt(get("target_cols"), config.targetCols);
-    config.viewRows = parseInt(get("view_rows"), config.viewRows);
-    config.viewCols = parseInt(get("view_cols"), config.viewCols);
+    config.viewRows = config.multiviewAngle * config.multiviewPer;
+    config.viewCols = config.viewRows;
     config.viewNameDigits = parseInt(get("view_name_digits"), config.viewNameDigits);
     config.jpgQuality = parseInt(get("jpg_quality"), config.jpgQuality);
     config.elementalBlockImages = parseInt(get("elemental_block_images"), config.elementalBlockImages);
@@ -381,10 +387,9 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
     }
 
     const int expectedViews = config.multiviewAngle * config.multiviewPer;
-    if (expectedViews != config.viewRows || expectedViews != config.viewCols) {
-        std::cerr << "[warn] angle * per = " << expectedViews
-                  << ", but view_rows/view_cols = "
-                  << config.viewRows << "/" << config.viewCols << std::endl;
+    if (expectedViews <= 0 || config.multiviewResolution <= 0) {
+        std::cerr << "[multiview] multiview_angle, multiview_per, and multiview_resolution must be positive." << std::endl;
+        return 1;
     }
 
     if (options.dryRun) {
@@ -454,6 +459,11 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
 }
 
 int runElementalStage(const HoloConfig& config, const CliOptions& options) {
+    if (config.viewRows <= 0 || config.viewCols <= 0 || config.targetRows <= 0 || config.targetCols <= 0) {
+        std::cerr << "[elemental] derived view grid and target grid must be positive." << std::endl;
+        return 1;
+    }
+
     if (options.dryRun) {
         std::cout << "[elemental] input views: " << config.viewRows << "x" << config.viewCols
                   << ", each view should be: " << config.multiviewResolution
@@ -551,10 +561,11 @@ void printUsage() {
               << "Usage:\n"
               << "  Holo.exe --config holo_config.ini [--stage all|depth|mesh|model|multiview|elemental] [--dry-run]\n\n"
               << "Default target setup:\n"
+              << "  output_root=output => relative output base directory\n"
               << "  multiview_angle=30, multiview_per=9 => 270x270 view images\n"
               << "  multiview_resolution=150 => each view image is 150x150\n"
               << "  target_rows=150, target_cols=150 => 22500 output images\n"
-              << "  view_rows=270, view_cols=270 => each output image is 270x270\n";
+              << "  each output image size is derived from multiview_angle * multiview_per\n";
 }
 
 CliOptions parseCli(int argc, char* argv[]) {

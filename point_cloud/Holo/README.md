@@ -17,11 +17,12 @@ The required source/header files from the old projects are copied under `vendor/
 To generate `150 * 150` output images, each `270 * 270` pixels, use:
 
 ```ini
+output_root=output\full_150x150_res270
+multiview_out_dir=multiview
+elemental_out_dir=elemental
 multiview_angle=30
 multiview_per=9
 multiview_resolution=150
-view_rows=270
-view_cols=270
 target_rows=150
 target_cols=150
 ```
@@ -31,7 +32,7 @@ Meaning:
 - `multiview_angle * multiview_per = 270`, so multiview creates `270 * 270 = 72900` view images.
 - `multiview_resolution=150`, so each view image is `150 * 150`.
 - `target_rows * target_cols = 150 * 150`, so final output count is `22500`.
-- `view_rows * view_cols = 270 * 270`, so each final output image is `270 * 270` pixels.
+- Each final output image is `270 * 270` pixels, derived from `multiview_angle * multiview_per`.
 
 ## Usage
 

@@ -177,7 +177,8 @@ bool depthImage::depthToPlyColor(const std::string &depthImageSrc, const std::st
         }
     }
 
-    // 璁剧疆骞朵繚瀛樼偣浜?    cloud->height = 1;
+    // Set and save the point cloud.
+    cloud->height = 1;
     cloud->width = cloud->points.size();
     //cloud->height = depth.rows;
     //cloud->width = depth.cols;
@@ -441,7 +442,8 @@ bool depthImage::depthToPlyColor(const std::string &depthImageSrc, const std::st
 
             Point p;
 
-            // 鍏堟寜 tiff 閲岀殑 XYZ 鐩存帴鐢熸垚鐐?            p.x = X;
+            // Use the XYZ values stored in the TIFF directly.
+            p.x = X;
             p.y = -Y;
             p.z = -Z;
 
@@ -452,10 +454,11 @@ bool depthImage::depthToPlyColor(const std::string &depthImageSrc, const std::st
             cloud->points.push_back(p);
         }
     }
-	// 璁剧疆骞朵繚瀛樼偣浜?	cloud->height = 1;
-	cloud->width = cloud->points.size();
-	//cloud->height = depth.rows;
-	//cloud->width = depth.cols;
+    // Set and save the point cloud.
+    cloud->height = 1;
+    cloud->width = cloud->points.size();
+    //cloud->height = depth.rows;
+    //cloud->width = depth.cols;
 
     cout << COUT_PREFIX << "point cloud size = " << cloud->points.size() << endl;
 	cloud->is_dense = false;

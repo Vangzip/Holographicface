@@ -83,7 +83,13 @@
     <None Include="holo_config.example.ini">
       <Filter>Config</Filter>
     </None>
+    <None Include="holo_config.microtest.ini">
+      <Filter>Config</Filter>
+    </None>
     <None Include="mesh_config.cfg">
+      <Filter>Config</Filter>
+    </None>
+    <None Include="run_microtest.ps1">
       <Filter>Config</Filter>
     </None>
     <Text Include="README.md">

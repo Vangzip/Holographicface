@@ -134,7 +134,9 @@ if exist "$(MSBuildProjectDirectory)\..\..\OE32\bin\osgPlugins-3.6.5\*.dll" xcop
   <ItemGroup>
     <None Include="depth_to_pointcloud_config.cfg" />
     <None Include="holo_config.example.ini" />
+    <None Include="holo_config.microtest.ini" />
     <None Include="mesh_config.cfg" />
+    <None Include="run_microtest.ps1" />
     <Text Include="README.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

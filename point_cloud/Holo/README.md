@@ -61,6 +61,12 @@ Run the full pipeline:
 target\Holo.exe --config holo_config.ini --stage all
 ```
 
+Run the 0-sample micro functional test:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File run_microtest.ps1
+```
+
 ## Notes
 
 - `model_type=obj` is the integrated multiview path currently supported by Holo.

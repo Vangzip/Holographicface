@@ -17,6 +17,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "virtualcamera", "virtualcam
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Generateimages", "ImageTool9030\Generateimages.vcxproj", "{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Holo", "Holo\Holo.vcxproj", "{525CB48E-D802-4E31-9187-06615CD0807B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -81,6 +83,14 @@ Global
 		{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}.Release|Win32.Build.0 = Release|Win32
 		{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}.Release|x64.ActiveCfg = Release|x64
 		{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}.Release|x64.Build.0 = Release|x64
+		{525CB48E-D802-4E31-9187-06615CD0807B}.Debug|Win32.ActiveCfg = Debug|Win32
+		{525CB48E-D802-4E31-9187-06615CD0807B}.Debug|Win32.Build.0 = Debug|Win32
+		{525CB48E-D802-4E31-9187-06615CD0807B}.Debug|x64.ActiveCfg = Debug|x64
+		{525CB48E-D802-4E31-9187-06615CD0807B}.Debug|x64.Build.0 = Debug|x64
+		{525CB48E-D802-4E31-9187-06615CD0807B}.Release|Win32.ActiveCfg = Release|Win32
+		{525CB48E-D802-4E31-9187-06615CD0807B}.Release|Win32.Build.0 = Release|Win32
+		{525CB48E-D802-4E31-9187-06615CD0807B}.Release|x64.ActiveCfg = Release|x64
+		{525CB48E-D802-4E31-9187-06615CD0807B}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

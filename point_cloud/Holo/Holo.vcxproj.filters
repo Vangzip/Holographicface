@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{8B6EF3E7-7A2D-4E1F-91BA-E32D1C88317A}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Config">
+      <UniqueIdentifier>{7719C80D-3A26-4101-B3B8-BD56D8548F31}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="holo_config.example.ini">
+      <Filter>Config</Filter>
+    </None>
+    <Text Include="README.md">
+      <Filter>Config</Filter>
+    </Text>
+  </ItemGroup>
+</Project>

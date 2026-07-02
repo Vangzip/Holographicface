@@ -4,6 +4,7 @@
 *.opensdf
 *.suo
 *.user
+*.aps
 *.VC.db
 *.VC.VC.opendb
 *.ipch

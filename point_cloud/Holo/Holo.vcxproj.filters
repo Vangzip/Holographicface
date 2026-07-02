@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Source Files">
@@ -8,14 +8,82 @@
     <Filter Include="Config">
       <UniqueIdentifier>{7719C80D-3A26-4101-B3B8-BD56D8548F31}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Vendor\Base">
+      <UniqueIdentifier>{F9877E6A-FF1F-4B2D-9F25-F04EA2B03933}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Vendor\PointCloud">
+      <UniqueIdentifier>{6E14F546-1801-4F44-BA4E-0422236C6BBE}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Vendor\Multiview">
+      <UniqueIdentifier>{DBB777C5-974B-4830-A813-9FD11139C412}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="vendor\base\FileLibrary.cpp">
+      <Filter>Vendor\Base</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\base\Logger.cpp">
+      <Filter>Vendor\Base</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\multiview\modelMoveHandler.cpp">
+      <Filter>Vendor\Multiview</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\point_cloud\src\ConverPointCloud.cpp">
+      <Filter>Vendor\PointCloud</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\point_cloud\src\depth_io.cpp">
+      <Filter>Vendor\PointCloud</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\point_cloud\src\modifiedPclFunctions.cpp">
+      <Filter>Vendor\PointCloud</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\point_cloud\src\OdmTexturing.cpp">
+      <Filter>Vendor\PointCloud</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\point_cloud\src\poissonmesh.cpp">
+      <Filter>Vendor\PointCloud</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="vendor\base\base.h">
+      <Filter>Vendor\Base</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\base\FileLibrary.h">
+      <Filter>Vendor\Base</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\base\Logger.hpp">
+      <Filter>Vendor\Base</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\multiview\modelMoveHandler.h">
+      <Filter>Vendor\Multiview</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\point_cloud\include\ConverPointCloud.h">
+      <Filter>Vendor\PointCloud</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\point_cloud\include\depth_io.h">
+      <Filter>Vendor\PointCloud</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\point_cloud\include\modifiedPclFunctions.hpp">
+      <Filter>Vendor\PointCloud</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\point_cloud\include\OdmTexturing.hpp">
+      <Filter>Vendor\PointCloud</Filter>
+    </ClInclude>
+    <ClInclude Include="vendor\point_cloud\include\poissonmesh.hpp">
+      <Filter>Vendor\PointCloud</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="depth_to_pointcloud_config.cfg">
+      <Filter>Config</Filter>
+    </None>
     <None Include="holo_config.example.ini">
+      <Filter>Config</Filter>
+    </None>
+    <None Include="mesh_config.cfg">
       <Filter>Config</Filter>
     </None>
     <Text Include="README.md">

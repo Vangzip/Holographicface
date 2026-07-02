@@ -1,9 +1,14 @@
-#ifndef NOMINMAX
+﻿#ifndef NOMINMAX
 #define NOMINMAX
 #endif
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+
+#include "ConverPointCloud.h"
+#include "FileLibrary.h"
+#include "depth_io.h"
+#include "modelMoveHandler.h"
 
 #include <algorithm>
 #include <cctype>
@@ -12,24 +17,18 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <list>
 #include <map>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#ifdef _WIN32
-#include <Windows.h>
-#endif
-
 namespace fs = std::filesystem;
 
 namespace {
 
 struct HoloConfig {
-    fs::path pointCloudExe;
-    fs::path multiviewExe;
-
     fs::path depthInputDir;
     fs::path depthConfig;
     fs::path meshConfig;
@@ -56,7 +55,6 @@ struct HoloConfig {
     bool runTexturedModel = true;
     bool runMultiview = true;
     bool runElemental = true;
-    bool multiviewInteractiveStart = true;
 };
 
 struct CliOptions {
@@ -155,8 +153,6 @@ void applyConfig(HoloConfig& config, const fs::path& configPath) {
         return it == values.end() ? std::string{} : it->second;
     };
 
-    config.pointCloudExe = resolvePath(configDir, get("point_cloud_exe"));
-    config.multiviewExe = resolvePath(configDir, get("multiview_exe"));
     config.depthInputDir = resolvePath(configDir, get("depth_input_dir"));
     config.depthConfig = resolvePath(configDir, get("depth_config"));
     config.meshConfig = resolvePath(configDir, get("mesh_config"));
@@ -181,40 +177,6 @@ void applyConfig(HoloConfig& config, const fs::path& configPath) {
     config.runTexturedModel = parseBool(get("run_textured_model"), config.runTexturedModel);
     config.runMultiview = parseBool(get("run_multiview"), config.runMultiview);
     config.runElemental = parseBool(get("run_elemental"), config.runElemental);
-    config.multiviewInteractiveStart = parseBool(get("multiview_interactive_start"), config.multiviewInteractiveStart);
-}
-
-std::wstring quote(const fs::path& path) {
-    return L"\"" + path.wstring() + L"\"";
-}
-
-std::wstring quote(const std::wstring& text) {
-    return L"\"" + text + L"\"";
-}
-
-std::wstring toWide(const std::string& text) {
-#ifdef _WIN32
-    if (text.empty()) {
-        return {};
-    }
-    const int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
-    if (size <= 0) {
-        return std::wstring(text.begin(), text.end());
-    }
-    std::wstring wide(static_cast<size_t>(size - 1), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), size);
-    return wide;
-#else
-    return std::wstring(text.begin(), text.end());
-#endif
-}
-
-int runCommand(const std::wstring& command, bool dryRun) {
-    std::wcout << L"[cmd] " << command << std::endl;
-    if (dryRun) {
-        return 0;
-    }
-    return _wsystem(command.c_str());
 }
 
 bool requireExists(const fs::path& path, const std::string& label) {
@@ -275,40 +237,147 @@ bool shouldRunStage(const CliOptions& options, const std::string& stageName) {
     return options.stage == "all" || options.stage == stageName;
 }
 
-int runPointCloudStage(const HoloConfig& config, const CliOptions& options, const std::string& mode) {
-    if (!requireExists(config.pointCloudExe, "point_cloud_exe")
-        || !requireExists(config.depthInputDir, "depth_input_dir")) {
+int runDepthStage(const HoloConfig& config, const CliOptions& options) {
+    if (!requireExists(config.depthInputDir, "depth_input_dir")
+        || !requireExists(config.depthConfig, "depth_config")) {
         return 1;
     }
 
-    const fs::path stageConfig = mode == "-point" ? config.depthConfig : config.meshConfig;
-    if (!requireExists(stageConfig, mode == "-point" ? "depth_config" : "mesh_config")) {
+    if (options.dryRun) {
+        std::cout << "[depth] scan " << config.depthInputDir.string()
+                  << " and write *_rgb.ply with " << config.depthConfig.string() << std::endl;
+        return 0;
+    }
+
+    std::list<std::string> files;
+    FileLibrary::getInstance()->getAllSubFiles(config.depthInputDir.string(), files, false, true, false, ".tiff");
+    if (files.empty()) {
+        std::cerr << "[depth] no .tiff files found in " << config.depthInputDir.string() << std::endl;
         return 1;
     }
 
-    const std::wstring command = quote(config.pointCloudExe)
-        + L" " + toWide(mode)
-        + L" " + quote(config.depthInputDir)
-        + L" -config " + quote(stageConfig);
+    depthImage depth(0);
+    int failed = 0;
+    for (const std::string& depthFile : files) {
+        std::string filename = FileLibrary::getInstance()->getFileNameFromPath(depthFile);
+        const size_t extPos = filename.rfind(".tiff");
+        if (extPos != std::string::npos) {
+            filename = filename.substr(0, extPos);
+        }
 
-    return runCommand(command, options.dryRun);
+        const std::string rgbFile = FileLibrary::getInstance()->combineFilePath(
+            FileLibrary::getInstance()->getFileParentPath(depthFile), filename + ".jpg");
+
+        std::cout << "[depth] " << depthFile << " + " << rgbFile << std::endl;
+        if (!FileLibrary::getInstance()->isFileExists(rgbFile)) {
+            std::cerr << "[depth] missing RGB image: " << rgbFile << std::endl;
+            ++failed;
+            continue;
+        }
+
+        if (!depth.depthToPlyColor(depthFile, rgbFile, config.depthConfig.string(), config.depthInputDir.string())) {
+            ++failed;
+        }
+    }
+
+    return failed == 0 ? 0 : 1;
+}
+
+int runMeshStage(const HoloConfig& config, const CliOptions& options) {
+    if (!requireExists(config.depthInputDir, "depth_input_dir")
+        || !requireExists(config.meshConfig, "mesh_config")) {
+        return 1;
+    }
+
+    if (options.dryRun) {
+        std::cout << "[mesh] scan " << config.depthInputDir.string()
+                  << " and write *_mesh.ply with " << config.meshConfig.string() << std::endl;
+        return 0;
+    }
+
+    std::list<std::string> files;
+    FileLibrary::getInstance()->getAllSubFiles(config.depthInputDir.string(), files, false, true, false, "_rgb.ply");
+    if (files.empty()) {
+        std::cerr << "[mesh] no *_rgb.ply files found in " << config.depthInputDir.string() << std::endl;
+        return 1;
+    }
+
+    ConverPointCloud converter;
+    int failed = 0;
+    for (const std::string& plyFile : files) {
+        std::cout << "[mesh] " << plyFile << std::endl;
+        if (!converter.meshAPI(plyFile, config.meshConfig.string(), config.depthInputDir.string())) {
+            ++failed;
+        }
+    }
+
+    return failed == 0 ? 0 : 1;
+}
+
+int runModelStage(const HoloConfig& config, const CliOptions& options) {
+    if (!requireExists(config.depthInputDir, "depth_input_dir")
+        || !requireExists(config.meshConfig, "mesh_config")) {
+        return 1;
+    }
+
+    if (options.dryRun) {
+        std::cout << "[model] scan " << config.depthInputDir.string()
+                  << " and write textured OBJ models" << std::endl;
+        return 0;
+    }
+
+    std::list<std::string> files;
+    FileLibrary::getInstance()->getAllSubFiles(config.depthInputDir.string(), files, false, true, false, "_mesh.ply");
+    if (files.empty()) {
+        std::cerr << "[model] no *_mesh.ply files found in " << config.depthInputDir.string() << std::endl;
+        return 1;
+    }
+
+    ConverPointCloud converter;
+    int failed = 0;
+    for (const std::string& meshFile : files) {
+        std::cout << "[model] " << meshFile << std::endl;
+        if (!converter.modelAPI(meshFile, config.meshConfig.string())) {
+            ++failed;
+        }
+    }
+
+    return failed == 0 ? 0 : 1;
+}
+
+bool setMasterViewerGraphicsContext(osgViewer::Viewer* viewer, float x, float y, int width, int height) {
+    osg::ref_ptr<osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits();
+    traits->x = x;
+    traits->y = y;
+    traits->width = width;
+    traits->height = height;
+    traits->windowDecoration = true;
+    traits->doubleBuffer = true;
+    traits->sharedContext = 0;
+    traits->alpha = 1;
+
+    osg::ref_ptr<osg::GraphicsContext> gc = osg::GraphicsContext::createGraphicsContext(traits.get());
+    if (!gc.valid()) {
+        std::cerr << "[multiview] graphics context was not created." << std::endl;
+        return false;
+    }
+
+    double fovy, aspectRatio, zNear, zFar;
+    viewer->getCamera()->getProjectionMatrixAsPerspective(fovy, aspectRatio, zNear, zFar);
+    const double newAspectRatio = static_cast<double>(traits->width) / static_cast<double>(traits->height);
+    const double aspectRatioChange = newAspectRatio / aspectRatio;
+    if (aspectRatioChange != 1.0) {
+        viewer->getCamera()->getProjectionMatrix() *= osg::Matrix::scale(1.0 / aspectRatioChange, 1.0, 1.0);
+    }
+
+    viewer->getCamera()->setViewport(new osg::Viewport(0, 0, width, height));
+    viewer->getCamera()->setGraphicsContext(gc);
+    return true;
 }
 
 int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
-    if (!requireExists(config.multiviewExe, "multiview_exe")) {
-        return 1;
-    }
-
     if (config.meshObj.empty()) {
         config.meshObj = findFirstObj(config.depthInputDir);
-    }
-
-    if (!requireExists(config.meshObj, "mesh_obj")) {
-        return 1;
-    }
-
-    if (!options.dryRun) {
-        fs::create_directories(config.multiviewOutDir);
     }
 
     const int expectedViews = config.multiviewAngle * config.multiviewPer;
@@ -318,19 +387,70 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
                   << config.viewRows << "/" << config.viewCols << std::endl;
     }
 
-    if (config.multiviewInteractiveStart) {
-        std::cerr << "[warn] Current multiview executable starts capture after right mouse click." << std::endl;
+    if (options.dryRun) {
+        std::cout << "[multiview] render " << config.meshObj.string()
+                  << " to " << config.multiviewOutDir.string()
+                  << " as " << expectedViews << "x" << expectedViews
+                  << " views, " << config.multiviewResolution << "x"
+                  << config.multiviewResolution << " each" << std::endl;
+        if (!config.meshObj.empty() && !fs::exists(config.meshObj)) {
+            std::cout << "[multiview] mesh_obj does not exist yet; it should be created by the model stage." << std::endl;
+        }
+        return 0;
     }
 
-    const std::wstring command = quote(config.multiviewExe)
-        + L" -file " + quote(config.meshObj)
-        + L" -type " + toWide(config.modelType)
-        + L" -outdir " + quote(config.multiviewOutDir)
-        + L" -angle " + std::to_wstring(config.multiviewAngle)
-        + L" -per " + std::to_wstring(config.multiviewPer)
-        + L" -resolution " + std::to_wstring(config.multiviewResolution);
+    if (!requireExists(config.meshObj, "mesh_obj")) {
+        return 1;
+    }
 
-    return runCommand(command, options.dryRun);
+    if (config.modelType != "obj") {
+        std::cerr << "[multiview] integrated renderer currently supports model_type=obj." << std::endl;
+        return 1;
+    }
+
+    fs::create_directories(config.multiviewOutDir);
+
+    osg::ref_ptr<osgViewer::Viewer> viewer = new osgViewer::Viewer;
+    viewer->addEventHandler(new osgGA::StateSetManipulator(viewer->getCamera()->getOrCreateStateSet()));
+    viewer->addEventHandler(new osgViewer::ThreadingHandler);
+    viewer->addEventHandler(new osgViewer::WindowSizeHandler);
+    viewer->addEventHandler(new osgViewer::StatsHandler);
+    viewer->addEventHandler(new osgViewer::RecordCameraPathHandler);
+    viewer->addEventHandler(new osgViewer::LODScaleHandler);
+    viewer->addEventHandler(new osgViewer::ScreenCaptureHandler);
+    viewer->setCameraManipulator(NULL);
+    viewer->getCamera()->setClearColor(osg::Vec4f(0.3f, 0.3f, 0.3f, 1.0f));
+
+    if (!setMasterViewerGraphicsContext(viewer.get(), 100, 100, config.multiviewResolution, config.multiviewResolution)) {
+        return 1;
+    }
+
+    osg::ref_ptr<osg::Image> image = new osg::Image;
+    viewer->getCamera()->setPostDrawCallback(new CaptureDrawCallback(image, static_cast<float>(config.multiviewResolution)));
+
+    osg::StateSet* state = viewer->getCamera()->getOrCreateStateSet();
+    state->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::PROTECTED);
+
+    osg::ref_ptr<osg::Node> node = osgDB::readNodeFile(config.meshObj.string());
+    if (!node.valid()) {
+        std::cerr << "[multiview] cannot read OBJ: " << config.meshObj.string() << std::endl;
+        return 1;
+    }
+
+    osg::ref_ptr<osg::Group> group = new osg::Group;
+    group->addChild(node.get());
+
+    std::string outDir = config.multiviewOutDir.string();
+    modelMoveHandler* handler = new modelMoveHandler(
+        viewer.get(), group.get(), outDir, image.get(), config.modelType,
+        static_cast<float>(config.multiviewAngle), static_cast<float>(config.multiviewPer));
+    viewer->addEventHandler(handler);
+
+    while (!viewer->done()) {
+        viewer->frame();
+    }
+
+    return handler->isComplete() ? 0 : 1;
 }
 
 int runElementalStage(const HoloConfig& config, const CliOptions& options) {
@@ -459,17 +579,17 @@ CliOptions parseCli(int argc, char* argv[]) {
 
 int runPipeline(HoloConfig& config, const CliOptions& options) {
     if (shouldRunStage(options, "depth") && config.runDepthPointCloud) {
-        const int code = runPointCloudStage(config, options, "-point");
+        const int code = runDepthStage(config, options);
         if (code != 0) return code;
     }
 
     if (shouldRunStage(options, "mesh") && config.runMesh) {
-        const int code = runPointCloudStage(config, options, "-mesh");
+        const int code = runMeshStage(config, options);
         if (code != 0) return code;
     }
 
     if (shouldRunStage(options, "model") && config.runTexturedModel) {
-        const int code = runPointCloudStage(config, options, "-model");
+        const int code = runModelStage(config, options);
         if (code != 0) return code;
     }
 

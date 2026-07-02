@@ -138,6 +138,7 @@ if exist "$(MSBuildProjectDirectory)\..\..\OE32\bin\osgPlugins-3.6.5\*.dll" xcop
     <None Include="mesh_config.cfg" />
     <None Include="run_microtest.ps1" />
     <Text Include="README.md" />
+    <Text Include="使用说明.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

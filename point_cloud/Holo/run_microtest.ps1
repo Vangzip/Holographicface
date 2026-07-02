@@ -103,11 +103,13 @@ Assert-True ($multiviewFiles.Count -eq 9) "Expected 9 multiview images, got $($m
 Assert-True (Test-Path -LiteralPath (Join-Path $multiviewDir "001001.jpg")) "Missing first multiview image 001001.jpg"
 Assert-True (Test-Path -LiteralPath (Join-Path $multiviewDir "003003.jpg")) "Missing last multiview image 003003.jpg"
 $firstViewSize = Get-JpegSize (Join-Path $multiviewDir "001001.jpg")
-Assert-True ($firstViewSize.Width -eq 3 -and $firstViewSize.Height -eq 3) "Expected multiview image size 3x3, got $($firstViewSize.Width)x$($firstViewSize.Height)"
+Assert-True ($firstViewSize.Width -eq 150 -and $firstViewSize.Height -eq 150) "Expected multiview image size 150x150, got $($firstViewSize.Width)x$($firstViewSize.Height)"
 
 $elementalFiles = @(Get-ChildItem -LiteralPath $elementalDir -Filter "*.jpg" -File)
-Assert-True ($elementalFiles.Count -eq 9) "Expected 9 elemental images, got $($elementalFiles.Count)"
-$firstElementalSize = Get-JpegSize (Join-Path $elementalDir "11.jpg")
+Assert-True ($elementalFiles.Count -eq 22500) "Expected 22500 elemental images, got $($elementalFiles.Count)"
+Assert-True (Test-Path -LiteralPath (Join-Path $elementalDir "001001.jpg")) "Missing first elemental image 001001.jpg"
+Assert-True (Test-Path -LiteralPath (Join-Path $elementalDir "150150.jpg")) "Missing last elemental image 150150.jpg"
+$firstElementalSize = Get-JpegSize (Join-Path $elementalDir "001001.jpg")
 Assert-True ($firstElementalSize.Width -eq 3 -and $firstElementalSize.Height -eq 3) "Expected elemental image size 3x3, got $($firstElementalSize.Width)x$($firstElementalSize.Height)"
 
-Write-Host "[microtest] PASS: 0 input -> 9 multiview images and 9 elemental images"
+Write-Host "[microtest] PASS: 0 input -> 9 multiview images 150x150 and 22500 elemental images 3x3"

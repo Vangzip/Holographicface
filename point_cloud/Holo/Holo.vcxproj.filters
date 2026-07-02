@@ -95,5 +95,8 @@
     <Text Include="README.md">
       <Filter>Config</Filter>
     </Text>
+    <Text Include="使用说明.md">
+      <Filter>Config</Filter>
+    </Text>
   </ItemGroup>
 </Project>

@@ -67,6 +67,8 @@ Run the 0-sample micro functional test:
 powershell -NoProfile -ExecutionPolicy Bypass -File run_microtest.ps1
 ```
 
+For Chinese usage notes, see `使用说明.md`.
+
 ## Notes
 
 - `model_type=obj` is the integrated multiview path currently supported by Holo.

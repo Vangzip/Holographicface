@@ -29,6 +29,8 @@ target_cols=150
 
 ## 使用
 
+可以直接打开 `Holo.sln`，只加载 Holo 项目；也可以从上级 `point_cloud.sln` 一起打开。
+
 复制示例配置：
 
 ```bat

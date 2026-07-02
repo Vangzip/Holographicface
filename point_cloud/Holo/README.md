@@ -29,7 +29,7 @@ target_cols=150
 
 ## 使用
 
-可以直接打开 `Holo.sln`，只加载 Holo 项目；也可以从上级 `point_cloud.sln` 一起打开。
+可以直接打开 `Holo.sln`，只加载 Holo 项目；也可以从上级 `point_cloud.sln` 一起打开。Holo 只支持 x64，因为当前 OpenCV、PCL、OSG 依赖都是 x64。
 
 复制示例配置：
 

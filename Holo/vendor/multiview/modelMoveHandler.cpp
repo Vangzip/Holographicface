@@ -3,13 +3,28 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
-modelMoveHandler::modelMoveHandler(osgViewer::Viewer *viewer, osg::Group *pgroup, string &out, osg::Image *pimage, const  string &type, float angle, float per){
+namespace {
+
+osg::Vec3d normalizedOrDefault(const osg::Vec3d& value, const osg::Vec3d& fallback)
+{
+    const double length = value.length();
+    if (length <= 0.000001) {
+        return fallback;
+    }
+    return value / length;
+}
+
+} // namespace
+
+modelMoveHandler::modelMoveHandler(osgViewer::Viewer *viewer, osg::Group *pgroup, string &out, osg::Image *pimage, const  string &type, float angle, float per, const ModelMoveCameraConfig& cameraConfig){
     m_pImage = pimage;
     m_mt = new osg::MatrixTransform;
     m_strOutDir = out;
+    m_cameraConfig = cameraConfig;
     double viewDistance = 0;
     m_mt->addChild(pgroup);
     double radius = m_mt->getBound().radius();
+    const double distanceScale = m_cameraConfig.distanceScale > 0.0 ? m_cameraConfig.distanceScale : 2.0;
     m_angle = angle;
     m_per = per;
     m_per_angle = 1.0 / per;
@@ -26,7 +41,7 @@ modelMoveHandler::modelMoveHandler(osgViewer::Viewer *viewer, osg::Group *pgroup
         init(type, angle);
        // m_modelcenter += osg::Vec3(70, -50, -70);
         m_modelcenter += osg::Vec3(100, 0, -50);
-        viewDistance = radius * 1;
+        viewDistance = radius * distanceScale;
 
     }
     else    if (type == "ive") {
@@ -37,7 +52,7 @@ modelMoveHandler::modelMoveHandler(osgViewer::Viewer *viewer, osg::Group *pgroup
         //m_modelcenter += osg::Vec3(0,0,50);
         init(type, angle);
         m_modelcenter += osg::Vec3(-5, 0, 0);
-        viewDistance = radius *  5;
+        viewDistance = radius * distanceScale;
 
     }
     else if(type == "obj")
@@ -48,19 +63,35 @@ modelMoveHandler::modelMoveHandler(osgViewer::Viewer *viewer, osg::Group *pgroup
         init(type,angle);
         //m_modelcenter += osg::Vec3(0, 0, 0.1);
 
-        viewDistance = radius * 2;
+        viewDistance = radius * distanceScale;
     }
 
     //osg::Vec3d eye(2.655249, -600, -10), center(2.655249, 0, -10), up(0, 0, 1);
-    osg::Vec3d eye(0,0,0), center(0,0,0), up(0, 0, 1);
+    osg::Vec3d eye(0,0,0), center(0,0,0);
+    osg::Vec3d up = normalizedOrDefault(m_cameraConfig.upDirection, osg::Vec3d(0, 0, 1));
 
     //修改相机参数
-    osg::Vec3d moveEve(0, -1, 0);
+    osg::Vec3d moveEve = normalizedOrDefault(m_cameraConfig.eyeDirection, osg::Vec3d(0, -1, 0));
 
-    osg::Vec3d eyepoint = m_modelcenter + moveEve * viewDistance;
+    osg::Vec3d lookCenter = m_modelcenter + m_cameraConfig.centerOffset;
+    osg::Vec3d eyepoint = lookCenter + moveEve * viewDistance;
     ////将参数设置给相机，并立即获取相机参数
 
-	viewer->getCamera()->setViewMatrixAsLookAt(eyepoint, m_modelcenter, up);
+	viewer->getCamera()->setViewMatrixAsLookAt(eyepoint, lookCenter, up);
+    if (m_cameraConfig.fovyDeg > 0.0) {
+        double fovy, aspectRatio, zNear, zFar;
+        viewer->getCamera()->getProjectionMatrixAsPerspective(fovy, aspectRatio, zNear, zFar);
+        if (aspectRatio <= 0.0) {
+            aspectRatio = 1.0;
+        }
+        if (m_cameraConfig.zNear > 0.0) {
+            zNear = m_cameraConfig.zNear;
+        }
+        if (m_cameraConfig.zFar > 0.0) {
+            zFar = m_cameraConfig.zFar;
+        }
+        viewer->getCamera()->setProjectionMatrixAsPerspective(m_cameraConfig.fovyDeg, aspectRatio, zNear, zFar);
+    }
 
     viewer->setSceneData(m_mt);
     printf("model center: %f, %f, %f\n", m_modelcenter.x(), m_modelcenter.y(), m_modelcenter.z());
@@ -165,9 +196,9 @@ void modelMoveHandler::init(const  string &type, float angle){
         //initModelXLocation(45);
         //initModelXLocation(-40);
 
-        rotateX(angle/2);
+        rotateX(m_cameraConfig.hasInitialRotateXDeg ? static_cast<float>(m_cameraConfig.initialRotateXDeg) : angle / 2);
         //rotateX(20);
-        rotateZ(-angle / 2);
+        rotateZ(m_cameraConfig.hasInitialRotateZDeg ? static_cast<float>(m_cameraConfig.initialRotateZDeg) : -angle / 2);
 
     }
 
@@ -263,7 +294,10 @@ bool modelMoveHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIAction
 
 										   //cout << filedir << endl;
                                            osg::ref_ptr<osg::Image> outputImage = new osg::Image(*m_pImage, osg::CopyOp::DEEP_COPY_ALL);
-                                           outputImage->flipVertical();
+                                           if (m_cameraConfig.captureFlipVertical)
+                                           {
+                                               outputImage->flipVertical();
+                                           }
                                            osgDB::writeImageFile(*outputImage, filedir);//图片写入到当前程序目录下
                                            num++;
 

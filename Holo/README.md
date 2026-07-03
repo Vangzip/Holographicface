@@ -23,9 +23,13 @@ elemental_out_dir=elemental
 multiview_angle=30
 multiview_per=9
 multiview_resolution=150
+multiview_camera_distance_scale=2.0
+multiview_capture_flip_vertical=true
 target_rows=150
 target_cols=150
 elemental_writer_threads=0
+elemental_flip_source_y=true
+elemental_flip_view_rows=true
 ```
 
 Meaning:

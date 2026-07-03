@@ -60,6 +60,9 @@ struct HoloConfig {
     int viewNameDigits = 3;
     int jpgQuality = 100;
     int elementalWriterThreads = 0;
+    bool elementalFlipSourceY = true;
+    bool elementalFlipViewRows = true;
+    ModelMoveCameraConfig multiviewCamera;
 
     bool runDepthPointCloud = true;
     bool runMesh = true;
@@ -107,6 +110,15 @@ bool parseBool(const std::string& value, bool fallback) {
 int parseInt(const std::string& value, int fallback) {
     try {
         return std::stoi(trim(value));
+    }
+    catch (...) {
+        return fallback;
+    }
+}
+
+double parseDouble(const std::string& value, double fallback) {
+    try {
+        return std::stod(trim(value));
     }
     catch (...) {
         return fallback;
@@ -187,6 +199,34 @@ void applyConfig(HoloConfig& config, const fs::path& configPath) {
     config.viewNameDigits = parseInt(get("view_name_digits"), config.viewNameDigits);
     config.jpgQuality = parseInt(get("jpg_quality"), config.jpgQuality);
     config.elementalWriterThreads = parseInt(get("elemental_writer_threads"), config.elementalWriterThreads);
+    config.elementalFlipSourceY = parseBool(get("elemental_flip_source_y"), config.elementalFlipSourceY);
+    config.elementalFlipViewRows = parseBool(get("elemental_flip_view_rows"), config.elementalFlipViewRows);
+
+    config.multiviewCamera.distanceScale = parseDouble(get("multiview_camera_distance_scale"), config.multiviewCamera.distanceScale);
+    config.multiviewCamera.centerOffset.set(
+        parseDouble(get("multiview_camera_center_offset_x"), config.multiviewCamera.centerOffset.x()),
+        parseDouble(get("multiview_camera_center_offset_y"), config.multiviewCamera.centerOffset.y()),
+        parseDouble(get("multiview_camera_center_offset_z"), config.multiviewCamera.centerOffset.z()));
+    config.multiviewCamera.eyeDirection.set(
+        parseDouble(get("multiview_camera_eye_dir_x"), config.multiviewCamera.eyeDirection.x()),
+        parseDouble(get("multiview_camera_eye_dir_y"), config.multiviewCamera.eyeDirection.y()),
+        parseDouble(get("multiview_camera_eye_dir_z"), config.multiviewCamera.eyeDirection.z()));
+    config.multiviewCamera.upDirection.set(
+        parseDouble(get("multiview_camera_up_x"), config.multiviewCamera.upDirection.x()),
+        parseDouble(get("multiview_camera_up_y"), config.multiviewCamera.upDirection.y()),
+        parseDouble(get("multiview_camera_up_z"), config.multiviewCamera.upDirection.z()));
+    config.multiviewCamera.fovyDeg = parseDouble(get("multiview_camera_fovy_deg"), config.multiviewCamera.fovyDeg);
+    config.multiviewCamera.zNear = parseDouble(get("multiview_camera_z_near"), config.multiviewCamera.zNear);
+    config.multiviewCamera.zFar = parseDouble(get("multiview_camera_z_far"), config.multiviewCamera.zFar);
+    if (!get("multiview_initial_rotate_x_deg").empty()) {
+        config.multiviewCamera.initialRotateXDeg = parseDouble(get("multiview_initial_rotate_x_deg"), config.multiviewCamera.initialRotateXDeg);
+        config.multiviewCamera.hasInitialRotateXDeg = true;
+    }
+    if (!get("multiview_initial_rotate_z_deg").empty()) {
+        config.multiviewCamera.initialRotateZDeg = parseDouble(get("multiview_initial_rotate_z_deg"), config.multiviewCamera.initialRotateZDeg);
+        config.multiviewCamera.hasInitialRotateZDeg = true;
+    }
+    config.multiviewCamera.captureFlipVertical = parseBool(get("multiview_capture_flip_vertical"), config.multiviewCamera.captureFlipVertical);
 
     config.runDepthPointCloud = parseBool(get("run_depth_pointcloud"), config.runDepthPointCloud);
     config.runMesh = parseBool(get("run_mesh"), config.runMesh);
@@ -544,6 +584,24 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
                   << " as " << expectedViews << "x" << expectedViews
                   << " views, " << config.multiviewResolution << "x"
                   << config.multiviewResolution << " each" << std::endl;
+        std::cout << "[multiview] camera distance scale: " << config.multiviewCamera.distanceScale
+                  << ", center offset: ("
+                  << config.multiviewCamera.centerOffset.x() << ", "
+                  << config.multiviewCamera.centerOffset.y() << ", "
+                  << config.multiviewCamera.centerOffset.z() << ")"
+                  << ", eye dir: ("
+                  << config.multiviewCamera.eyeDirection.x() << ", "
+                  << config.multiviewCamera.eyeDirection.y() << ", "
+                  << config.multiviewCamera.eyeDirection.z() << ")"
+                  << ", up: ("
+                  << config.multiviewCamera.upDirection.x() << ", "
+                  << config.multiviewCamera.upDirection.y() << ", "
+                  << config.multiviewCamera.upDirection.z() << ")" << std::endl;
+        if (config.multiviewCamera.fovyDeg > 0.0) {
+            std::cout << "[multiview] camera fovy: " << config.multiviewCamera.fovyDeg
+                      << " deg, zNear: " << config.multiviewCamera.zNear
+                      << ", zFar: " << config.multiviewCamera.zFar << std::endl;
+        }
         if (!config.meshObj.empty() && !fs::exists(config.meshObj)) {
             std::cout << "[multiview] mesh_obj does not exist yet; it should be created by the model stage." << std::endl;
         }
@@ -594,7 +652,8 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
     std::string outDir = config.multiviewOutDir.string();
     modelMoveHandler* handler = new modelMoveHandler(
         viewer.get(), group.get(), outDir, image.get(), config.modelType,
-        static_cast<float>(config.multiviewAngle), static_cast<float>(config.multiviewPer));
+        static_cast<float>(config.multiviewAngle), static_cast<float>(config.multiviewPer),
+        config.multiviewCamera);
     viewer->addEventHandler(handler);
 
     while (!viewer->done()) {
@@ -617,6 +676,8 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
         std::cout << "[elemental] output images: " << config.targetRows << "x" << config.targetCols
                   << ", each output: " << config.viewCols << "x" << config.viewRows << std::endl;
         std::cout << "[elemental] output dir: " << config.elementalOutDir.string() << std::endl;
+        std::cout << "[elemental] flip source Y: " << (config.elementalFlipSourceY ? "true" : "false")
+                  << ", flip view rows: " << (config.elementalFlipViewRows ? "true" : "false") << std::endl;
         return 0;
     }
 
@@ -674,6 +735,8 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
               << formatBytes(totalViewBytes) << " in memory" << std::endl;
     std::cout << "[elemental] per-writer output buffer: " << formatBytes(outputImageBytes) << std::endl;
     std::cout << "[elemental] writer threads: " << writerThreads << std::endl;
+    std::cout << "[elemental] flip source Y: " << (config.elementalFlipSourceY ? "true" : "false")
+              << ", flip view rows: " << (config.elementalFlipViewRows ? "true" : "false") << std::endl;
 
     std::unique_ptr<unsigned char[]> viewPixels;
     try {
@@ -713,17 +776,19 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
             if (mismatchedSize) {
                 ++mismatchedViewImages;
             }
-            if (input.rows < config.targetRows || input.cols < config.targetCols) {
-                std::fill(viewBase, viewBase + viewImageBytes, 0);
-            }
-
-            const int copyRows = std::min(config.targetRows, input.rows);
+            std::fill(viewBase, viewBase + viewImageBytes, 0);
             const int copyCols = std::min(config.targetCols, input.cols);
             const size_t copyBytes = static_cast<size_t>(copyCols) * 3;
-            for (int targetRow = 0; targetRow < copyRows; ++targetRow) {
+            for (int targetRow = 0; targetRow < config.targetRows; ++targetRow) {
+                const int sourceRow = config.elementalFlipSourceY
+                    ? input.rows - 1 - targetRow
+                    : targetRow;
+                if (sourceRow < 0 || sourceRow >= input.rows) {
+                    continue;
+                }
                 std::memcpy(
                     viewBase + static_cast<size_t>(targetRow) * targetRowBytes,
-                    input.ptr<unsigned char>(targetRow),
+                    input.ptr<unsigned char>(sourceRow),
                     copyBytes);
             }
         }
@@ -771,13 +836,21 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
                     const size_t targetOffset = (static_cast<size_t>(targetRow) * static_cast<size_t>(config.targetCols)
                         + static_cast<size_t>(targetCol)) * 3;
 
-                    unsigned char* dst = output.ptr<unsigned char>(0);
-                    for (size_t viewIndex = 0; viewIndex < viewCount; ++viewIndex) {
-                        const unsigned char* src = viewPixels.get() + viewIndex * viewImageBytes + targetOffset;
-                        dst[0] = src[0];
-                        dst[1] = src[1];
-                        dst[2] = src[2];
-                        dst += 3;
+                    for (int outputViewRow = 0; outputViewRow < config.viewRows; ++outputViewRow) {
+                        const int sourceViewRow = config.elementalFlipViewRows
+                            ? config.viewRows - 1 - outputViewRow
+                            : outputViewRow;
+                        unsigned char* dst = output.ptr<unsigned char>(outputViewRow);
+                        const size_t sourceViewRowOffset = static_cast<size_t>(sourceViewRow)
+                            * static_cast<size_t>(config.viewCols);
+                        for (int outputViewCol = 0; outputViewCol < config.viewCols; ++outputViewCol) {
+                            const size_t viewIndex = sourceViewRowOffset + static_cast<size_t>(outputViewCol);
+                            const unsigned char* src = viewPixels.get() + viewIndex * viewImageBytes + targetOffset;
+                            dst[0] = src[0];
+                            dst[1] = src[1];
+                            dst[2] = src[2];
+                            dst += 3;
+                        }
                     }
 
                     const int outputRow = targetRow + 1;

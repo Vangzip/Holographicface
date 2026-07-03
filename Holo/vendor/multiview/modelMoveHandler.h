@@ -65,6 +65,23 @@ struct CaptureDrawCallback : public osg::Camera::DrawCallback
 
 
 using namespace osg;
+
+struct ModelMoveCameraConfig
+{
+    double distanceScale = 2.0;
+    osg::Vec3d centerOffset = osg::Vec3d(0.0, 0.0, 0.0);
+    osg::Vec3d eyeDirection = osg::Vec3d(0.0, -1.0, 0.0);
+    osg::Vec3d upDirection = osg::Vec3d(0.0, 0.0, 1.0);
+    double fovyDeg = 0.0;
+    double zNear = 0.0;
+    double zFar = 0.0;
+    bool hasInitialRotateXDeg = false;
+    bool hasInitialRotateZDeg = false;
+    double initialRotateXDeg = 0.0;
+    double initialRotateZDeg = 0.0;
+    bool captureFlipVertical = true;
+};
+
 class HUDAxis :public Camera
 {
 public:
@@ -84,7 +101,7 @@ protected:
 class  modelMoveHandler :public osgGA::GUIEventHandler
 {
 public:
-    modelMoveHandler(osgViewer::Viewer *viewer, osg::Group *pgroup, string &nodepath, osg::Image *pimage, const  string &type, float, float);
+    modelMoveHandler(osgViewer::Viewer *viewer, osg::Group *pgroup, string &nodepath, osg::Image *pimage, const  string &type, float, float, const ModelMoveCameraConfig&);
 
     void init(const  string &type, float);
 
@@ -114,6 +131,7 @@ private:
     int m_width, m_height;
     int m_frame;
     bool m_complete;
+    ModelMoveCameraConfig m_cameraConfig;
 
     osgViewer::Viewer *viewer;
 	osg::Vec3d m_modelcenter;

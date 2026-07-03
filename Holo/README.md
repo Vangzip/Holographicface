@@ -20,8 +20,8 @@ To generate `150 * 150` output images, each `270 * 270` pixels, use:
 output_root=output\full_150x150_res270
 multiview_out_dir=multiview
 elemental_out_dir=elemental
-multiview_angle=30
-multiview_per=9
+multiview_angle=90
+multiview_per=3
 multiview_resolution=150
 multiview_camera_distance_scale=2.0
 multiview_capture_flip_vertical=true

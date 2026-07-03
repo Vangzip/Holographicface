@@ -12,6 +12,7 @@ Release/
 x64/
 Win32/
 target/
+Holo/output/
 *.obj
 *.pdb
 *.ilk

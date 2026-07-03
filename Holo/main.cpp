@@ -49,8 +49,8 @@ struct HoloConfig {
     fs::path elementalOutDir;
 
     std::string modelType = "obj";
-    int multiviewAngle = 30;
-    int multiviewPer = 9;
+    int multiviewAngle = 90;
+    int multiviewPer = 3;
     int multiviewResolution = 150;
 
     int targetRows = 150;
@@ -918,7 +918,7 @@ void printUsage() {
               << "  Holo.exe --config holo_config.ini [--stage all|depth|mesh|model|multiview|elemental] [--dry-run]\n\n"
               << "Default target setup:\n"
               << "  output_root=output => relative output base directory\n"
-              << "  multiview_angle=30, multiview_per=9 => 270x270 view images\n"
+              << "  multiview_angle=90, multiview_per=3 => 270x270 view images\n"
               << "  multiview_resolution=150 => each view image is 150x150\n"
               << "  target_rows=150, target_cols=150 => 22500 output images\n"
               << "  each output image size is derived from multiview_angle * multiview_per\n";

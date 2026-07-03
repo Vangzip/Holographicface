@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 2013
-VisualStudioVersion = 12.0.21005.1
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.35425.106
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "multiview", "multiview\multiview.vcxproj", "{30A29C74-5E22-4156-8CDC-5296BCCC5032}"
 EndProject
@@ -14,6 +14,8 @@ EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fliter_rgb", "fliter_RGB\fliter_rgb.vcxproj", "{DCAD9C77-5FFF-4F81-AD64-DDC9894899AF}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "virtualcamera", "virtualcamera\virtualcamera.vcxproj", "{BAB6D85A-C1C1-48E2-899A-BE7486B3FEA4}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Generateimages", "ImageTool9030\Generateimages.vcxproj", "{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -71,8 +73,19 @@ Global
 		{BAB6D85A-C1C1-48E2-899A-BE7486B3FEA4}.Release|Win32.Build.0 = Release|Win32
 		{BAB6D85A-C1C1-48E2-899A-BE7486B3FEA4}.Release|x64.ActiveCfg = Release|x64
 		{BAB6D85A-C1C1-48E2-899A-BE7486B3FEA4}.Release|x64.Build.0 = Release|x64
+		{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}.Debug|Win32.ActiveCfg = Debug|Win32
+		{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}.Debug|Win32.Build.0 = Debug|Win32
+		{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}.Debug|x64.ActiveCfg = Debug|x64
+		{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}.Debug|x64.Build.0 = Debug|x64
+		{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}.Release|Win32.ActiveCfg = Release|Win32
+		{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}.Release|Win32.Build.0 = Release|Win32
+		{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}.Release|x64.ActiveCfg = Release|x64
+		{A8969A6F-F6F9-4B02-9C4D-E51D94C4BE6E}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {9EEC63AA-58D9-4BC6-9EC9-B3891FF834C0}
 	EndGlobalSection
 EndGlobal

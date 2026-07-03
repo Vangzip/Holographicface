@@ -189,9 +189,10 @@ bool modelMoveHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIAction
 										   {
 											   return false;
 										   }
-                                           //每三帧输出一张图片
+                                           // Every two frames, write one image.
+                                           const int captureFrameInterval = 2;
 										   m_frame++;
-                                           if (m_frame <= 3)
+                                           if (m_frame < captureFrameInterval)
                                            {
                                                return false;
                                            }

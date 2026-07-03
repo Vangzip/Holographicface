@@ -11,17 +11,27 @@
 #include "modelMoveHandler.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
+#include <condition_variable>
 #include <cstdlib>
+#include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <list>
+#include <limits>
 #include <map>
+#include <memory>
+#include <mutex>
+#include <new>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -49,7 +59,7 @@ struct HoloConfig {
     int viewCols = 270;
     int viewNameDigits = 3;
     int jpgQuality = 100;
-    int elementalBlockImages = 750;
+    int elementalWriterThreads = 0;
 
     bool runDepthPointCloud = true;
     bool runMesh = true;
@@ -176,7 +186,7 @@ void applyConfig(HoloConfig& config, const fs::path& configPath) {
     config.viewCols = config.viewRows;
     config.viewNameDigits = parseInt(get("view_name_digits"), config.viewNameDigits);
     config.jpgQuality = parseInt(get("jpg_quality"), config.jpgQuality);
-    config.elementalBlockImages = parseInt(get("elemental_block_images"), config.elementalBlockImages);
+    config.elementalWriterThreads = parseInt(get("elemental_writer_threads"), config.elementalWriterThreads);
 
     config.runDepthPointCloud = parseBool(get("run_depth_pointcloud"), config.runDepthPointCloud);
     config.runMesh = parseBool(get("run_mesh"), config.runMesh);
@@ -241,6 +251,142 @@ fs::path findFirstObj(const fs::path& directory) {
 
 bool shouldRunStage(const CliOptions& options, const std::string& stageName) {
     return options.stage == "all" || options.stage == stageName;
+}
+
+struct StageTiming {
+    std::string name;
+    double seconds;
+    int code;
+};
+
+class BoundedIntQueue {
+public:
+    explicit BoundedIntQueue(size_t capacity)
+        : capacity_(std::max<size_t>(1, capacity)) {
+    }
+
+    void push(int value) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        notFull_.wait(lock, [&] { return closed_ || queue_.size() < capacity_; });
+        if (closed_) {
+            return;
+        }
+
+        queue_.push_back(value);
+        notEmpty_.notify_one();
+    }
+
+    bool pop(int& value) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        notEmpty_.wait(lock, [&] { return closed_ || !queue_.empty(); });
+        if (queue_.empty()) {
+            return false;
+        }
+
+        value = queue_.front();
+        queue_.pop_front();
+        notFull_.notify_one();
+        return true;
+    }
+
+    void close() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            closed_ = true;
+        }
+        notEmpty_.notify_all();
+        notFull_.notify_all();
+    }
+
+private:
+    const size_t capacity_;
+    std::deque<int> queue_;
+    std::mutex mutex_;
+    std::condition_variable notEmpty_;
+    std::condition_variable notFull_;
+    bool closed_ = false;
+};
+
+double elapsedSeconds(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
+std::string formatSeconds(double seconds) {
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(3) << seconds;
+    return out.str();
+}
+
+std::string formatBytes(size_t bytes) {
+    const char* units[] = { "B", "KiB", "MiB", "GiB" };
+    double value = static_cast<double>(bytes);
+    int unit = 0;
+    while (value >= 1024.0 && unit < 3) {
+        value /= 1024.0;
+        ++unit;
+    }
+
+    std::ostringstream out;
+    if (unit == 0) {
+        out << static_cast<size_t>(value) << " " << units[unit];
+    }
+    else {
+        out << std::fixed << std::setprecision(2) << value << " " << units[unit];
+    }
+    return out.str();
+}
+
+bool checkedMultiply(size_t left, size_t right, size_t& result) {
+    if (left != 0 && right > std::numeric_limits<size_t>::max() / left) {
+        return false;
+    }
+
+    result = left * right;
+    return true;
+}
+
+int chooseElementalWriterThreads(int requested) {
+    if (requested > 0) {
+        return std::max(1, requested);
+    }
+
+    const unsigned int hardwareThreads = std::thread::hardware_concurrency();
+    const unsigned int fallback = hardwareThreads == 0 ? 2 : hardwareThreads;
+    return static_cast<int>(std::max(1u, std::min(8u, fallback)));
+}
+
+template <typename StageRunner>
+int runTimedStage(const std::string& name, StageRunner&& runner, std::vector<StageTiming>& timings) {
+    const auto start = std::chrono::steady_clock::now();
+    const int code = runner();
+    const double seconds = elapsedSeconds(start);
+    timings.push_back({ name, seconds, code });
+
+    std::cout << "[timing] stage " << name << ": " << formatSeconds(seconds)
+              << "s, result=" << code << std::endl;
+    return code;
+}
+
+void printTimingSummary(const std::vector<StageTiming>& timings) {
+    if (timings.empty()) {
+        return;
+    }
+
+    double total = 0.0;
+    for (const StageTiming& timing : timings) {
+        total += timing.seconds;
+    }
+
+    std::cout << "[timing] summary" << std::endl;
+    for (const StageTiming& timing : timings) {
+        const double percent = total > 0.0 ? timing.seconds * 100.0 / total : 0.0;
+        std::cout << "[timing]   " << std::left << std::setw(10) << timing.name << std::right
+                  << " " << formatSeconds(timing.seconds) << "s"
+                  << " (" << std::fixed << std::setprecision(1) << percent << "%)"
+                  << (timing.code == 0 ? "" : " failed")
+                  << std::endl;
+    }
+    std::cout << "[timing] total measured: " << formatSeconds(total) << "s" << std::endl;
 }
 
 int runDepthStage(const HoloConfig& config, const CliOptions& options) {
@@ -497,62 +643,199 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
                   << ". The target grid should match each view image size." << std::endl;
     }
 
-    const int targetPixels = config.targetRows * config.targetCols;
-    const int blockImages = std::max(1, config.elementalBlockImages);
+    size_t viewCount = 0;
+    size_t targetPixelCount = 0;
+    size_t viewImageBytes = 0;
+    size_t totalViewBytes = 0;
+    size_t outputImageBytes = 0;
+    if (!checkedMultiply(static_cast<size_t>(config.viewRows), static_cast<size_t>(config.viewCols), viewCount)
+        || !checkedMultiply(static_cast<size_t>(config.targetRows), static_cast<size_t>(config.targetCols), targetPixelCount)
+        || !checkedMultiply(targetPixelCount, static_cast<size_t>(3), viewImageBytes)
+        || !checkedMultiply(viewCount, viewImageBytes, totalViewBytes)
+        || !checkedMultiply(viewCount, static_cast<size_t>(3), outputImageBytes)) {
+        std::cerr << "[elemental] image dimensions are too large." << std::endl;
+        return 1;
+    }
+
+    if (targetPixelCount > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        std::cerr << "[elemental] target image count is too large." << std::endl;
+        return 1;
+    }
+
+    const int targetPixels = static_cast<int>(targetPixelCount);
+    const int writerThreads = std::min(static_cast<int>(targetPixelCount), chooseElementalWriterThreads(config.elementalWriterThreads));
     fs::create_directories(config.elementalOutDir);
 
     std::cout << "[elemental] input views: " << config.viewRows << "x" << config.viewCols
               << ", each view: " << sample.cols << "x" << sample.rows << std::endl;
     std::cout << "[elemental] output images: " << config.targetRows << "x" << config.targetCols
               << ", each output: " << config.viewCols << "x" << config.viewRows << std::endl;
-    std::cout << "[elemental] block images: " << blockImages << std::endl;
+    std::cout << "[elemental] view cache: " << viewCount << " images, "
+              << formatBytes(totalViewBytes) << " in memory" << std::endl;
+    std::cout << "[elemental] per-writer output buffer: " << formatBytes(outputImageBytes) << std::endl;
+    std::cout << "[elemental] writer threads: " << writerThreads << std::endl;
 
-    const std::vector<int> jpgParams = { cv::IMWRITE_JPEG_QUALITY, config.jpgQuality };
-    for (int blockStart = 0; blockStart < targetPixels; blockStart += blockImages) {
-        const int currentBlock = std::min(blockImages, targetPixels - blockStart);
-        std::vector<cv::Mat> outputs;
-        outputs.reserve(static_cast<size_t>(currentBlock));
-        for (int i = 0; i < currentBlock; ++i) {
-            outputs.emplace_back(config.viewRows, config.viewCols, CV_8UC3, cv::Scalar(0, 0, 0));
-        }
+    std::unique_ptr<unsigned char[]> viewPixels;
+    try {
+        viewPixels.reset(new unsigned char[totalViewBytes]);
+    }
+    catch (const std::bad_alloc&) {
+        std::cerr << "[elemental] cannot allocate view cache: "
+                  << formatBytes(totalViewBytes) << std::endl;
+        return 1;
+    }
 
-        for (int viewRow = 1; viewRow <= config.viewRows; ++viewRow) {
-            for (int viewCol = 1; viewCol <= config.viewCols; ++viewCol) {
+    const auto loadStart = std::chrono::steady_clock::now();
+    const size_t targetRowBytes = static_cast<size_t>(config.targetCols) * 3;
+    int mismatchedViewImages = 0;
+    const int loadProgressEvery = std::max(1, config.viewRows / 10);
+
+    for (int viewRow = 1; viewRow <= config.viewRows; ++viewRow) {
+        for (int viewCol = 1; viewCol <= config.viewCols; ++viewCol) {
+            cv::Mat input;
+            if (viewRow == 1 && viewCol == 1) {
+                input = sample;
+            }
+            else {
                 const fs::path inputPath = viewPath(config, viewRow, viewCol);
-                cv::Mat input = cv::imread(inputPath.string(), cv::IMREAD_COLOR);
+                input = cv::imread(inputPath.string(), cv::IMREAD_COLOR);
                 if (input.empty()) {
                     std::cerr << "[error] Cannot read multiview image: " << inputPath.string() << std::endl;
                     return 1;
                 }
+            }
 
-                for (int i = 0; i < currentBlock; ++i) {
-                    const int targetIndex = blockStart + i;
-                    const int targetRow = targetIndex / config.targetCols;
-                    const int targetCol = targetIndex % config.targetCols;
-                    if (targetRow >= input.rows || targetCol >= input.cols) {
-                        continue;
-                    }
-                    outputs[static_cast<size_t>(i)].at<cv::Vec3b>(viewRow - 1, viewCol - 1)
-                        = input.at<cv::Vec3b>(targetRow, targetCol);
-                }
+            const size_t viewIndex = static_cast<size_t>(viewRow - 1) * static_cast<size_t>(config.viewCols)
+                + static_cast<size_t>(viewCol - 1);
+            unsigned char* viewBase = viewPixels.get() + viewIndex * viewImageBytes;
+
+            const bool mismatchedSize = input.rows != config.targetRows || input.cols != config.targetCols;
+            if (mismatchedSize) {
+                ++mismatchedViewImages;
+            }
+            if (input.rows < config.targetRows || input.cols < config.targetCols) {
+                std::fill(viewBase, viewBase + viewImageBytes, 0);
+            }
+
+            const int copyRows = std::min(config.targetRows, input.rows);
+            const int copyCols = std::min(config.targetCols, input.cols);
+            const size_t copyBytes = static_cast<size_t>(copyCols) * 3;
+            for (int targetRow = 0; targetRow < copyRows; ++targetRow) {
+                std::memcpy(
+                    viewBase + static_cast<size_t>(targetRow) * targetRowBytes,
+                    input.ptr<unsigned char>(targetRow),
+                    copyBytes);
             }
         }
 
-        for (int i = 0; i < currentBlock; ++i) {
-            const int targetIndex = blockStart + i;
-            const int outputRow = targetIndex / config.targetCols + 1;
-            const int outputCol = targetIndex % config.targetCols + 1;
-            const fs::path outputPath = targetPath(config, outputRow, outputCol);
-            if (!cv::imwrite(outputPath.string(), outputs[static_cast<size_t>(i)], jpgParams)) {
-                std::cerr << "[error] Cannot write output image: " << outputPath.string() << std::endl;
-                return 1;
-            }
+        if (viewRow % loadProgressEvery == 0 || viewRow == config.viewRows) {
+            std::cout << "[elemental] loaded view rows " << viewRow << "/"
+                      << config.viewRows << std::endl;
         }
-
-        std::cout << "[elemental] wrote " << std::min(blockStart + currentBlock, targetPixels)
-                  << "/" << targetPixels << " images" << std::endl;
     }
 
+    if (mismatchedViewImages > 0) {
+        std::cout << "[elemental] warning: " << mismatchedViewImages
+                  << " view images did not match target grid "
+                  << config.targetCols << "x" << config.targetRows << std::endl;
+    }
+    std::cout << "[elemental] loaded view cache in "
+              << formatSeconds(elapsedSeconds(loadStart)) << "s" << std::endl;
+
+    const std::vector<int> jpgParams = { cv::IMWRITE_JPEG_QUALITY, config.jpgQuality };
+    const auto writeStart = std::chrono::steady_clock::now();
+    BoundedIntQueue jobs(static_cast<size_t>(std::max(16, writerThreads * 4)));
+    std::atomic<int> completedImages(0);
+    std::atomic<bool> failed(false);
+    std::mutex logMutex;
+    std::mutex errorMutex;
+    std::string firstError;
+    const int progressEvery = std::max(1, targetPixels / 10);
+
+    auto recordError = [&](const std::string& message) {
+        if (!failed.exchange(true)) {
+            std::lock_guard<std::mutex> lock(errorMutex);
+            firstError = message;
+        }
+    };
+
+    auto writer = [&] {
+        cv::Mat output;
+        int targetIndex = 0;
+        while (jobs.pop(targetIndex)) {
+            if (!failed.load()) {
+                try {
+                    output.create(config.viewRows, config.viewCols, CV_8UC3);
+                    const int targetRow = targetIndex / config.targetCols;
+                    const int targetCol = targetIndex % config.targetCols;
+                    const size_t targetOffset = (static_cast<size_t>(targetRow) * static_cast<size_t>(config.targetCols)
+                        + static_cast<size_t>(targetCol)) * 3;
+
+                    unsigned char* dst = output.ptr<unsigned char>(0);
+                    for (size_t viewIndex = 0; viewIndex < viewCount; ++viewIndex) {
+                        const unsigned char* src = viewPixels.get() + viewIndex * viewImageBytes + targetOffset;
+                        dst[0] = src[0];
+                        dst[1] = src[1];
+                        dst[2] = src[2];
+                        dst += 3;
+                    }
+
+                    const int outputRow = targetRow + 1;
+                    const int outputCol = targetCol + 1;
+                    const fs::path outputPath = targetPath(config, outputRow, outputCol);
+                    if (!cv::imwrite(outputPath.string(), output, jpgParams)) {
+                        recordError("[error] Cannot write output image: " + outputPath.string());
+                    }
+                }
+                catch (const std::exception& ex) {
+                    recordError(std::string("[error] Elemental writer failed: ") + ex.what());
+                }
+            }
+
+            const int done = ++completedImages;
+            if (done % progressEvery == 0 || done == targetPixels) {
+                std::lock_guard<std::mutex> lock(logMutex);
+                std::cout << "[elemental] wrote " << done << "/" << targetPixels
+                          << " images" << std::endl;
+            }
+        }
+    };
+
+    std::vector<std::thread> workers;
+    workers.reserve(static_cast<size_t>(writerThreads));
+    try {
+        for (int i = 0; i < writerThreads; ++i) {
+            workers.emplace_back(writer);
+        }
+    }
+    catch (const std::exception& ex) {
+        jobs.close();
+        for (std::thread& worker : workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+        std::cerr << "[elemental] cannot start writer thread: " << ex.what() << std::endl;
+        return 1;
+    }
+
+    for (int targetIndex = 0; targetIndex < targetPixels; ++targetIndex) {
+        jobs.push(targetIndex);
+    }
+    jobs.close();
+
+    for (std::thread& worker : workers) {
+        worker.join();
+    }
+
+    if (failed.load()) {
+        std::lock_guard<std::mutex> lock(errorMutex);
+        std::cerr << firstError << std::endl;
+        return 1;
+    }
+
+    std::cout << "[elemental] wrote output images in "
+              << formatSeconds(elapsedSeconds(writeStart)) << "s" << std::endl;
     return 0;
 }
 
@@ -589,32 +872,38 @@ CliOptions parseCli(int argc, char* argv[]) {
 }
 
 int runPipeline(HoloConfig& config, const CliOptions& options) {
+    std::vector<StageTiming> timings;
+    auto finish = [&](int code) {
+        printTimingSummary(timings);
+        return code;
+    };
+
     if (shouldRunStage(options, "depth") && config.runDepthPointCloud) {
-        const int code = runDepthStage(config, options);
-        if (code != 0) return code;
+        const int code = runTimedStage("depth", [&] { return runDepthStage(config, options); }, timings);
+        if (code != 0) return finish(code);
     }
 
     if (shouldRunStage(options, "mesh") && config.runMesh) {
-        const int code = runMeshStage(config, options);
-        if (code != 0) return code;
+        const int code = runTimedStage("mesh", [&] { return runMeshStage(config, options); }, timings);
+        if (code != 0) return finish(code);
     }
 
     if (shouldRunStage(options, "model") && config.runTexturedModel) {
-        const int code = runModelStage(config, options);
-        if (code != 0) return code;
+        const int code = runTimedStage("model", [&] { return runModelStage(config, options); }, timings);
+        if (code != 0) return finish(code);
     }
 
     if (shouldRunStage(options, "multiview") && config.runMultiview) {
-        const int code = runMultiviewStage(config, options);
-        if (code != 0) return code;
+        const int code = runTimedStage("multiview", [&] { return runMultiviewStage(config, options); }, timings);
+        if (code != 0) return finish(code);
     }
 
     if (shouldRunStage(options, "elemental") && config.runElemental) {
-        const int code = runElementalStage(config, options);
-        if (code != 0) return code;
+        const int code = runTimedStage("elemental", [&] { return runElementalStage(config, options); }, timings);
+        if (code != 0) return finish(code);
     }
 
-    return 0;
+    return finish(0);
 }
 
 } // namespace

@@ -25,6 +25,7 @@ multiview_per=9
 multiview_resolution=150
 target_rows=150
 target_cols=150
+elemental_writer_threads=0
 ```
 
 Meaning:

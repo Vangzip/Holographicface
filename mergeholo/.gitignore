@@ -1,0 +1,17 @@
+/00-bin/
+/FF-tmp/
+/debug/
+/release/
+/runs/
+/runtime/holoLib/
+/samples/
+/.qmake.stash
+/Makefile
+/Makefile.Debug
+/Makefile.Release
+*.user
+*.suo
+*.VC.db
+*.opendb
+.svn/
+*.autosave

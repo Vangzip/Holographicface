@@ -5,10 +5,6 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
 #include "ConverPointCloud.h"
 #include "FileLibrary.h"
 #include "depth_io.h"
@@ -47,7 +43,6 @@ struct HoloConfig {
     fs::path depthConfig;
     fs::path meshConfig;
     fs::path meshObj;
-    fs::path meshWorkerLogDir;
 
     fs::path outputRoot;
     fs::path multiviewOutDir;
@@ -74,11 +69,9 @@ struct HoloConfig {
     bool runTexturedModel = true;
     bool runMultiview = true;
     bool runElemental = true;
-    int meshWorkerProcesses = 1;
 };
 
 struct CliOptions {
-    fs::path executablePath;
     fs::path configPath;
     fs::path inputPath;
     std::string stage = "all";
@@ -195,7 +188,6 @@ void applyConfig(HoloConfig& config, const fs::path& configPath) {
     config.outputRoot = resolvePathOrDefault(configDir, get("output_root"), "output");
     config.multiviewOutDir = resolvePathOrDefault(config.outputRoot, get("multiview_out_dir"), "multiview");
     config.elementalOutDir = resolvePathOrDefault(config.outputRoot, get("elemental_out_dir"), "elemental");
-    config.meshWorkerLogDir = resolvePathOrDefault(config.outputRoot, get("mesh_worker_log_dir"), "mesh_worker_logs");
 
     if (!get("model_type").empty()) config.modelType = get("model_type");
     config.multiviewAngle = parseInt(get("multiview_angle"), config.multiviewAngle);
@@ -242,7 +234,6 @@ void applyConfig(HoloConfig& config, const fs::path& configPath) {
     config.runTexturedModel = parseBool(get("run_textured_model"), config.runTexturedModel);
     config.runMultiview = parseBool(get("run_multiview"), config.runMultiview);
     config.runElemental = parseBool(get("run_elemental"), config.runElemental);
-    config.meshWorkerProcesses = parseInt(get("mesh_worker_processes"), config.meshWorkerProcesses);
 }
 
 bool requireExists(const fs::path& path, const std::string& label) {
@@ -316,16 +307,6 @@ fs::path meshOutputPath(const HoloConfig& config, const fs::path& inputPath) {
     }
 
     return config.depthInputDir / (baseName + "_mesh.ply");
-}
-
-std::string sanitizeLogStem(std::string value) {
-    for (char& ch : value) {
-        const unsigned char uch = static_cast<unsigned char>(ch);
-        if (!std::isalnum(uch) && ch != '-' && ch != '_') {
-            ch = '_';
-        }
-    }
-    return value.empty() ? "mesh" : value;
 }
 
 struct StageTiming {
@@ -510,268 +491,47 @@ int runDepthStage(const HoloConfig& config, const CliOptions& options) {
     return failed == 0 ? 0 : 1;
 }
 
-int runMeshOneStage(const HoloConfig& config, const CliOptions& options) {
-    if (options.inputPath.empty()) {
-        std::cerr << "[mesh-one] --input is required." << std::endl;
-        return 1;
-    }
-    if (!requireExists(options.inputPath, "mesh-one input")
+int runSingleMeshInput(
+    const HoloConfig& config,
+    const fs::path& inputPath,
+    bool dryRun,
+    const std::string& label) {
+    if (!requireExists(inputPath, label + " input")
         || !requireExists(config.meshConfig, "mesh_config")) {
         return 1;
     }
 
-    const fs::path outputPath = meshOutputPath(config, options.inputPath);
-    if (options.dryRun) {
-        std::cout << "[mesh-one] " << options.inputPath.string()
+    const fs::path outputPath = meshOutputPath(config, inputPath);
+    if (dryRun) {
+        std::cout << "[" << label << "] " << inputPath.string()
                   << " -> " << outputPath.string() << std::endl;
         return 0;
     }
 
     ConverPointCloud converter;
-    std::cout << "[mesh-one] " << options.inputPath.string() << std::endl;
+    std::cout << "[" << label << "] " << inputPath.string() << std::endl;
     const bool ok = converter.meshAPI(
-        options.inputPath.string(),
+        inputPath.string(),
         config.meshConfig.string(),
         config.depthInputDir.string());
     if (!ok) {
         return 1;
     }
     if (!fs::exists(outputPath)) {
-        std::cerr << "[mesh-one] expected output was not created: "
+        std::cerr << "[" << label << "] expected output was not created: "
                   << outputPath.string() << std::endl;
         return 1;
     }
     return 0;
 }
 
-struct MeshWorkerResult {
-    fs::path inputPath;
-    fs::path outputPath;
-    fs::path stdoutLog;
-    fs::path stderrLog;
-    double seconds = 0.0;
-    unsigned long exitCode = 1;
-    bool started = false;
-    bool outputExists = false;
-};
-
-std::string formatWorkerExitCode(unsigned long code) {
-    std::ostringstream out;
-    out << code;
-    if (code > 255) {
-        out << " (0x" << std::uppercase << std::hex << code << std::dec << ")";
-    }
-    return out.str();
-}
-
-#ifdef _WIN32
-std::wstring quoteWindowsArg(const std::wstring& value) {
-    std::wstring out = L"\"";
-    for (wchar_t ch : value) {
-        if (ch == L'"') {
-            out += L"\\\"";
-        }
-        else {
-            out += ch;
-        }
-    }
-    out += L"\"";
-    return out;
-}
-
-MeshWorkerResult runMeshWorkerProcess(
-    const HoloConfig& config,
-    const CliOptions& options,
-    const fs::path& inputPath,
-    int taskIndex) {
-    MeshWorkerResult result;
-    result.inputPath = inputPath;
-    result.outputPath = meshOutputPath(config, inputPath);
-
-    const std::string stem = sanitizeLogStem(inputPath.stem().string());
-    const std::string prefix = padNumber(taskIndex + 1, 4) + "_" + stem;
-    result.stdoutLog = config.meshWorkerLogDir / (prefix + ".stdout.log");
-    result.stderrLog = config.meshWorkerLogDir / (prefix + ".stderr.log");
-
-    SECURITY_ATTRIBUTES securityAttributes;
-    securityAttributes.nLength = sizeof(securityAttributes);
-    securityAttributes.lpSecurityDescriptor = nullptr;
-    securityAttributes.bInheritHandle = TRUE;
-
-    HANDLE stdoutHandle = CreateFileW(
-        result.stdoutLog.wstring().c_str(),
-        GENERIC_WRITE,
-        FILE_SHARE_READ,
-        &securityAttributes,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr);
-    if (stdoutHandle == INVALID_HANDLE_VALUE) {
-        std::cerr << "[mesh] cannot create worker stdout log: "
-                  << result.stdoutLog.string() << std::endl;
-        return result;
+int runMeshOneStage(const HoloConfig& config, const CliOptions& options) {
+    if (options.inputPath.empty()) {
+        std::cerr << "[mesh-one] --input is required." << std::endl;
+        return 1;
     }
 
-    HANDLE stderrHandle = CreateFileW(
-        result.stderrLog.wstring().c_str(),
-        GENERIC_WRITE,
-        FILE_SHARE_READ,
-        &securityAttributes,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr);
-    if (stderrHandle == INVALID_HANDLE_VALUE) {
-        CloseHandle(stdoutHandle);
-        std::cerr << "[mesh] cannot create worker stderr log: "
-                  << result.stderrLog.string() << std::endl;
-        return result;
-    }
-
-    STARTUPINFOW startupInfo;
-    std::memset(&startupInfo, 0, sizeof(startupInfo));
-    startupInfo.cb = sizeof(startupInfo);
-    startupInfo.dwFlags = STARTF_USESTDHANDLES;
-    startupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-    startupInfo.hStdOutput = stdoutHandle;
-    startupInfo.hStdError = stderrHandle;
-
-    PROCESS_INFORMATION processInfo;
-    std::memset(&processInfo, 0, sizeof(processInfo));
-
-    const fs::path executablePath = fs::absolute(options.executablePath);
-    const fs::path configPath = fs::absolute(options.configPath);
-    const fs::path absoluteInput = fs::absolute(inputPath);
-
-    std::wstring commandLine = quoteWindowsArg(executablePath.wstring())
-        + L" --config " + quoteWindowsArg(configPath.wstring())
-        + L" --stage mesh-one --input " + quoteWindowsArg(absoluteInput.wstring());
-    std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
-    mutableCommandLine.push_back(L'\0');
-
-    const std::wstring workingDirectory = fs::current_path().wstring();
-    const auto start = std::chrono::steady_clock::now();
-    const BOOL created = CreateProcessW(
-        nullptr,
-        mutableCommandLine.data(),
-        nullptr,
-        nullptr,
-        TRUE,
-        CREATE_NO_WINDOW,
-        nullptr,
-        workingDirectory.c_str(),
-        &startupInfo,
-        &processInfo);
-
-    CloseHandle(stdoutHandle);
-    CloseHandle(stderrHandle);
-
-    if (!created) {
-        std::cerr << "[mesh] cannot start worker for " << inputPath.string()
-                  << ", GetLastError=" << GetLastError() << std::endl;
-        return result;
-    }
-
-    result.started = true;
-    WaitForSingleObject(processInfo.hProcess, INFINITE);
-
-    DWORD exitCode = 1;
-    if (GetExitCodeProcess(processInfo.hProcess, &exitCode)) {
-        result.exitCode = static_cast<unsigned long>(exitCode);
-    }
-
-    CloseHandle(processInfo.hThread);
-    CloseHandle(processInfo.hProcess);
-
-    result.seconds = elapsedSeconds(start);
-    result.outputExists = fs::exists(result.outputPath);
-    return result;
-}
-#else
-MeshWorkerResult runMeshWorkerProcess(
-    const HoloConfig&,
-    const CliOptions&,
-    const fs::path& inputPath,
-    int) {
-    MeshWorkerResult result;
-    result.inputPath = inputPath;
-    std::cerr << "[mesh] worker processes are only implemented on Windows." << std::endl;
-    return result;
-}
-#endif
-
-int runMeshWorkerPool(
-    const HoloConfig& config,
-    const CliOptions& options,
-    const std::vector<fs::path>& files) {
-    if (files.empty()) {
-        return 0;
-    }
-
-    fs::create_directories(config.meshWorkerLogDir);
-    const int workerCount = std::max(1, std::min(config.meshWorkerProcesses, static_cast<int>(files.size())));
-    std::cout << "[mesh] worker processes: " << workerCount
-              << ", tasks: " << files.size()
-              << ", logs: " << config.meshWorkerLogDir.string() << std::endl;
-
-    std::atomic<int> nextTask(0);
-    std::atomic<int> completed(0);
-    std::mutex resultMutex;
-    std::mutex logMutex;
-    std::vector<MeshWorkerResult> results(files.size());
-
-    auto worker = [&] {
-        while (true) {
-            const int taskIndex = nextTask.fetch_add(1);
-            if (taskIndex >= static_cast<int>(files.size())) {
-                break;
-            }
-
-            {
-                std::lock_guard<std::mutex> lock(logMutex);
-                std::cout << "[mesh] worker start " << (taskIndex + 1) << "/"
-                          << files.size() << ": " << files[taskIndex].string() << std::endl;
-            }
-            MeshWorkerResult result = runMeshWorkerProcess(config, options, files[taskIndex], taskIndex);
-            {
-                std::lock_guard<std::mutex> lock(resultMutex);
-                results[static_cast<size_t>(taskIndex)] = result;
-            }
-
-            const int done = ++completed;
-            {
-                std::lock_guard<std::mutex> lock(logMutex);
-                std::cout << "[mesh] worker done " << done << "/" << files.size()
-                          << ": " << files[taskIndex].filename().string()
-                          << ", exit=" << formatWorkerExitCode(result.exitCode)
-                          << ", output=" << (result.outputExists ? "yes" : "no")
-                          << ", seconds=" << formatSeconds(result.seconds) << std::endl;
-            }
-        }
-    };
-
-    std::vector<std::thread> threads;
-    threads.reserve(static_cast<size_t>(workerCount));
-    for (int i = 0; i < workerCount; ++i) {
-        threads.emplace_back(worker);
-    }
-    for (std::thread& thread : threads) {
-        thread.join();
-    }
-
-    int failed = 0;
-    for (const MeshWorkerResult& result : results) {
-        if (!result.started || result.exitCode != 0 || !result.outputExists) {
-            ++failed;
-            std::cerr << "[mesh] worker failed: " << result.inputPath.string()
-                      << ", exit=" << formatWorkerExitCode(result.exitCode)
-                      << ", stdout=" << result.stdoutLog.string()
-                      << ", stderr=" << result.stderrLog.string() << std::endl;
-        }
-    }
-
-    std::cout << "[mesh] worker summary: " << (files.size() - failed)
-              << "/" << files.size() << " succeeded" << std::endl;
-    return failed == 0 ? 0 : 1;
+    return runSingleMeshInput(config, options.inputPath, options.dryRun, "mesh-one");
 }
 
 int runMeshStage(const HoloConfig& config, const CliOptions& options) {
@@ -780,41 +540,24 @@ int runMeshStage(const HoloConfig& config, const CliOptions& options) {
         return 1;
     }
 
-    if (options.dryRun) {
-        std::cout << "[mesh] scan " << config.depthInputDir.string()
-                  << " and write *_mesh.ply with " << config.meshConfig.string() << std::endl;
-        std::cout << "[mesh] worker processes: "
-                  << std::max(1, config.meshWorkerProcesses) << std::endl;
-        return 0;
-    }
-
-    std::list<std::string> files;
-    FileLibrary::getInstance()->getAllSubFiles(config.depthInputDir.string(), files, false, true, false, "_rgb.ply");
-    if (files.empty()) {
-        std::cerr << "[mesh] no *_rgb.ply files found in " << config.depthInputDir.string() << std::endl;
-        return 1;
-    }
-
-    std::vector<fs::path> meshInputs;
-    meshInputs.reserve(files.size());
-    for (const std::string& plyFile : files) {
-        meshInputs.push_back(plyFile);
-    }
-
-    if (config.meshWorkerProcesses > 1) {
-        return runMeshWorkerPool(config, options, meshInputs);
-    }
-
-    ConverPointCloud converter;
-    int failed = 0;
-    for (const fs::path& plyFile : meshInputs) {
-        std::cout << "[mesh] " << plyFile.string() << std::endl;
-        if (!converter.meshAPI(plyFile.string(), config.meshConfig.string(), config.depthInputDir.string())) {
-            ++failed;
+    fs::path inputPath = options.inputPath;
+    if (inputPath.empty()) {
+        std::list<std::string> files;
+        FileLibrary::getInstance()->getAllSubFiles(config.depthInputDir.string(), files, false, true, false, "_rgb.ply");
+        if (files.empty()) {
+            std::cerr << "[mesh] no *_rgb.ply files found in "
+                      << config.depthInputDir.string() << std::endl;
+            return 1;
         }
+        if (files.size() > 1) {
+            std::cerr << "[mesh] found " << files.size()
+                      << " *_rgb.ply files; pass --input to choose one." << std::endl;
+            return 1;
+        }
+        inputPath = files.front();
     }
 
-    return failed == 0 ? 0 : 1;
+    return runSingleMeshInput(config, inputPath, options.dryRun, "mesh");
 }
 
 int runModelStage(const HoloConfig& config, const CliOptions& options) {
@@ -1227,6 +970,7 @@ void printUsage() {
     std::cout << "Holo pipeline\n"
               << "Usage:\n"
               << "  Holo.exe --config holo_config.ini [--stage all|depth|mesh|mesh-one|model|multiview|elemental] [--input file] [--dry-run]\n\n"
+              << "  mesh processes one PLY. Pass --input when depth_input_dir has multiple *_rgb.ply files.\n\n"
               << "Default target setup:\n"
               << "  output_root=output => relative output base directory\n"
               << "  multiview_angle=90, multiview_per=3 => 270x270 view images\n"
@@ -1237,9 +981,6 @@ void printUsage() {
 
 CliOptions parseCli(int argc, char* argv[]) {
     CliOptions options;
-    if (argc > 0 && argv[0] != nullptr) {
-        options.executablePath = argv[0];
-    }
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
@@ -1304,7 +1045,7 @@ int runPipeline(HoloConfig& config, const CliOptions& options) {
 } // namespace
 
 int runHoloPipelineCli(int argc, char* argv[]) {
-    CliOptions options = parseCli(argc, argv);
+    const CliOptions options = parseCli(argc, argv);
     if (options.showHelp) {
         printUsage();
         return 0;
@@ -1320,8 +1061,6 @@ int runHoloPipelineCli(int argc, char* argv[]) {
         std::cerr << "\n[error] Config file not found: " << configPath.string() << std::endl;
         return 1;
     }
-    options.configPath = configPath;
-
     try {
         HoloConfig config;
         applyConfig(config, configPath);

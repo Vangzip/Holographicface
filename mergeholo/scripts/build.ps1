@@ -151,6 +151,40 @@ function Deploy-CameraRuntime {
     }
 }
 
+function Deploy-MsvcRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string]$DestinationRoot,
+        [Parameter(Mandatory = $true)][string]$VsDevCmdPath
+    )
+
+    $VsRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $VsDevCmdPath))
+    $RedistRoot = Join-Path $VsRoot "VC\Redist\MSVC"
+    if (-not (Test-Path -LiteralPath $RedistRoot)) {
+        Write-Warning "MSVC redist root not found: $RedistRoot"
+        return
+    }
+
+    $RedistDir = Get-ChildItem -LiteralPath $RedistRoot -Directory |
+        Sort-Object Name -Descending |
+        ForEach-Object {
+            Get-ChildItem -LiteralPath (Join-Path $_.FullName "x64") -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like "Microsoft.VC*.CRT" } |
+                Select-Object -First 1
+        } |
+        Select-Object -First 1
+
+    if (-not $RedistDir) {
+        Write-Warning "MSVC x64 redist directory not found under: $RedistRoot"
+        return
+    }
+
+    Copy-FileSet -SourceDir $RedistDir.FullName -DestinationDir $DestinationRoot -Patterns @(
+        "concrt140.dll",
+        "msvcp140*.dll",
+        "vcruntime140*.dll"
+    )
+}
+
 function Deploy-MergeHoloConfig {
     param([Parameter(Mandatory = $true)][string]$DestinationRoot)
 
@@ -180,6 +214,7 @@ try {
         }
         Deploy-HoloPipelineRuntime -DestinationRoot $OutDir
         Deploy-CameraRuntime -DestinationRoot $OutDir
+        Deploy-MsvcRuntime -DestinationRoot $OutDir -VsDevCmdPath $VsDevCmd
         Deploy-MergeHoloConfig -DestinationRoot $OutDir
     }
 }

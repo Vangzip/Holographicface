@@ -300,6 +300,15 @@ void CaptureWindow::pollCameraFrame()
     if (!capture_ || state_ != State::Live) {
         return;
     }
+    if (capture_->hasError()) {
+        const QString errorMessage = QString::fromStdString(capture_->lastError());
+        releaseCamera();
+        setState(State::Error);
+        setProgress(0, "相机采集失败");
+        QMessageBox::warning(this, "相机采集失败",
+            errorMessage.isEmpty() ? "相机采集线程已停止。" : errorMessage);
+        return;
+    }
 
     LightFieldCapture::HoloOutData frame;
     bool gotFrame = false;

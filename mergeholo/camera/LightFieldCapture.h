@@ -2,7 +2,10 @@
 #define LightFieldCapture_H
 
 #include <iostream>
+#include <atomic>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <tuple>
 #include <functional>
@@ -87,9 +90,13 @@ public:
         void StartCapture();
     // 提供读取队列数据的接口（保留兼容性）
     bool GetHoloOutData(HoloOutData& outHoloData);
+    bool hasError() const;
+    bool isRunning() const;
+    std::string lastError() const;
 
 private:
     void run();
+    void setError(const std::string& message);
 
     // 光场相机读取到的原始图像保存
     void save(jp_lightfield::strLightFieldInput& data);
@@ -105,7 +112,11 @@ private:
 private:
     // std::function<void(HoloOutData&&)> m_callback;
     std::unique_ptr<std::thread> readThread_;
-    bool m_is_stop{ false };
+    std::atomic<bool> m_is_stop{ false };
+    std::atomic<bool> m_isRunning{ false };
+    std::atomic<bool> m_hasError{ false };
+    mutable std::mutex m_errorMutex;
+    std::string m_lastError;
     bool m_isInitSuccess{ true };
     int m_rawdatacount{ 0 };
     JP::threadsafe_queue<HoloOutData> m_queueHoloData;

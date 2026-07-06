@@ -3,6 +3,10 @@
 // #include "SendMainDefine.h"
 #include<QDebug>
 
+#include <chrono>
+#include <exception>
+#include <sstream>
+
 
 struct strTempDataCh2
 {
@@ -25,6 +29,14 @@ LightFieldCapture::~LightFieldCapture()
 
 bool LightFieldCapture::initialize(const void *config)
 {
+    m_is_stop.store(false, std::memory_order_release);
+    m_isRunning.store(false, std::memory_order_release);
+    m_hasError.store(false, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(m_errorMutex);
+        m_lastError.clear();
+    }
+
     auto *p = reinterpret_cast<const HoloInData *>(config); // 将配置参数转换为 HoloInData 结构体   
         if (!p)
         {
@@ -109,10 +121,15 @@ void LightFieldCapture:: StartCapture()
 void LightFieldCapture::run()
 {
     qDebug() << ("LightFieldCapture::run()");
+    m_isRunning.store(true, std::memory_order_release);
 
     jp_lightfield::strCameraData lightRowData;      //光场原始数据
     jp_lightfield::strLightFieldInput m_parseInput; // 解析接口的入参数据结构
     jp_lightfield::strLightFieldOutput m_parseOut; // 解析接口的出参数据结构
+    int consecutiveCaptureFailures = 0;
+    int consecutiveParseFailures = 0;
+    const int maxConsecutiveCaptureFailures = 100;
+    const int maxConsecutiveParseFailures = 30;
 
 
 #if DEBUG_MODULE_LIGHT_LOG
@@ -120,15 +137,27 @@ void LightFieldCapture::run()
     auto startTime = std::chrono::system_clock::now();
 #endif
     //循环读取
-    while(!m_is_stop)
+    try
+    {
+    while(!m_is_stop.load(std::memory_order_acquire))
     {
 #if DEBUG_MODULE_LIGHT_LOG
         auto st = std::chrono::system_clock::now();
 #endif
         int res = ICam->Capture(lightRowData);
         if (res != 0){      // 结果=0表示读取数据成功
+            ++consecutiveCaptureFailures;
+            if (consecutiveCaptureFailures >= maxConsecutiveCaptureFailures) {
+                std::ostringstream message;
+                message << "Camera capture failed " << consecutiveCaptureFailures
+                    << " times consecutively, last code=" << res;
+                setError(message.str());
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
             continue;
         }
+        consecutiveCaptureFailures = 0;
 
 #if DEBUG_MODULE_LIGHT_LOG
         auto st1 = std::chrono::system_clock::now();
@@ -151,17 +180,27 @@ void LightFieldCapture::run()
 
          res = IParse->Parse(m_parseInput, m_parseOut);
         if (res != 0){      // 结果=0表示读取数据成功
+            ++consecutiveParseFailures;
+            if (consecutiveParseFailures >= maxConsecutiveParseFailures) {
+                std::ostringstream message;
+                message << "Camera frame parse failed " << consecutiveParseFailures
+                    << " times consecutively, last code=" << res;
+                setError(message.str());
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
+        consecutiveParseFailures = 0;
 #if DEBUG_MODULE_LIGHT_LOG
         auto st3 = std::chrono::system_clock::now();
 #endif
 
         HoloOutData holoData;
-        holoData.img2d = m_parseOut.img2d;
-        holoData.img3d = m_parseOut.img3d;
-        holoData.depthMap = m_parseOut.depthMap;
-        holoData.rawData = lightRowData.data;
+        holoData.img2d = m_parseOut.img2d.clone();
+        holoData.img3d = m_parseOut.img3d.clone();
+        holoData.depthMap = m_parseOut.depthMap.clone();
+        holoData.rawData = lightRowData.data.clone();
         holoData.tv = lightRowData.tv;
         holoData.tempreture[0] = m_parseInput.tempreture[0];
         holoData.tempreture[1] = m_parseInput.tempreture[1];
@@ -196,6 +235,14 @@ void LightFieldCapture::run()
 #endif
 
     }
+    }
+    catch (const std::exception& ex) {
+        setError(std::string("Camera capture thread failed: ") + ex.what());
+    }
+    catch (...) {
+        setError("Camera capture thread failed with an unknown exception.");
+    }
+    m_isRunning.store(false, std::memory_order_release);
 }
 
 void LightFieldCapture::save(jp_lightfield::strLightFieldInput &data)
@@ -235,6 +282,33 @@ bool LightFieldCapture::GetHoloOutData(HoloOutData& outHoloData)
     return m_queueHoloData.pop(outHoloData);
 }
 
+bool LightFieldCapture::hasError() const
+{
+    return m_hasError.load(std::memory_order_acquire);
+}
+
+bool LightFieldCapture::isRunning() const
+{
+    return m_isRunning.load(std::memory_order_acquire);
+}
+
+std::string LightFieldCapture::lastError() const
+{
+    std::lock_guard<std::mutex> lock(m_errorMutex);
+    return m_lastError;
+}
+
+void LightFieldCapture::setError(const std::string& message)
+{
+    {
+        std::lock_guard<std::mutex> lock(m_errorMutex);
+        m_lastError = message;
+    }
+    m_hasError.store(true, std::memory_order_release);
+    m_is_stop.store(true, std::memory_order_release);
+    qDebug() << message.c_str();
+}
+
  /*
 int LightFieldCapture::readData(char* buffer, int length)
 {
@@ -264,23 +338,24 @@ int LightFieldCapture::readData(char* buffer, int length)
 void LightFieldCapture::release()
 {
     qDebug() << ("LightFieldCapture::release()");
-    m_is_stop = true;
+    m_is_stop.store(true, std::memory_order_release);
     if(readThread_ && readThread_->joinable())
     {
         readThread_->join();
         readThread_.reset(nullptr);
     }
 
-    if(IParse)
+    if(IParse) {
         jp_lightfield::JpIParse::ReleaseIParse(IParse);
+        IParse = nullptr;
+    }
 
-    if(ICam)
+    if(ICam) {
         jp_lightfield::JpICamera::ReleaseICamera(ICam);     
+        ICam = nullptr;
+    }
+    m_isRunning.store(false, std::memory_order_release);
 }
-
-
-
-
 
 
 

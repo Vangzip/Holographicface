@@ -176,6 +176,11 @@ int runCaptureSession(const CaptureSessionOptions& options)
             qDebug() << "Max saved frames reached.";
             break;
         }
+        if (capture.hasError()) {
+            qDebug() << "Camera capture failed:" << capture.lastError().c_str();
+            g_captureForShutdown = nullptr;
+            return 1;
+        }
 
         LightFieldCapture::HoloOutData data;
         if (!capture.GetHoloOutData(data)) {

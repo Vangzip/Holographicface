@@ -402,13 +402,8 @@ bool checkedMultiply(size_t left, size_t right, size_t& result) {
 }
 
 int chooseElementalWriterThreads(int requested) {
-    if (requested > 0) {
-        return std::max(1, requested);
-    }
-
-    const unsigned int hardwareThreads = std::thread::hardware_concurrency();
-    const unsigned int fallback = hardwareThreads == 0 ? 2 : hardwareThreads;
-    return static_cast<int>(std::max(1u, std::min(8u, fallback)));
+    (void)requested;
+    return 1;
 }
 
 template <typename StageRunner>
@@ -863,7 +858,6 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
 
     const std::vector<int> jpgParams = { cv::IMWRITE_JPEG_QUALITY, config.jpgQuality };
     const auto writeStart = std::chrono::steady_clock::now();
-    BoundedIntQueue jobs(static_cast<size_t>(std::max(16, writerThreads * 4)));
     std::atomic<int> completedImages(0);
     std::atomic<bool> failed(false);
     std::mutex logMutex;
@@ -878,49 +872,51 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
         }
     };
 
-    auto writer = [&] {
-        cv::Mat output;
-        int targetIndex = 0;
-        while (jobs.pop(targetIndex)) {
-            if (!failed.load()) {
-                try {
-                    output.create(config.viewRows, config.viewCols, CV_8UC3);
-                    const int targetRow = targetIndex / config.targetCols;
-                    const int targetCol = targetIndex % config.targetCols;
-                    const size_t targetOffset = (static_cast<size_t>(targetRow) * static_cast<size_t>(config.targetCols)
-                        + static_cast<size_t>(targetCol)) * 3;
+    auto writeOne = [&](int targetIndex) {
+        if (!failed.load()) {
+            try {
+                cv::Mat output(config.viewRows, config.viewCols, CV_8UC3);
+                const int targetRow = targetIndex / config.targetCols;
+                const int targetCol = targetIndex % config.targetCols;
+                const size_t targetOffset = (static_cast<size_t>(targetRow) * static_cast<size_t>(config.targetCols)
+                    + static_cast<size_t>(targetCol)) * 3;
 
-                    for (int outputViewRow = 0; outputViewRow < config.viewRows; ++outputViewRow) {
-                        const int sourceViewRow = config.elementalFlipViewRows
-                            ? config.viewRows - 1 - outputViewRow
-                            : outputViewRow;
-                        unsigned char* dst = output.ptr<unsigned char>(outputViewRow);
-                        const size_t sourceViewRowOffset = static_cast<size_t>(sourceViewRow)
-                            * static_cast<size_t>(config.viewCols);
-                        for (int outputViewCol = 0; outputViewCol < config.viewCols; ++outputViewCol) {
-                            const size_t viewIndex = sourceViewRowOffset + static_cast<size_t>(outputViewCol);
-                            const unsigned char* src = viewPixels.get() + viewIndex * viewImageBytes + targetOffset;
-                            dst[0] = src[0];
-                            dst[1] = src[1];
-                            dst[2] = src[2];
-                            dst += 3;
-                        }
-                    }
-
-                    const int outputRow = targetRow + 1;
-                    const int outputCol = targetCol + 1;
-                    const fs::path outputPath = targetPath(config, outputRow, outputCol);
-                    if (!cv::imwrite(outputPath.string(), output, jpgParams)) {
-                        recordError("[error] Cannot write output image: " + outputPath.string());
+                for (int outputViewRow = 0; outputViewRow < config.viewRows; ++outputViewRow) {
+                    const int sourceViewRow = config.elementalFlipViewRows
+                        ? config.viewRows - 1 - outputViewRow
+                        : outputViewRow;
+                    unsigned char* dst = output.ptr<unsigned char>(outputViewRow);
+                    const size_t sourceViewRowOffset = static_cast<size_t>(sourceViewRow)
+                        * static_cast<size_t>(config.viewCols);
+                    for (int outputViewCol = 0; outputViewCol < config.viewCols; ++outputViewCol) {
+                        const size_t viewIndex = sourceViewRowOffset + static_cast<size_t>(outputViewCol);
+                        const unsigned char* src = viewPixels.get() + viewIndex * viewImageBytes + targetOffset;
+                        dst[0] = src[0];
+                        dst[1] = src[1];
+                        dst[2] = src[2];
+                        dst += 3;
                     }
                 }
-                catch (const std::exception& ex) {
-                    recordError(std::string("[error] Elemental writer failed: ") + ex.what());
+
+                const int outputRow = targetRow + 1;
+                const int outputCol = targetCol + 1;
+                const fs::path outputPath = targetPath(config, outputRow, outputCol);
+                if (!cv::imwrite(outputPath.string(), output, jpgParams)) {
+                    recordError("[error] Cannot write output image: " + outputPath.string());
                 }
             }
+            catch (const std::exception& ex) {
+                recordError(std::string("[error] Elemental writer failed: ") + ex.what());
+            }
+        }
 
-            const int done = ++completedImages;
-            if (done % progressEvery == 0 || done == targetPixels) {
+        const int done = ++completedImages;
+        if (done % progressEvery == 0 || done == targetPixels) {
+            if (writerThreads == 1) {
+                std::cout << "[elemental] wrote " << done << "/" << targetPixels
+                          << " images" << std::endl;
+            }
+            else {
                 std::lock_guard<std::mutex> lock(logMutex);
                 std::cout << "[elemental] wrote " << done << "/" << targetPixels
                           << " images" << std::endl;
@@ -928,31 +924,46 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
         }
     };
 
-    std::vector<std::thread> workers;
-    workers.reserve(static_cast<size_t>(writerThreads));
-    try {
-        for (int i = 0; i < writerThreads; ++i) {
-            workers.emplace_back(writer);
+    if (writerThreads == 1) {
+        for (int targetIndex = 0; targetIndex < targetPixels && !failed.load(); ++targetIndex) {
+            writeOne(targetIndex);
         }
     }
-    catch (const std::exception& ex) {
-        jobs.close();
-        for (std::thread& worker : workers) {
-            if (worker.joinable()) {
-                worker.join();
+    else {
+        BoundedIntQueue jobs(static_cast<size_t>(std::max(16, writerThreads * 4)));
+        auto writer = [&] {
+            int targetIndex = 0;
+            while (jobs.pop(targetIndex)) {
+                writeOne(targetIndex);
+            }
+        };
+
+        std::vector<std::thread> workers;
+        workers.reserve(static_cast<size_t>(writerThreads));
+        try {
+            for (int i = 0; i < writerThreads; ++i) {
+                workers.emplace_back(writer);
             }
         }
-        std::cerr << "[elemental] cannot start writer thread: " << ex.what() << std::endl;
-        return 1;
-    }
+        catch (const std::exception& ex) {
+            jobs.close();
+            for (std::thread& worker : workers) {
+                if (worker.joinable()) {
+                    worker.join();
+                }
+            }
+            std::cerr << "[elemental] cannot start writer thread: " << ex.what() << std::endl;
+            return 1;
+        }
 
-    for (int targetIndex = 0; targetIndex < targetPixels; ++targetIndex) {
-        jobs.push(targetIndex);
-    }
-    jobs.close();
+        for (int targetIndex = 0; targetIndex < targetPixels; ++targetIndex) {
+            jobs.push(targetIndex);
+        }
+        jobs.close();
 
-    for (std::thread& worker : workers) {
-        worker.join();
+        for (std::thread& worker : workers) {
+            worker.join();
+        }
     }
 
     if (failed.load()) {

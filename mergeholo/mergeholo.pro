@@ -8,6 +8,7 @@ DEFINES += NOMINMAX _CRT_SECURE_NO_WARNINGS _HAS_STD_BYTE=0
 DEFINES += _SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING
 
 SOURCES += \
+    apps/CaptureWindow.cpp \
     apps/mergeholo_main.cpp \
     camera/CaptureSession.cpp \
     camera/LightFieldCapture.cpp \
@@ -23,6 +24,7 @@ SOURCES += \
     vendor/point_cloud/src/poissonmesh.cpp
 
 HEADERS += \
+    apps/CaptureWindow.h \
     camera/CaptureSession.h \
     camera/FrameChangeDetector.hpp \
     camera/JpICamera.h \

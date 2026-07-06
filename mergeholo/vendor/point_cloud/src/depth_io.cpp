@@ -463,7 +463,14 @@ bool depthImage::depthToPlyColor(const std::string &depthImageSrc, const std::st
     cout << COUT_PREFIX << "point cloud size = " << cloud->points.size() << endl;
 	cloud->is_dense = false;
 	//pcl::io::savePCDFile(pcdFileOutPut, *cloud);
-	pcl::io::savePLYFile(m_strFlyFileOut, *cloud);
+	const int saveStatus = pcl::io::savePLYFile(m_strFlyFileOut, *cloud);
+	cloud->clear();
+	cloud.reset();
+	if (saveStatus != 0)
+	{
+		cout << COUT_PREFIX << "save ply failed . file = " << m_strFlyFileOut << endl;
+		return false;
+	}
 
 #if 0
 

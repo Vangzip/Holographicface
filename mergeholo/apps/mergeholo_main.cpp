@@ -1,3 +1,4 @@
+#include "CaptureWindow.h"
 #include "CaptureImport.h"
 #include "CaptureSession.h"
 #include "HoloPipeline.h"
@@ -90,6 +91,7 @@ void printUsage()
     QTextStream out(stdout);
     out << "MergeHolo\n"
         << "Usage:\n"
+        << "  mergeholo.exe [--ui] [--camera-config dir]\n"
         << "  mergeholo.exe --capture [--save-dir dir] [--camera-config dir] [--max-frames n] [--duration seconds] [--no-preview]\n"
         << "  mergeholo.exe --import-capture [--capture-dir dir] [--pipeline-input dir]\n"
         << "  mergeholo.exe --capture-and-run [capture options] [--config ini] [--stage all|depth|mesh|model|multiview|elemental]\n"
@@ -139,9 +141,15 @@ int main(int argc, char* argv[])
     QApplication app(argc, argv);
     const QStringList args = app.arguments();
 
-    if (args.size() <= 1 || hasOption(args, "--mergeholo-help")) {
+    if (hasOption(args, "--mergeholo-help")) {
         printUsage();
-        return args.size() <= 1 ? 0 : 0;
+        return 0;
+    }
+
+    if (args.size() <= 1 || args.at(1) == "--ui") {
+        CaptureWindow window(projectRoot(), optionValue(args, "--camera-config", defaultCameraConfig()));
+        window.show();
+        return app.exec();
     }
 
     const QString mode = args.at(1);

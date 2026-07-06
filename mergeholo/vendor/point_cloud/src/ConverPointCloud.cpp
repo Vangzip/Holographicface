@@ -3,6 +3,7 @@
 #include "ConverPointCloud.h"
 #include "poissonmesh.hpp"
 #include <pcl/surface/simplification_remove_unused_vertices.h>
+#include <memory>
 
 
 ConverPointCloud::ConverPointCloud(){
@@ -216,7 +217,8 @@ bool ConverPointCloud::createPoissonMesh(const string &filepath){
     cout << COUT_PREFIX << "Calculating normals..." << endl;
 
     pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
-    pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>* ne = new pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>;
+    std::unique_ptr<pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>> ne(
+        new pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>);
     pcl::search::KdTree<pcl::PointXYZRGB>::Ptr normal_tree(new pcl::search::KdTree<pcl::PointXYZRGB>);
 
     normal_tree->setInputCloud(cloud_rgb);
@@ -695,7 +697,8 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
     cout << COUT_PREFIX << "Calculating normals..." << endl;
 
     pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
-    pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>* ne = new pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>;
+    std::unique_ptr<pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>> ne(
+        new pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>);
     pcl::search::KdTree<pcl::PointXYZRGB>::Ptr normal_tree(new pcl::search::KdTree<pcl::PointXYZRGB>);
 
     normal_tree->setInputCloud(cloud_rgb);
@@ -786,12 +789,19 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
     //pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr cloud_with_normals(new pcl::PointCloud<pcl::PointXYZRGBNormal>(mls_points));
     pcl::search::KdTree<pcl::PointXYZRGBNormal>::Ptr tree2(new pcl::search::KdTree<pcl::PointXYZRGBNormal>);
 
-    pcl::PolygonMesh* triangles = new pcl::PolygonMesh;
+    std::unique_ptr<pcl::PolygonMesh> triangles(new pcl::PolygonMesh);
     tree2->setInputCloud(cloud_normal);
 
-    // PCL 1.12 can corrupt the heap when large Greedy/PolygonMesh objects are destroyed here.
-    // Keep them alive for this short CLI run so batch processing can continue.
-    pcl::GreedyProjectionTriangulation<pcl::PointXYZRGBNormal>* gp3 = new pcl::GreedyProjectionTriangulation<pcl::PointXYZRGBNormal>;
+    std::unique_ptr<pcl::GreedyProjectionTriangulation<pcl::PointXYZRGBNormal>> gp3(
+        new pcl::GreedyProjectionTriangulation<pcl::PointXYZRGBNormal>);
+    auto releaseGreedyProjection = [&gp3]() {
+        if (gp3)
+        {
+            gp3->setInputCloud(pcl::PointCloud<pcl::PointXYZRGBNormal>::ConstPtr());
+            gp3->setSearchMethod(pcl::search::KdTree<pcl::PointXYZRGBNormal>::Ptr());
+            gp3.reset();
+        }
+    };
     gp3->setSearchRadius(m_searchRadius);
     gp3->setMu(m_mu);
     gp3->setMaximumNearestNeighbors(m_nearestNeighbors);
@@ -806,20 +816,22 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
 
     if (triangles->polygons.size() == 0){
         cout << " polygons size 0." << endl;
+        releaseGreedyProjection();
+        ne.reset();
         return 0;
     }
 
     cout << COUT_PREFIX << "mesh reconstruct ok . point size:" << triangles->cloud.height * triangles->cloud.width << "\tpolygons:" << triangles->polygons.size() << endl;
 
-    pcl::PolygonMesh* meshPoly = new pcl::PolygonMesh;
+    std::unique_ptr<pcl::PolygonMesh> meshPoly(new pcl::PolygonMesh);
     fillHole(*triangles, *meshPoly);
 
     m_strOutModelPath = buildMeshOutputPath(srcfile, "_mesh.ply");
     pcl::io::savePLYFile(m_strOutModelPath, *meshPoly);
-    delete meshPoly;
-    meshPoly = nullptr;
-    delete triangles;
-    triangles = nullptr;
+    meshPoly.reset();
+    triangles.reset();
+    releaseGreedyProjection();
+    ne.reset();
 
 #if 0
     cloud->clear();

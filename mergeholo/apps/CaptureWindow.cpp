@@ -374,6 +374,7 @@ void CaptureWindow::startProcessing()
     }
 
     setState(State::Processing);
+    confirmTimer_.restart();
     setProgress(1, "保存当前帧");
     releaseCamera();
 
@@ -444,6 +445,7 @@ bool CaptureWindow::writePipelineConfig(QString* errorMessage)
     out << "output_root=" << forwardSlashes(outputRoot()) << "\n";
     out << "multiview_out_dir=multiview\n";
     out << "elemental_out_dir=elemental\n";
+    out << "log_file=" << forwardSlashes(pipelineLogPath()) << "\n";
     out << "model_type=obj\n";
     out << "multiview_camera_distance_scale=2.0\n";
     out << "multiview_camera_center_offset_x=0.0\n";
@@ -551,8 +553,8 @@ void CaptureWindow::handleProcessLine(const QString& line)
     else if (line.startsWith("[elemental] loaded view")) {
         setProgress(std::max(progressBar_->value(), 86), "加载多视角缓存");
     }
-    else if (line.startsWith("[elemental] wrote ")) {
-        static const QRegularExpression re("\\[elemental\\] wrote\\s+(\\d+)/(\\d+)\\s+images");
+    else if (line.startsWith("[elemental] stored ") || line.startsWith("[elemental] wrote ")) {
+        static const QRegularExpression re("\\[elemental\\]\\s+(?:stored|wrote)\\s+(\\d+)/(\\d+)\\s+images");
         const QRegularExpressionMatch match = re.match(line);
         if (match.hasMatch()) {
             const int done = match.captured(1).toInt();
@@ -579,6 +581,19 @@ void CaptureWindow::finishPipelineProcess(int exitCode, QProcess::ExitStatus exi
 
     pipelineProcess_->deleteLater();
     pipelineProcess_ = nullptr;
+
+    const double confirmSeconds = confirmTimer_.isValid()
+        ? static_cast<double>(confirmTimer_.elapsed()) / 1000.0
+        : 0.0;
+    QFile logFile(pipelineLogPath());
+    if (logFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Append)) {
+        QTextStream log(&logFile);
+        log.setCodec("UTF-8");
+        log << "\n[ui]\n";
+        log << "confirm_to_finish_seconds=" << QString::number(confirmSeconds, 'f', 3) << "\n";
+        log << "exit_code=" << exitCode << "\n";
+        log << "exit_status=" << (exitStatus == QProcess::NormalExit ? "normal" : "crash") << "\n";
+    }
 
     if (exitStatus == QProcess::NormalExit && exitCode == 0) {
         setState(State::Done);
@@ -662,6 +677,11 @@ QString CaptureWindow::inputRoot() const
 QString CaptureWindow::pipelineConfigPath() const
 {
     return cleanPath(QDir(outputRoot()).filePath("holo_config.ui.ini"));
+}
+
+QString CaptureWindow::pipelineLogPath() const
+{
+    return cleanPath(QDir(outputRoot()).filePath("pipeline.log"));
 }
 
 void CaptureWindow::resizeEvent(QResizeEvent* event)

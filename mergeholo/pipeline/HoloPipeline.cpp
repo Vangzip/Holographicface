@@ -52,6 +52,7 @@ struct HoloConfig {
     fs::path outputRoot;
     fs::path multiviewOutDir;
     fs::path elementalOutDir;
+    fs::path logFile;
 
     std::string modelType = "obj";
     int multiviewAngle = 90;
@@ -194,6 +195,7 @@ void applyConfig(HoloConfig& config, const fs::path& configPath) {
     config.outputRoot = resolvePathOrDefault(configDir, get("output_root"), "output");
     config.multiviewOutDir = resolvePathOrDefault(config.outputRoot, get("multiview_out_dir"), "multiview");
     config.elementalOutDir = resolvePathOrDefault(config.outputRoot, get("elemental_out_dir"), "elemental");
+    config.logFile = resolvePathOrDefault(config.outputRoot, get("log_file"), "pipeline.log");
 
     if (!get("model_type").empty()) config.modelType = get("model_type");
     config.multiviewAngle = parseInt(get("multiview_angle"), config.multiviewAngle);
@@ -327,6 +329,15 @@ struct MultiviewMemoryResult {
     std::unique_ptr<MultiviewRenderPlan> plan;
 };
 
+struct ElementalMemoryResult {
+    std::unique_ptr<unsigned char[]> pixels;
+    size_t imageCount = 0;
+    size_t imageBytes = 0;
+    size_t totalBytes = 0;
+    int rows = 0;
+    int cols = 0;
+};
+
 class BoundedIntQueue {
 public:
     explicit BoundedIntQueue(size_t capacity)
@@ -450,6 +461,73 @@ void printTimingSummary(const std::vector<StageTiming>& timings) {
                   << std::endl;
     }
     std::cout << "[timing] total measured: " << formatSeconds(total) << "s" << std::endl;
+}
+
+double totalTimingSeconds(const std::vector<StageTiming>& timings) {
+    double total = 0.0;
+    for (const StageTiming& timing : timings) {
+        total += timing.seconds;
+    }
+    return total;
+}
+
+void writePipelineLog(
+    const HoloConfig& config,
+    const std::vector<StageTiming>& timings,
+    const MultiviewMemoryResult& multiviewMemory,
+    const ElementalMemoryResult& elementalMemory,
+    int resultCode,
+    double wallSeconds) {
+    try {
+        fs::create_directories(config.logFile.parent_path());
+        std::ofstream log(config.logFile, std::ios::out | std::ios::trunc);
+        if (!log) {
+            std::cerr << "[log] cannot write pipeline log: " << config.logFile.string() << std::endl;
+            return;
+        }
+
+        log << "MergeHolo pipeline log\n";
+        log << "result_code=" << resultCode << "\n";
+        log << "wall_seconds=" << formatSeconds(wallSeconds) << "\n";
+        log << "measured_stage_seconds=" << formatSeconds(totalTimingSeconds(timings)) << "\n";
+        log << "\n[stages]\n";
+        for (const StageTiming& timing : timings) {
+            log << timing.name << ".seconds=" << formatSeconds(timing.seconds) << "\n";
+            log << timing.name << ".result=" << timing.code << "\n";
+        }
+
+        log << "\n[multiview]\n";
+        if (multiviewMemory.sink && multiviewMemory.plan) {
+            log << "mode=atlas-memory\n";
+            log << "frames=" << multiviewMemory.sink->frameCount() << "\n";
+            log << "frame_bytes=" << multiviewMemory.sink->frameBytes() << "\n";
+            log << "total_bytes=" << multiviewMemory.sink->totalBytes() << "\n";
+            log << "total_readable=" << formatBytes(static_cast<size_t>(multiviewMemory.sink->totalBytes())) << "\n";
+            log << "resolution=" << multiviewMemory.plan->resolution() << "\n";
+            log << "samples_per_axis=" << multiviewMemory.plan->samplesPerAxis() << "\n";
+        }
+        else {
+            log << "mode=not_retained\n";
+        }
+
+        log << "\n[elemental]\n";
+        if (elementalMemory.pixels) {
+            log << "mode=memory\n";
+            log << "images=" << elementalMemory.imageCount << "\n";
+            log << "image_width=" << elementalMemory.cols << "\n";
+            log << "image_height=" << elementalMemory.rows << "\n";
+            log << "image_bytes=" << elementalMemory.imageBytes << "\n";
+            log << "total_bytes=" << elementalMemory.totalBytes << "\n";
+            log << "total_readable=" << formatBytes(elementalMemory.totalBytes) << "\n";
+            log << "files_written=0\n";
+        }
+        else {
+            log << "mode=not_retained\n";
+        }
+    }
+    catch (const std::exception& ex) {
+        std::cerr << "[log] cannot write pipeline log: " << ex.what() << std::endl;
+    }
 }
 
 int runDepthStage(const HoloConfig& config, const CliOptions& options) {
@@ -769,7 +847,11 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options, MultiviewMe
     return 0;
 }
 
-int runElementalStage(const HoloConfig& config, const CliOptions& options, const MultiviewMemoryResult* memoryResult) {
+int runElementalStage(
+    const HoloConfig& config,
+    const CliOptions& options,
+    const MultiviewMemoryResult* memoryResult,
+    ElementalMemoryResult* elementalResult) {
     if (config.viewRows <= 0 || config.viewCols <= 0 || config.targetRows <= 0 || config.targetCols <= 0) {
         std::cerr << "[elemental] derived view grid and target grid must be positive." << std::endl;
         return 1;
@@ -781,7 +863,7 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options, const
                   << "x" << config.multiviewResolution << std::endl;
         std::cout << "[elemental] output images: " << config.targetRows << "x" << config.targetCols
                   << ", each output: " << config.viewCols << "x" << config.viewRows << std::endl;
-        std::cout << "[elemental] output dir: " << config.elementalOutDir.string() << std::endl;
+        std::cout << "[elemental] output mode: memory, log file: " << config.logFile.string() << std::endl;
         std::cout << "[elemental] flip source Y: " << (config.elementalFlipSourceY ? "true" : "false")
                   << ", flip view rows: " << (config.elementalFlipViewRows ? "true" : "false") << std::endl;
         return 0;
@@ -835,11 +917,13 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options, const
     size_t viewImageBytes = 0;
     size_t totalViewBytes = 0;
     size_t outputImageBytes = 0;
+    size_t totalElementalBytes = 0;
     if (!checkedMultiply(static_cast<size_t>(config.viewRows), static_cast<size_t>(config.viewCols), viewCount)
         || !checkedMultiply(static_cast<size_t>(config.targetRows), static_cast<size_t>(config.targetCols), targetPixelCount)
         || !checkedMultiply(targetPixelCount, static_cast<size_t>(3), viewImageBytes)
         || !checkedMultiply(viewCount, viewImageBytes, totalViewBytes)
-        || !checkedMultiply(viewCount, static_cast<size_t>(3), outputImageBytes)) {
+        || !checkedMultiply(viewCount, static_cast<size_t>(3), outputImageBytes)
+        || !checkedMultiply(targetPixelCount, outputImageBytes, totalElementalBytes)) {
         std::cerr << "[elemental] image dimensions are too large." << std::endl;
         return 1;
     }
@@ -851,18 +935,23 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options, const
 
     const int targetPixels = static_cast<int>(targetPixelCount);
     const int writerThreads = std::min(static_cast<int>(targetPixelCount), chooseElementalWriterThreads(config.elementalWriterThreads));
-    fs::create_directories(config.elementalOutDir);
+    if (elementalResult == nullptr) {
+        std::cerr << "[elemental] internal memory result is not available." << std::endl;
+        return 1;
+    }
 
     std::cout << "[elemental] input views: " << config.viewRows << "x" << config.viewCols
               << ", each view: " << sourceCols << "x" << sourceRows
               << (useMemoryViews ? " from memory" : " from files") << std::endl;
     std::cout << "[elemental] output images: " << config.targetRows << "x" << config.targetCols
               << ", each output: " << config.viewCols << "x" << config.viewRows << std::endl;
+    std::cout << "[elemental] output mode: memory only, files written: 0" << std::endl;
     std::cout << "[elemental] view cache: " << viewCount << " images, "
               << formatBytes(totalViewBytes)
               << (useMemoryViews ? " from multiview memory buffer" : " loaded from files")
               << std::endl;
     std::cout << "[elemental] per-writer output buffer: " << formatBytes(outputImageBytes) << std::endl;
+    std::cout << "[elemental] output memory: " << formatBytes(totalElementalBytes) << std::endl;
     std::cout << "[elemental] writer threads: " << writerThreads << std::endl;
     std::cout << "[elemental] flip source Y: " << (config.elementalFlipSourceY ? "true" : "false")
               << ", flip view rows: " << (config.elementalFlipViewRows ? "true" : "false") << std::endl;
@@ -944,8 +1033,21 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options, const
                   << formatSeconds(elapsedSeconds(loadStart)) << "s" << std::endl;
     }
 
-    const std::vector<int> jpgParams = { cv::IMWRITE_JPEG_QUALITY, config.jpgQuality };
-    const auto writeStart = std::chrono::steady_clock::now();
+    try {
+        elementalResult->pixels.reset(new unsigned char[totalElementalBytes]);
+        elementalResult->imageCount = targetPixelCount;
+        elementalResult->imageBytes = outputImageBytes;
+        elementalResult->totalBytes = totalElementalBytes;
+        elementalResult->rows = config.viewRows;
+        elementalResult->cols = config.viewCols;
+    }
+    catch (const std::bad_alloc&) {
+        std::cerr << "[elemental] cannot allocate output memory: "
+                  << formatBytes(totalElementalBytes) << std::endl;
+        return 1;
+    }
+
+    const auto storeStart = std::chrono::steady_clock::now();
     std::atomic<int> completedImages(0);
     std::atomic<bool> failed(false);
     std::mutex logMutex;
@@ -963,8 +1065,9 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options, const
     auto writeOne = [&](int targetIndex) {
         if (!failed.load()) {
             try {
-                cv::Mat output(config.viewRows, config.viewCols, CV_8UC3);
-                output.setTo(cv::Scalar(0, 0, 0));
+                unsigned char* outputBase = elementalResult->pixels.get()
+                    + static_cast<size_t>(targetIndex) * outputImageBytes;
+                std::memset(outputBase, 0, outputImageBytes);
                 const int targetRow = targetIndex / config.targetCols;
                 const int targetCol = targetIndex % config.targetCols;
                 const size_t targetOffset = (static_cast<size_t>(targetRow) * static_cast<size_t>(config.targetCols)
@@ -979,7 +1082,8 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options, const
                     const int sourceViewRow = config.elementalFlipViewRows
                         ? config.viewRows - 1 - outputViewRow
                         : outputViewRow;
-                    unsigned char* dst = output.ptr<unsigned char>(outputViewRow);
+                    unsigned char* dst = outputBase
+                        + static_cast<size_t>(outputViewRow) * static_cast<size_t>(config.viewCols) * 3;
                     const size_t sourceViewRowOffset = static_cast<size_t>(sourceViewRow)
                         * static_cast<size_t>(config.viewCols);
                     for (int outputViewCol = 0; outputViewCol < config.viewCols; ++outputViewCol) {
@@ -1008,28 +1112,22 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options, const
                     }
                 }
 
-                const int outputRow = targetRow + 1;
-                const int outputCol = targetCol + 1;
-                const fs::path outputPath = targetPath(config, outputRow, outputCol);
-                if (!cv::imwrite(outputPath.string(), output, jpgParams)) {
-                    recordError("[error] Cannot write output image: " + outputPath.string());
-                }
             }
             catch (const std::exception& ex) {
-                recordError(std::string("[error] Elemental writer failed: ") + ex.what());
+                recordError(std::string("[error] Elemental memory store failed: ") + ex.what());
             }
         }
 
         const int done = ++completedImages;
         if (done % progressEvery == 0 || done == targetPixels) {
             if (writerThreads == 1) {
-                std::cout << "[elemental] wrote " << done << "/" << targetPixels
-                          << " images" << std::endl;
+                std::cout << "[elemental] stored " << done << "/" << targetPixels
+                          << " images in memory" << std::endl;
             }
             else {
                 std::lock_guard<std::mutex> lock(logMutex);
-                std::cout << "[elemental] wrote " << done << "/" << targetPixels
-                          << " images" << std::endl;
+                std::cout << "[elemental] stored " << done << "/" << targetPixels
+                          << " images in memory" << std::endl;
             }
         }
     };
@@ -1082,8 +1180,8 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options, const
         return 1;
     }
 
-    std::cout << "[elemental] wrote output images in "
-              << formatSeconds(elapsedSeconds(writeStart)) << "s" << std::endl;
+    std::cout << "[elemental] stored output images in memory in "
+              << formatSeconds(elapsedSeconds(storeStart)) << "s" << std::endl;
     return 0;
 }
 
@@ -1124,10 +1222,15 @@ CliOptions parseCli(int argc, char* argv[]) {
 }
 
 int runPipeline(HoloConfig& config, const CliOptions& options) {
+    const auto pipelineStart = std::chrono::steady_clock::now();
     std::vector<StageTiming> timings;
     MultiviewMemoryResult multiviewMemory;
+    ElementalMemoryResult elementalMemory;
     auto finish = [&](int code) {
         printTimingSummary(timings);
+        const double wallSeconds = elapsedSeconds(pipelineStart);
+        writePipelineLog(config, timings, multiviewMemory, elementalMemory, code, wallSeconds);
+        std::cout << "[log] pipeline log: " << config.logFile.string() << std::endl;
         return code;
     };
 
@@ -1161,7 +1264,11 @@ int runPipeline(HoloConfig& config, const CliOptions& options) {
 
     if (shouldRunStage(options, "elemental") && config.runElemental) {
         const int code = runTimedStage("elemental", [&] {
-            return runElementalStage(config, options, multiviewMemory.sink ? &multiviewMemory : nullptr);
+            return runElementalStage(
+                config,
+                options,
+                multiviewMemory.sink ? &multiviewMemory : nullptr,
+                &elementalMemory);
         }, timings);
         if (code != 0) return finish(code);
     }

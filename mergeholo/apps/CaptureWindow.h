@@ -3,6 +3,7 @@
 #include "LightFieldCapture.h"
 
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QImage>
 #include <QMainWindow>
 #include <QProcess>
@@ -58,6 +59,7 @@ private:
     QString outputRoot() const;
     QString inputRoot() const;
     QString pipelineConfigPath() const;
+    QString pipelineLogPath() const;
 
     QString projectRoot_;
     QString cameraConfigPath_;
@@ -87,4 +89,5 @@ private:
     QImage depthPreview_;
     QByteArray stdoutBuffer_;
     QByteArray stderrBuffer_;
+    QElapsedTimer confirmTimer_;
 };

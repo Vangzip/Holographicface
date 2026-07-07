@@ -18,6 +18,10 @@ class QPushButton;
 class QProgressBar;
 class QTimer;
 
+namespace Ui {
+class CaptureWindow;
+}
+
 class CaptureWindow : public QMainWindow
 {
 public:
@@ -63,6 +67,7 @@ private:
 
     QString projectRoot_;
     QString cameraConfigPath_;
+    std::unique_ptr<Ui::CaptureWindow> ui_;
 
     QLabel* rgbLabel_ = nullptr;
     QLabel* depthLabel_ = nullptr;

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "PipelineData.h"
+#include "PipelineContext.h"
 
-int runElementalStage(
+int processElemental(
     const HoloConfig& config,
     const CliOptions& options,
     const MultiviewMemoryResult* memoryResult,

@@ -1,12 +1,10 @@
 #pragma once
 
-#include "memoryFrameSink.h"
+#include "elemental/ElementalMemoryResult.h"
 #include "ModelMoveCameraConfig.h"
-#include "multiviewRenderPlan.h"
+#include "multiview/MultiviewMemoryResult.h"
 
-#include <cstddef>
 #include <filesystem>
-#include <memory>
 #include <string>
 
 struct HoloConfig {
@@ -56,18 +54,4 @@ struct StageTiming {
     std::string name;
     double seconds;
     int code;
-};
-
-struct MultiviewMemoryResult {
-    std::unique_ptr<MemoryFrameSink> sink;
-    std::unique_ptr<MultiviewRenderPlan> plan;
-};
-
-struct ElementalMemoryResult {
-    std::unique_ptr<unsigned char[]> pixels;
-    size_t imageCount = 0;
-    size_t imageBytes = 0;
-    size_t totalBytes = 0;
-    int rows = 0;
-    int cols = 0;
 };

@@ -5,6 +5,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QString>
 #include <QStringList>
@@ -37,6 +38,43 @@ QString firstExisting(const QStringList& candidates, const QString& fallback)
     return QFileInfo(fallback).absoluteFilePath();
 }
 
+QString readSimpleIniValue(const QString& path, const QString& key)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+
+    while (!file.atEnd()) {
+        const QString line = QString::fromUtf8(file.readLine()).trimmed();
+        if (line.isEmpty() || line.startsWith('#') || line.startsWith(';') || line.startsWith('[')) {
+            continue;
+        }
+        const int separator = line.indexOf('=');
+        if (separator < 0) {
+            continue;
+        }
+
+        const QString lineKey = line.left(separator).trimmed();
+        if (lineKey.compare(key, Qt::CaseInsensitive) == 0) {
+            return line.mid(separator + 1).trimmed();
+        }
+    }
+    return {};
+}
+
+QString resolvePathRelativeToFile(const QString& filePath, const QString& value)
+{
+    if (value.isEmpty()) {
+        return {};
+    }
+    const QFileInfo info(value);
+    if (info.isAbsolute()) {
+        return info.absoluteFilePath();
+    }
+    return QFileInfo(QDir(QFileInfo(filePath).absolutePath()).filePath(value)).absoluteFilePath();
+}
+
 QString optionValue(const QStringList& args, const QString& name, const QString& fallback)
 {
     const int index = args.indexOf(name);
@@ -61,13 +99,27 @@ bool hasOption(const QStringList& args, const QString& name)
 QString defaultPipelineConfig()
 {
     const QString root = projectRoot();
-    const QString appConfig = QDir(QCoreApplication::applicationDirPath()).filePath("config/holo_config.merge.ini");
-    return firstExisting({ QDir(root).filePath("config/holo_config.merge.ini"), appConfig }, appConfig);
+    const QString appConfig = QDir(QCoreApplication::applicationDirPath()).filePath("config/default_pipeline.ini");
+    const QString legacyAppConfig = QDir(QCoreApplication::applicationDirPath()).filePath("config/holo_config.merge.ini");
+    return firstExisting({
+        QDir(root).filePath("config/default_pipeline.ini"),
+        appConfig,
+        QDir(root).filePath("config/holo_config.merge.ini"),
+        legacyAppConfig
+    }, appConfig);
 }
 
 QString defaultCameraConfig()
 {
     const QString root = projectRoot();
+    const QString rootCameraIni = QDir(root).filePath("config/default_camera.ini");
+    const QString appCameraIni = QDir(QCoreApplication::applicationDirPath()).filePath("config/default_camera.ini");
+    const QString cameraIni = firstExisting({ rootCameraIni, appCameraIni }, rootCameraIni);
+    const QString configuredDir = readSimpleIniValue(cameraIni, "camera_config_dir");
+    if (!configuredDir.isEmpty()) {
+        return firstExisting({ resolvePathRelativeToFile(cameraIni, configuredDir) }, resolvePathRelativeToFile(cameraIni, configuredDir));
+    }
+
     const QString appConfig = QDir(QCoreApplication::applicationDirPath()).filePath("config/holoConf-023C");
     return firstExisting({
         appConfig,

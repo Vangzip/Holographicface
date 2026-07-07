@@ -1,4 +1,4 @@
-#include "ElementalStage.h"
+#include "ElementalProcessor.h"
 
 #include "PipelineTiming.h"
 
@@ -102,7 +102,7 @@ int chooseElementalWriterThreads(int requested) {
 
 } // namespace
 
-int runElementalStage(
+int processElemental(
     const HoloConfig& config,
     const CliOptions& options,
     const MultiviewMemoryResult* memoryResult,

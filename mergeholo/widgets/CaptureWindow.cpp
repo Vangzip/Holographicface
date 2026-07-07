@@ -1,12 +1,13 @@
 #include "CaptureWindow.h"
 
+#include "ui_CaptureWindow.h"
+
 #include <QApplication>
 #include <QCoreApplication>
 #include <QCloseEvent>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
 #include <QProcess>
@@ -17,8 +18,6 @@
 #include <QSizePolicy>
 #include <QTextStream>
 #include <QTimer>
-#include <QVBoxLayout>
-#include <QWidget>
 
 #include <algorithm>
 #include <cmath>
@@ -39,18 +38,6 @@ bool removeDirectoryIfExists(const QString& path)
 {
     QDir dir(path);
     return !dir.exists() || dir.removeRecursively();
-}
-
-QLabel* makePreviewLabel(const QString& text)
-{
-    QLabel* label = new QLabel(text);
-    label->setAlignment(Qt::AlignCenter);
-    label->setMinimumSize(240, 220);
-    label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    label->setFrameShape(QFrame::Box);
-    label->setLineWidth(2);
-    label->setStyleSheet("QLabel { background: #ffffff; color: #111111; border: 2px solid #111111; }");
-    return label;
 }
 
 QImage matToImage(const cv::Mat& input)
@@ -185,61 +172,23 @@ CaptureWindow::~CaptureWindow()
 
 void CaptureWindow::buildUi()
 {
-    setWindowTitle("MergeHolo 拍照处理");
-    resize(860, 560);
+    ui_.reset(new Ui::CaptureWindow);
+    ui_->setupUi(this);
 
-    QWidget* central = new QWidget(this);
-    QVBoxLayout* rootLayout = new QVBoxLayout(central);
-    rootLayout->setContentsMargins(46, 38, 46, 38);
-    rootLayout->setSpacing(14);
+    rgbLabel_ = ui_->rgbLabel;
+    depthLabel_ = ui_->depthLabel;
+    progressText_ = ui_->progressText;
+    progressBar_ = ui_->progressBar;
+    captureButton_ = ui_->captureButton;
+    confirmButton_ = ui_->confirmButton;
+    retakeButton_ = ui_->retakeButton;
 
-    QHBoxLayout* previewLayout = new QHBoxLayout;
-    previewLayout->setSpacing(0);
-    rgbLabel_ = makePreviewLabel("显示rgb");
-    depthLabel_ = makePreviewLabel("显示深度图");
-    previewLayout->addStretch(1);
-    previewLayout->addWidget(rgbLabel_, 1);
-    previewLayout->addWidget(depthLabel_, 1);
-    previewLayout->addStretch(1);
-    rootLayout->addLayout(previewLayout, 1);
-
-    QHBoxLayout* progressLayout = new QHBoxLayout;
-    QLabel* progressCaption = new QLabel("当前进度:");
-    progressCaption->setFixedWidth(78);
-    progressText_ = new QLabel("初始化相机");
-    progressText_->setAlignment(Qt::AlignCenter);
-    progressBar_ = new QProgressBar;
-    progressBar_->setRange(0, 100);
-    progressBar_->setTextVisible(false);
-    progressBar_->setFixedHeight(20);
-    progressBar_->setStyleSheet(
-        "QProgressBar { border: 2px solid #111111; background: #ffffff; }"
-        "QProgressBar::chunk { background: #2f80ed; }");
-    progressLayout->addWidget(progressCaption);
-    progressLayout->addWidget(progressBar_, 1);
-    rootLayout->addLayout(progressLayout);
-    rootLayout->addWidget(progressText_);
-
-    QHBoxLayout* buttonLayout = new QHBoxLayout;
-    buttonLayout->setSpacing(84);
-    captureButton_ = new QPushButton("拍照按钮");
-    confirmButton_ = new QPushButton("确认");
-    retakeButton_ = new QPushButton("重新拍照");
     const QList<QPushButton*> buttons = { captureButton_, confirmButton_, retakeButton_ };
     for (QPushButton* button : buttons) {
-        button->setMinimumSize(138, 56);
         button->setStyleSheet(
             "QPushButton { background: #ffffff; border: 2px solid #111111; font-size: 16px; }"
             "QPushButton:disabled { color: #888888; border-color: #888888; background: #f2f2f2; }");
     }
-    buttonLayout->addStretch(1);
-    buttonLayout->addWidget(captureButton_);
-    buttonLayout->addWidget(confirmButton_);
-    buttonLayout->addWidget(retakeButton_);
-    buttonLayout->addStretch(1);
-    rootLayout->addLayout(buttonLayout);
-
-    setCentralWidget(central);
 
     frameTimer_ = new QTimer(this);
     frameTimer_->setInterval(30);
@@ -430,6 +379,20 @@ bool CaptureWindow::writePipelineConfig(QString* errorMessage)
         return false;
     }
 
+    const QString templatePath = QDir(projectRoot_).filePath("config/ui_pipeline_template.ini");
+    QFile templateFile(templatePath);
+    if (!templateFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        *errorMessage = "无法读取 UI 处理配置模板:\n" + templatePath;
+        return false;
+    }
+
+    QString configText = QString::fromUtf8(templateFile.readAll());
+    configText.replace("{{depth_input_dir}}", forwardSlashes(inputRoot()));
+    configText.replace("{{depth_config}}", forwardSlashes(QDir(projectRoot_).filePath("config/depth_to_pointcloud_config.cfg")));
+    configText.replace("{{mesh_config}}", forwardSlashes(QDir(projectRoot_).filePath("config/mesh_config.cfg")));
+    configText.replace("{{output_root}}", forwardSlashes(outputRoot()));
+    configText.replace("{{log_file}}", forwardSlashes(pipelineLogPath()));
+
     QFile file(pipelineConfigPath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
         *errorMessage = "无法写入处理配置:\n" + pipelineConfigPath();
@@ -438,44 +401,7 @@ bool CaptureWindow::writePipelineConfig(QString* errorMessage)
 
     QTextStream out(&file);
     out.setCodec("UTF-8");
-    out << "depth_input_dir=" << forwardSlashes(inputRoot()) << "\n";
-    out << "depth_config=" << forwardSlashes(QDir(projectRoot_).filePath("config/depth_to_pointcloud_config.cfg")) << "\n";
-    out << "mesh_config=" << forwardSlashes(QDir(projectRoot_).filePath("config/mesh_config.cfg")) << "\n";
-    out << "mesh_obj=\n";
-    out << "output_root=" << forwardSlashes(outputRoot()) << "\n";
-    out << "multiview_out_dir=multiview\n";
-    out << "elemental_out_dir=elemental\n";
-    out << "log_file=" << forwardSlashes(pipelineLogPath()) << "\n";
-    out << "model_type=obj\n";
-    out << "multiview_camera_distance_scale=2.0\n";
-    out << "multiview_camera_center_offset_x=0.0\n";
-    out << "multiview_camera_center_offset_y=0.0\n";
-    out << "multiview_camera_center_offset_z=0.0\n";
-    out << "multiview_camera_eye_dir_x=0.0\n";
-    out << "multiview_camera_eye_dir_y=-1.0\n";
-    out << "multiview_camera_eye_dir_z=0.0\n";
-    out << "multiview_camera_up_x=0.0\n";
-    out << "multiview_camera_up_y=0.0\n";
-    out << "multiview_camera_up_z=1.0\n";
-    out << "multiview_camera_fovy_deg=0.0\n";
-    out << "multiview_camera_z_near=0.0\n";
-    out << "multiview_camera_z_far=0.0\n";
-    out << "multiview_capture_flip_vertical=true\n";
-    out << "multiview_angle=90\n";
-    out << "multiview_per=3\n";
-    out << "multiview_resolution=150\n";
-    out << "view_name_digits=3\n";
-    out << "target_rows=150\n";
-    out << "target_cols=150\n";
-    out << "jpg_quality=100\n";
-    out << "elemental_writer_threads=1\n";
-    out << "elemental_flip_source_y=true\n";
-    out << "elemental_flip_view_rows=true\n";
-    out << "run_depth_pointcloud=true\n";
-    out << "run_mesh=true\n";
-    out << "run_textured_model=true\n";
-    out << "run_multiview=true\n";
-    out << "run_elemental=true\n";
+    out << configText;
     return true;
 }
 

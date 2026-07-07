@@ -16,6 +16,12 @@ SOURCES += \
     pipeline/HoloPipeline.cpp \
     vendor/base/FileLibrary.cpp \
     vendor/base/Logger.cpp \
+    vendor/multiview/memoryFrameSink.cpp \
+    vendor/multiview/multiviewAtlasPlan.cpp \
+    vendor/multiview/multiviewAtlasRenderer.cpp \
+    vendor/multiview/multiviewBatchRenderer.cpp \
+    vendor/multiview/multiviewGraphicsConfig.cpp \
+    vendor/multiview/multiviewRenderPlan.cpp \
     vendor/multiview/modelMoveHandler.cpp \
     vendor/point_cloud/src/ConverPointCloud.cpp \
     vendor/point_cloud/src/depth_io.cpp \
@@ -37,6 +43,12 @@ HEADERS += \
     vendor/base/base.h \
     vendor/base/FileLibrary.h \
     vendor/base/Logger.hpp \
+    vendor/multiview/memoryFrameSink.h \
+    vendor/multiview/multiviewAtlasPlan.h \
+    vendor/multiview/multiviewAtlasRenderer.h \
+    vendor/multiview/multiviewBatchRenderer.h \
+    vendor/multiview/multiviewGraphicsConfig.h \
+    vendor/multiview/multiviewRenderPlan.h \
     vendor/multiview/modelMoveHandler.h \
     vendor/point_cloud/include/ConverPointCloud.h \
     vendor/point_cloud/include/depth_io.h \

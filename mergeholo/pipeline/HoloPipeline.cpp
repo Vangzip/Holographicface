@@ -8,6 +8,11 @@
 #include "ConverPointCloud.h"
 #include "FileLibrary.h"
 #include "depth_io.h"
+#include "memoryFrameSink.h"
+#include "multiviewAtlasPlan.h"
+#include "multiviewAtlasRenderer.h"
+#include "multiviewGraphicsConfig.h"
+#include "multiviewRenderPlan.h"
 #include "modelMoveHandler.h"
 
 #include <algorithm>
@@ -52,6 +57,7 @@ struct HoloConfig {
     int multiviewAngle = 90;
     int multiviewPer = 3;
     int multiviewResolution = 150;
+    int multiviewAtlasSize = 4096;
 
     int targetRows = 150;
     int targetCols = 150;
@@ -193,6 +199,7 @@ void applyConfig(HoloConfig& config, const fs::path& configPath) {
     config.multiviewAngle = parseInt(get("multiview_angle"), config.multiviewAngle);
     config.multiviewPer = parseInt(get("multiview_per"), config.multiviewPer);
     config.multiviewResolution = parseInt(get("multiview_resolution"), config.multiviewResolution);
+    config.multiviewAtlasSize = parseInt(get("multiview_atlas_size"), config.multiviewAtlasSize);
     config.targetRows = parseInt(get("target_rows"), config.targetRows);
     config.targetCols = parseInt(get("target_cols"), config.targetCols);
     config.viewRows = config.multiviewAngle * config.multiviewPer;
@@ -313,6 +320,11 @@ struct StageTiming {
     std::string name;
     double seconds;
     int code;
+};
+
+struct MultiviewMemoryResult {
+    std::unique_ptr<MemoryFrameSink> sink;
+    std::unique_ptr<MultiviewRenderPlan> plan;
 };
 
 class BoundedIntQueue {
@@ -586,14 +598,22 @@ int runModelStage(const HoloConfig& config, const CliOptions& options) {
     return failed == 0 ? 0 : 1;
 }
 
-bool setMasterViewerGraphicsContext(osgViewer::Viewer* viewer, float x, float y, int width, int height) {
+bool setMasterViewerGraphicsContext(
+    osgViewer::Viewer* viewer,
+    float x,
+    float y,
+    int width,
+    int height,
+    const MultiviewGraphicsConfig& graphicsConfig) {
     osg::ref_ptr<osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits();
     traits->x = x;
     traits->y = y;
     traits->width = width;
     traits->height = height;
-    traits->windowDecoration = true;
-    traits->doubleBuffer = true;
+    traits->windowDecoration = graphicsConfig.windowDecoration;
+    traits->doubleBuffer = graphicsConfig.doubleBuffer;
+    traits->vsync = graphicsConfig.vsync;
+    traits->pbuffer = graphicsConfig.pbuffer;
     traits->sharedContext = 0;
     traits->alpha = 1;
 
@@ -612,11 +632,13 @@ bool setMasterViewerGraphicsContext(osgViewer::Viewer* viewer, float x, float y,
     }
 
     viewer->getCamera()->setViewport(new osg::Viewport(0, 0, width, height));
+    viewer->getCamera()->setDrawBuffer(graphicsConfig.drawBuffer == MultiviewDrawBufferFront ? GL_FRONT : GL_BACK);
+    viewer->getCamera()->setReadBuffer(graphicsConfig.readBuffer == MultiviewDrawBufferFront ? GL_FRONT : GL_BACK);
     viewer->getCamera()->setGraphicsContext(gc);
     return true;
 }
 
-int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
+int runMultiviewStage(HoloConfig& config, const CliOptions& options, MultiviewMemoryResult* memoryResult) {
     if (config.meshObj.empty()) {
         config.meshObj = findFirstObj(config.depthInputDir);
     }
@@ -629,10 +651,10 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
 
     if (options.dryRun) {
         std::cout << "[multiview] render " << config.meshObj.string()
-                  << " to " << config.multiviewOutDir.string()
-                  << " as " << expectedViews << "x" << expectedViews
+                  << " to memory as " << expectedViews << "x" << expectedViews
                   << " views, " << config.multiviewResolution << "x"
                   << config.multiviewResolution << " each" << std::endl;
+        std::cout << "[multiview] atlas max texture: " << config.multiviewAtlasSize << std::endl;
         std::cout << "[multiview] camera distance scale: " << config.multiviewCamera.distanceScale
                   << ", center offset: ("
                   << config.multiviewCamera.centerOffset.x() << ", "
@@ -666,25 +688,23 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
         return 1;
     }
 
-    fs::create_directories(config.multiviewOutDir);
-
     osg::ref_ptr<osgViewer::Viewer> viewer = new osgViewer::Viewer;
-    viewer->addEventHandler(new osgGA::StateSetManipulator(viewer->getCamera()->getOrCreateStateSet()));
-    viewer->addEventHandler(new osgViewer::ThreadingHandler);
-    viewer->addEventHandler(new osgViewer::WindowSizeHandler);
-    viewer->addEventHandler(new osgViewer::StatsHandler);
-    viewer->addEventHandler(new osgViewer::RecordCameraPathHandler);
-    viewer->addEventHandler(new osgViewer::LODScaleHandler);
-    viewer->addEventHandler(new osgViewer::ScreenCaptureHandler);
+    viewer->setThreadingModel(osgViewer::Viewer::SingleThreaded);
     viewer->setCameraManipulator(NULL);
     viewer->getCamera()->setClearColor(osg::Vec4f(0.3f, 0.3f, 0.3f, 1.0f));
 
-    if (!setMasterViewerGraphicsContext(viewer.get(), 100, 100, config.multiviewResolution, config.multiviewResolution)) {
+    MultiviewRenderPlan renderPlan(config.multiviewAngle, config.multiviewPer, config.multiviewResolution);
+    MultiviewAtlasPlan atlasPlan(renderPlan, config.multiviewAtlasSize);
+    const MultiviewGraphicsConfig graphicsConfig = makeMultiviewGraphicsConfig(true);
+    if (!setMasterViewerGraphicsContext(
+            viewer.get(),
+            100,
+            100,
+            atlasPlan.pageWidth(),
+            atlasPlan.pageHeight(),
+            graphicsConfig)) {
         return 1;
     }
-
-    osg::ref_ptr<osg::Image> image = new osg::Image;
-    viewer->getCamera()->setPostDrawCallback(new CaptureDrawCallback(image, static_cast<float>(config.multiviewResolution)));
 
     osg::StateSet* state = viewer->getCamera()->getOrCreateStateSet();
     state->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::PROTECTED);
@@ -700,19 +720,56 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
 
     std::string outDir = config.multiviewOutDir.string();
     modelMoveHandler* handler = new modelMoveHandler(
-        viewer.get(), group.get(), outDir, image.get(), config.modelType,
+        viewer.get(), group.get(), outDir, nullptr, config.modelType,
         static_cast<float>(config.multiviewAngle), static_cast<float>(config.multiviewPer),
         config.multiviewCamera);
-    viewer->addEventHandler(handler);
 
-    while (!viewer->done()) {
-        viewer->frame();
+    try {
+        std::unique_ptr<MemoryFrameSink> sink(new MemoryFrameSink(renderPlan, true));
+        MultiviewAtlasRenderer renderer(viewer.get(), handler->modelTransform(), renderPlan, atlasPlan, sink.get());
+        const MultiviewAtlasStats stats = renderer.renderAll();
+
+        std::cout << "[multiview] output mode: atlas-memory" << std::endl;
+        std::cout << "[multiview] pbuffer: " << graphicsConfig.pbuffer
+                  << ", double buffer: " << graphicsConfig.doubleBuffer
+                  << ", vsync: " << graphicsConfig.vsync
+                  << ", window decoration: " << graphicsConfig.windowDecoration << std::endl;
+        std::cout << "[multiview] atlas page: " << atlasPlan.pageWidth()
+                  << "x" << atlasPlan.pageHeight()
+                  << ", tiles per axis: " << atlasPlan.tilesPerAxis()
+                  << ", pages: " << atlasPlan.pageCount() << std::endl;
+        std::cout << "[multiview] frames captured: " << stats.framesCaptured
+                  << "/" << renderPlan.frameCount()
+                  << ", bytes: " << stats.bytesCaptured
+                  << ", readback errors: " << stats.readbackErrors << std::endl;
+        std::cout << "[multiview] render: " << formatSeconds(stats.renderSeconds)
+                  << "s, readback: " << formatSeconds(stats.readbackSeconds)
+                  << "s, copy: " << formatSeconds(stats.copySeconds)
+                  << "s, total: " << formatSeconds(stats.totalSeconds) << "s" << std::endl;
+
+        if (stats.pagesRendered != atlasPlan.pageCount()
+            || stats.pageReadbacks != atlasPlan.pageCount()
+            || stats.framesCaptured != renderPlan.frameCount()
+            || stats.bytesCaptured != renderPlan.totalBytes()
+            || stats.readbackErrors != 0) {
+            std::cerr << "[multiview] memory render did not capture all frames." << std::endl;
+            return 1;
+        }
+
+        if (memoryResult != nullptr) {
+            memoryResult->plan.reset(new MultiviewRenderPlan(renderPlan));
+            memoryResult->sink = std::move(sink);
+        }
+    }
+    catch (const std::exception& ex) {
+        std::cerr << "[multiview] memory render failed: " << ex.what() << std::endl;
+        return 1;
     }
 
-    return handler->isComplete() ? 0 : 1;
+    return 0;
 }
 
-int runElementalStage(const HoloConfig& config, const CliOptions& options) {
+int runElementalStage(const HoloConfig& config, const CliOptions& options, const MultiviewMemoryResult* memoryResult) {
     if (config.viewRows <= 0 || config.viewCols <= 0 || config.targetRows <= 0 || config.targetCols <= 0) {
         std::cerr << "[elemental] derived view grid and target grid must be positive." << std::endl;
         return 1;
@@ -730,25 +787,45 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
         return 0;
     }
 
-    if (!requireExists(config.multiviewOutDir, "multiview_out_dir")) {
-        return 1;
+    const bool useMemoryViews = memoryResult != nullptr && memoryResult->sink && memoryResult->plan;
+    int sourceRows = config.multiviewResolution;
+    int sourceCols = config.multiviewResolution;
+    cv::Mat sample;
+
+    if (useMemoryViews) {
+        sourceRows = memoryResult->plan->resolution();
+        sourceCols = memoryResult->plan->resolution();
+        if (memoryResult->plan->samplesPerAxis() != config.viewRows
+            || memoryResult->plan->samplesPerAxis() != config.viewCols
+            || memoryResult->sink->frameCount() != memoryResult->plan->frameCount()
+            || memoryResult->sink->frameBytes() != memoryResult->plan->frameBytes()) {
+            std::cerr << "[elemental] multiview memory buffer does not match pipeline dimensions." << std::endl;
+            return 1;
+        }
+    }
+    else {
+        if (!requireExists(config.multiviewOutDir, "multiview_out_dir")) {
+            return 1;
+        }
+
+        const fs::path firstView = viewPath(config, 1, 1);
+        const fs::path lastView = viewPath(config, config.viewRows, config.viewCols);
+        if (!requireExists(firstView, "first multiview image")
+            || !requireExists(lastView, "last multiview image")) {
+            return 1;
+        }
+
+        sample = cv::imread(firstView.string(), cv::IMREAD_COLOR);
+        if (sample.empty()) {
+            std::cerr << "[error] Cannot read sample image: " << firstView.string() << std::endl;
+            return 1;
+        }
+        sourceRows = sample.rows;
+        sourceCols = sample.cols;
     }
 
-    const fs::path firstView = viewPath(config, 1, 1);
-    const fs::path lastView = viewPath(config, config.viewRows, config.viewCols);
-    if (!requireExists(firstView, "first multiview image")
-        || !requireExists(lastView, "last multiview image")) {
-        return 1;
-    }
-
-    cv::Mat sample = cv::imread(firstView.string(), cv::IMREAD_COLOR);
-    if (sample.empty()) {
-        std::cerr << "[error] Cannot read sample image: " << firstView.string() << std::endl;
-        return 1;
-    }
-
-    if (sample.cols != config.targetCols || sample.rows != config.targetRows) {
-        std::cerr << "[warn] View image size is " << sample.cols << "x" << sample.rows
+    if (sourceCols != config.targetCols || sourceRows != config.targetRows) {
+        std::cerr << "[warn] View image size is " << sourceCols << "x" << sourceRows
                   << ", target grid is " << config.targetCols << "x" << config.targetRows
                   << ". The target grid should match each view image size." << std::endl;
     }
@@ -777,24 +854,29 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
     fs::create_directories(config.elementalOutDir);
 
     std::cout << "[elemental] input views: " << config.viewRows << "x" << config.viewCols
-              << ", each view: " << sample.cols << "x" << sample.rows << std::endl;
+              << ", each view: " << sourceCols << "x" << sourceRows
+              << (useMemoryViews ? " from memory" : " from files") << std::endl;
     std::cout << "[elemental] output images: " << config.targetRows << "x" << config.targetCols
               << ", each output: " << config.viewCols << "x" << config.viewRows << std::endl;
     std::cout << "[elemental] view cache: " << viewCount << " images, "
-              << formatBytes(totalViewBytes) << " in memory" << std::endl;
+              << formatBytes(totalViewBytes)
+              << (useMemoryViews ? " from multiview memory buffer" : " loaded from files")
+              << std::endl;
     std::cout << "[elemental] per-writer output buffer: " << formatBytes(outputImageBytes) << std::endl;
     std::cout << "[elemental] writer threads: " << writerThreads << std::endl;
     std::cout << "[elemental] flip source Y: " << (config.elementalFlipSourceY ? "true" : "false")
               << ", flip view rows: " << (config.elementalFlipViewRows ? "true" : "false") << std::endl;
 
     std::unique_ptr<unsigned char[]> viewPixels;
-    try {
-        viewPixels.reset(new unsigned char[totalViewBytes]);
-    }
-    catch (const std::bad_alloc&) {
-        std::cerr << "[elemental] cannot allocate view cache: "
-                  << formatBytes(totalViewBytes) << std::endl;
-        return 1;
+    if (!useMemoryViews) {
+        try {
+            viewPixels.reset(new unsigned char[totalViewBytes]);
+        }
+        catch (const std::bad_alloc&) {
+            std::cerr << "[elemental] cannot allocate view cache: "
+                      << formatBytes(totalViewBytes) << std::endl;
+            return 1;
+        }
     }
 
     const auto loadStart = std::chrono::steady_clock::now();
@@ -802,49 +884,50 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
     int mismatchedViewImages = 0;
     const int loadProgressEvery = std::max(1, config.viewRows / 10);
 
-    for (int viewRow = 1; viewRow <= config.viewRows; ++viewRow) {
-        for (int viewCol = 1; viewCol <= config.viewCols; ++viewCol) {
-            cv::Mat input;
-            if (viewRow == 1 && viewCol == 1) {
-                input = sample;
-            }
-            else {
-                const fs::path inputPath = viewPath(config, viewRow, viewCol);
-                input = cv::imread(inputPath.string(), cv::IMREAD_COLOR);
-                if (input.empty()) {
-                    std::cerr << "[error] Cannot read multiview image: " << inputPath.string() << std::endl;
-                    return 1;
+    if (!useMemoryViews) {
+        for (int viewRow = 1; viewRow <= config.viewRows; ++viewRow) {
+            for (int viewCol = 1; viewCol <= config.viewCols; ++viewCol) {
+                const size_t viewIndex = static_cast<size_t>(viewRow - 1) * static_cast<size_t>(config.viewCols)
+                    + static_cast<size_t>(viewCol - 1);
+                unsigned char* viewBase = viewPixels.get() + viewIndex * viewImageBytes;
+                std::fill(viewBase, viewBase + viewImageBytes, 0);
+                const int copyCols = std::min(config.targetCols, sourceCols);
+                const size_t copyBytes = static_cast<size_t>(copyCols) * 3;
+                cv::Mat input;
+                if (viewRow == 1 && viewCol == 1) {
+                    input = sample;
+                }
+                else {
+                    const fs::path inputPath = viewPath(config, viewRow, viewCol);
+                    input = cv::imread(inputPath.string(), cv::IMREAD_COLOR);
+                    if (input.empty()) {
+                        std::cerr << "[error] Cannot read multiview image: " << inputPath.string() << std::endl;
+                        return 1;
+                    }
+                }
+
+                const bool mismatchedSize = input.rows != config.targetRows || input.cols != config.targetCols;
+                if (mismatchedSize) {
+                    ++mismatchedViewImages;
+                }
+                for (int targetRow = 0; targetRow < config.targetRows; ++targetRow) {
+                    const int sourceRow = config.elementalFlipSourceY
+                        ? input.rows - 1 - targetRow
+                        : targetRow;
+                    if (sourceRow < 0 || sourceRow >= input.rows) {
+                        continue;
+                    }
+                    std::memcpy(
+                        viewBase + static_cast<size_t>(targetRow) * targetRowBytes,
+                        input.ptr<unsigned char>(sourceRow),
+                        copyBytes);
                 }
             }
 
-            const size_t viewIndex = static_cast<size_t>(viewRow - 1) * static_cast<size_t>(config.viewCols)
-                + static_cast<size_t>(viewCol - 1);
-            unsigned char* viewBase = viewPixels.get() + viewIndex * viewImageBytes;
-
-            const bool mismatchedSize = input.rows != config.targetRows || input.cols != config.targetCols;
-            if (mismatchedSize) {
-                ++mismatchedViewImages;
+            if (viewRow % loadProgressEvery == 0 || viewRow == config.viewRows) {
+                std::cout << "[elemental] loaded view rows " << viewRow << "/"
+                          << config.viewRows << std::endl;
             }
-            std::fill(viewBase, viewBase + viewImageBytes, 0);
-            const int copyCols = std::min(config.targetCols, input.cols);
-            const size_t copyBytes = static_cast<size_t>(copyCols) * 3;
-            for (int targetRow = 0; targetRow < config.targetRows; ++targetRow) {
-                const int sourceRow = config.elementalFlipSourceY
-                    ? input.rows - 1 - targetRow
-                    : targetRow;
-                if (sourceRow < 0 || sourceRow >= input.rows) {
-                    continue;
-                }
-                std::memcpy(
-                    viewBase + static_cast<size_t>(targetRow) * targetRowBytes,
-                    input.ptr<unsigned char>(sourceRow),
-                    copyBytes);
-            }
-        }
-
-        if (viewRow % loadProgressEvery == 0 || viewRow == config.viewRows) {
-            std::cout << "[elemental] loaded view rows " << viewRow << "/"
-                      << config.viewRows << std::endl;
         }
     }
 
@@ -853,8 +936,13 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
                   << " view images did not match target grid "
                   << config.targetCols << "x" << config.targetRows << std::endl;
     }
-    std::cout << "[elemental] loaded view cache in "
-              << formatSeconds(elapsedSeconds(loadStart)) << "s" << std::endl;
+    if (useMemoryViews) {
+        std::cout << "[elemental] using multiview memory buffer directly; no file load or duplicate view cache." << std::endl;
+    }
+    else {
+        std::cout << "[elemental] loaded view cache in "
+                  << formatSeconds(elapsedSeconds(loadStart)) << "s" << std::endl;
+    }
 
     const std::vector<int> jpgParams = { cv::IMWRITE_JPEG_QUALITY, config.jpgQuality };
     const auto writeStart = std::chrono::steady_clock::now();
@@ -876,10 +964,16 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
         if (!failed.load()) {
             try {
                 cv::Mat output(config.viewRows, config.viewCols, CV_8UC3);
+                output.setTo(cv::Scalar(0, 0, 0));
                 const int targetRow = targetIndex / config.targetCols;
                 const int targetCol = targetIndex % config.targetCols;
                 const size_t targetOffset = (static_cast<size_t>(targetRow) * static_cast<size_t>(config.targetCols)
                     + static_cast<size_t>(targetCol)) * 3;
+                const int sourceTargetRow = config.elementalFlipSourceY
+                    ? sourceRows - 1 - targetRow
+                    : targetRow;
+                const bool targetPixelInSource = targetCol >= 0 && targetCol < sourceCols
+                    && sourceTargetRow >= 0 && sourceTargetRow < sourceRows;
 
                 for (int outputViewRow = 0; outputViewRow < config.viewRows; ++outputViewRow) {
                     const int sourceViewRow = config.elementalFlipViewRows
@@ -890,7 +984,23 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
                         * static_cast<size_t>(config.viewCols);
                     for (int outputViewCol = 0; outputViewCol < config.viewCols; ++outputViewCol) {
                         const size_t viewIndex = sourceViewRowOffset + static_cast<size_t>(outputViewCol);
-                        const unsigned char* src = viewPixels.get() + viewIndex * viewImageBytes + targetOffset;
+                        const unsigned char* src = nullptr;
+                        if (useMemoryViews) {
+                            if (targetPixelInSource) {
+                                const unsigned char* frameBase = memoryResult->sink->data()
+                                    + viewIndex * static_cast<size_t>(memoryResult->sink->frameBytes());
+                                src = frameBase
+                                    + (static_cast<size_t>(sourceTargetRow) * static_cast<size_t>(sourceCols)
+                                        + static_cast<size_t>(targetCol)) * 3;
+                            }
+                        }
+                        else {
+                            src = viewPixels.get() + viewIndex * viewImageBytes + targetOffset;
+                        }
+                        if (src == nullptr) {
+                            dst += 3;
+                            continue;
+                        }
                         dst[0] = src[0];
                         dst[1] = src[1];
                         dst[2] = src[2];
@@ -1015,6 +1125,7 @@ CliOptions parseCli(int argc, char* argv[]) {
 
 int runPipeline(HoloConfig& config, const CliOptions& options) {
     std::vector<StageTiming> timings;
+    MultiviewMemoryResult multiviewMemory;
     auto finish = [&](int code) {
         printTimingSummary(timings);
         return code;
@@ -1041,12 +1152,17 @@ int runPipeline(HoloConfig& config, const CliOptions& options) {
     }
 
     if (shouldRunStage(options, "multiview") && config.runMultiview) {
-        const int code = runTimedStage("multiview", [&] { return runMultiviewStage(config, options); }, timings);
+        const bool keepForElemental = shouldRunStage(options, "elemental") && config.runElemental;
+        const int code = runTimedStage("multiview", [&] {
+            return runMultiviewStage(config, options, keepForElemental ? &multiviewMemory : nullptr);
+        }, timings);
         if (code != 0) return finish(code);
     }
 
     if (shouldRunStage(options, "elemental") && config.runElemental) {
-        const int code = runTimedStage("elemental", [&] { return runElementalStage(config, options); }, timings);
+        const int code = runTimedStage("elemental", [&] {
+            return runElementalStage(config, options, multiviewMemory.sink ? &multiviewMemory : nullptr);
+        }, timings);
         if (code != 0) return finish(code);
     }
 

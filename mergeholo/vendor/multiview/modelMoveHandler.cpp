@@ -349,3 +349,7 @@ bool modelMoveHandler::rotateX(float angle){
 
     return true;
 };
+
+osg::MatrixTransform* modelMoveHandler::modelTransform() const {
+    return m_mt;
+}

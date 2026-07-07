@@ -13,7 +13,11 @@ SOURCES += \
     camera/CaptureSession.cpp \
     camera/LightFieldCapture.cpp \
     pipeline/CaptureImport.cpp \
+    pipeline/ElementalStage.cpp \
     pipeline/HoloPipeline.cpp \
+    pipeline/PipelineConfig.cpp \
+    pipeline/PipelineLogger.cpp \
+    pipeline/PipelineTiming.cpp \
     vendor/base/FileLibrary.cpp \
     vendor/base/Logger.cpp \
     vendor/multiview/memoryFrameSink.cpp \
@@ -39,10 +43,16 @@ HEADERS += \
     camera/CommonFiles/JPDeviceInterface.h \
     camera/CommonFiles/threadsafe_queue.hpp \
     pipeline/CaptureImport.h \
+    pipeline/ElementalStage.h \
     pipeline/HoloPipeline.h \
+    pipeline/PipelineConfig.h \
+    pipeline/PipelineData.h \
+    pipeline/PipelineLogger.h \
+    pipeline/PipelineTiming.h \
     vendor/base/base.h \
     vendor/base/FileLibrary.h \
     vendor/base/Logger.hpp \
+    vendor/multiview/ModelMoveCameraConfig.h \
     vendor/multiview/memoryFrameSink.h \
     vendor/multiview/multiviewAtlasPlan.h \
     vendor/multiview/multiviewAtlasRenderer.h \

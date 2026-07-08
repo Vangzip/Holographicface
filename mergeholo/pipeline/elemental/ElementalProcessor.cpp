@@ -1,5 +1,6 @@
 #include "ElementalProcessor.h"
 
+#include "ElementalMemoryTransform.h"
 #include "PipelineTiming.h"
 
 #include <opencv2/imgcodecs.hpp>
@@ -95,9 +96,8 @@ fs::path viewPath(const HoloConfig& config, int row, int col) {
     return config.multiviewOutDir / name;
 }
 
-int chooseElementalWriterThreads(int requested) {
-    (void)requested;
-    return 1;
+int chooseElementalWriterThreads(int requested, int targetPixels) {
+    return chooseElementalMemoryThreads(requested, targetPixels);
 }
 
 } // namespace
@@ -189,7 +189,9 @@ int processElemental(
     }
 
     const int targetPixels = static_cast<int>(targetPixelCount);
-    const int writerThreads = std::min(static_cast<int>(targetPixelCount), chooseElementalWriterThreads(config.elementalWriterThreads));
+    const int writerThreads = useMemoryViews
+        ? std::min(static_cast<int>(targetPixelCount), chooseElementalWriterThreads(config.elementalWriterThreads, targetPixels))
+        : 1;
     if (elementalResult == nullptr) {
         std::cerr << "[elemental] internal memory result is not available." << std::endl;
         return 1;
@@ -302,6 +304,35 @@ int processElemental(
         return 1;
     }
 
+    if (useMemoryViews) {
+        const auto storeStart = std::chrono::steady_clock::now();
+        ElementalMemoryTransformConfig transformConfig;
+        transformConfig.viewRows = config.viewRows;
+        transformConfig.viewCols = config.viewCols;
+        transformConfig.sourceRows = sourceRows;
+        transformConfig.sourceCols = sourceCols;
+        transformConfig.targetRows = config.targetRows;
+        transformConfig.targetCols = config.targetCols;
+        transformConfig.flipSourceY = config.elementalFlipSourceY;
+        transformConfig.flipViewRows = config.elementalFlipViewRows;
+        transformConfig.sourceRowsBottomUp = true;
+        transformConfig.threadCount = writerThreads;
+
+        const ElementalMemoryTransformStatus status = storeElementalFromMemory(
+            memoryResult->sink->data(),
+            static_cast<std::size_t>(memoryResult->sink->frameBytes()),
+            elementalResult->pixels.get(),
+            transformConfig);
+        if (status != ElementalMemoryTransformStatus::Ok) {
+            std::cerr << "[elemental] memory transform failed." << std::endl;
+            return 1;
+        }
+
+        std::cout << "[elemental] stored output images in memory in "
+                  << formatSeconds(elapsedSeconds(storeStart)) << "s" << std::endl;
+        return 0;
+    }
+
     const auto storeStart = std::chrono::steady_clock::now();
     std::atomic<int> completedImages(0);
     std::atomic<bool> failed(false);
@@ -317,59 +348,38 @@ int processElemental(
         }
     };
 
-    auto writeOne = [&](int targetIndex) {
-        if (!failed.load()) {
-            try {
-                unsigned char* outputBase = elementalResult->pixels.get()
-                    + static_cast<size_t>(targetIndex) * outputImageBytes;
-                std::memset(outputBase, 0, outputImageBytes);
-                const int targetRow = targetIndex / config.targetCols;
-                const int targetCol = targetIndex % config.targetCols;
-                const size_t targetOffset = (static_cast<size_t>(targetRow) * static_cast<size_t>(config.targetCols)
-                    + static_cast<size_t>(targetCol)) * 3;
-                const int sourceTargetRow = config.elementalFlipSourceY
-                    ? sourceRows - 1 - targetRow
-                    : targetRow;
-                const bool targetPixelInSource = targetCol >= 0 && targetCol < sourceCols
-                    && sourceTargetRow >= 0 && sourceTargetRow < sourceRows;
+        auto writeOne = [&](int targetIndex) {
+            if (!failed.load()) {
+                try {
+                    unsigned char* outputBase = elementalResult->pixels.get()
+                        + static_cast<size_t>(targetIndex) * outputImageBytes;
+                    std::memset(outputBase, 0, outputImageBytes);
+                    const int targetRow = targetIndex / config.targetCols;
+                    const int targetCol = targetIndex % config.targetCols;
+                    const size_t targetOffset = (static_cast<size_t>(targetRow) * static_cast<size_t>(config.targetCols)
+                        + static_cast<size_t>(targetCol)) * 3;
 
-                for (int outputViewRow = 0; outputViewRow < config.viewRows; ++outputViewRow) {
-                    const int sourceViewRow = config.elementalFlipViewRows
-                        ? config.viewRows - 1 - outputViewRow
-                        : outputViewRow;
-                    unsigned char* dst = outputBase
-                        + static_cast<size_t>(outputViewRow) * static_cast<size_t>(config.viewCols) * 3;
-                    const size_t sourceViewRowOffset = static_cast<size_t>(sourceViewRow)
-                        * static_cast<size_t>(config.viewCols);
-                    for (int outputViewCol = 0; outputViewCol < config.viewCols; ++outputViewCol) {
-                        const size_t viewIndex = sourceViewRowOffset + static_cast<size_t>(outputViewCol);
-                        const unsigned char* src = nullptr;
-                        if (useMemoryViews) {
-                            if (targetPixelInSource) {
-                                const unsigned char* frameBase = memoryResult->sink->data()
-                                    + viewIndex * static_cast<size_t>(memoryResult->sink->frameBytes());
-                                src = frameBase
-                                    + (static_cast<size_t>(sourceTargetRow) * static_cast<size_t>(sourceCols)
-                                        + static_cast<size_t>(targetCol)) * 3;
-                            }
-                        }
-                        else {
-                            src = viewPixels.get() + viewIndex * viewImageBytes + targetOffset;
-                        }
-                        if (src == nullptr) {
+                    for (int outputViewRow = 0; outputViewRow < config.viewRows; ++outputViewRow) {
+                        const int sourceViewRow = config.elementalFlipViewRows
+                            ? config.viewRows - 1 - outputViewRow
+                            : outputViewRow;
+                        unsigned char* dst = outputBase
+                            + static_cast<size_t>(outputViewRow) * static_cast<size_t>(config.viewCols) * 3;
+                        const size_t sourceViewRowOffset = static_cast<size_t>(sourceViewRow)
+                            * static_cast<size_t>(config.viewCols);
+                        for (int outputViewCol = 0; outputViewCol < config.viewCols; ++outputViewCol) {
+                            const size_t viewIndex = sourceViewRowOffset + static_cast<size_t>(outputViewCol);
+                            const unsigned char* src = viewPixels.get() + viewIndex * viewImageBytes + targetOffset;
+                            dst[0] = src[0];
+                            dst[1] = src[1];
+                            dst[2] = src[2];
                             dst += 3;
-                            continue;
                         }
-                        dst[0] = src[0];
-                        dst[1] = src[1];
-                        dst[2] = src[2];
-                        dst += 3;
                     }
                 }
-            }
-            catch (const std::exception& ex) {
-                recordError(std::string("[error] Elemental memory store failed: ") + ex.what());
-            }
+                catch (const std::exception& ex) {
+                    recordError(std::string("[error] Elemental memory store failed: ") + ex.what());
+                }
         }
 
         const int done = ++completedImages;

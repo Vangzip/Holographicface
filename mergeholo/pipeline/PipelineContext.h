@@ -22,7 +22,7 @@ struct HoloConfig {
     int multiviewAngle = 90;
     int multiviewPer = 3;
     int multiviewResolution = 150;
-    int multiviewAtlasSize = 4096;
+    int multiviewAtlasSize = 0;
 
     int targetRows = 150;
     int targetCols = 150;

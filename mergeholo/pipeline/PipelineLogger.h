@@ -9,5 +9,7 @@ void writePipelineLog(
     const std::vector<StageTiming>& timings,
     const MultiviewMemoryResult& multiviewMemory,
     const ElementalMemoryResult& elementalMemory,
+    bool depthToMeshMemory,
+    bool meshToModelMemory,
     int resultCode,
     double wallSeconds);

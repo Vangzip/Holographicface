@@ -12,16 +12,34 @@ public:
     ~ConverPointCloud();
 
     bool meshAPI(const string &flypath, const string &, const string &outputDir = string());
+    bool meshAPIFromCloud(
+        const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,
+        const string &logicalFlypath,
+        const string &config,
+        const string &outputDir,
+        pcl::PolygonMesh *meshOut = nullptr,
+        bool writeMeshFile = true);
 
     bool modelAPI(const string &flypath, const string &);
+    bool modelAPIFromMesh(
+        const pcl::PolygonMesh &mesh,
+        const string &logicalMeshPath,
+        const string &texturePath,
+        const string &config);
 
 private:
 
 	bool parseArguments(const string &);
 
 	bool createGreedMesh(const string &);
+    bool createGreedMeshFromCloud(
+        const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,
+        const string &srcfile,
+        pcl::PolygonMesh *meshOut,
+        bool writeMeshFile);
 
 	bool createModel(const string &);
+    bool createModelFromMesh(const pcl::PolygonMesh &mesh, const string &logicalMeshPath);
 
     bool calculateVertexNormal(pcl::PointCloud<pcl::PointXYZRGBNormal> &);
 

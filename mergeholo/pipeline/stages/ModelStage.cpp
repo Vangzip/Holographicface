@@ -25,9 +25,30 @@ bool requireExists(const fs::path& path, const std::string& label)
 
 int runModelStage(const HoloConfig& config, const CliOptions& options)
 {
+    return runModelStage(config, options, nullptr);
+}
+
+int runModelStage(const HoloConfig& config, const CliOptions& options, const MeshMemoryResult* meshMemory)
+{
     if (!requireExists(config.depthInputDir, "depth_input_dir")
         || !requireExists(config.meshConfig, "mesh_config")) {
         return 1;
+    }
+
+    if (meshMemory && meshMemory->hasMesh()) {
+        if (options.dryRun) {
+            std::cout << "[model] memory " << meshMemory->meshPath.string()
+                      << " and write textured OBJ models" << std::endl;
+            return 0;
+        }
+
+        ConverPointCloud converter;
+        std::cout << "[model] memory " << meshMemory->meshPath.string() << std::endl;
+        return converter.modelAPIFromMesh(
+            *meshMemory->mesh,
+            meshMemory->meshPath.string(),
+            meshMemory->rgbPath.string(),
+            config.meshConfig.string()) ? 0 : 1;
     }
 
     if (options.dryRun) {

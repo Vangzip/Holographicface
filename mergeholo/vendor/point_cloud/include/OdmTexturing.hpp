@@ -104,6 +104,7 @@ class OdmTexturing
 public:
     OdmTexturing();
     OdmTexturing(const std::string &inputply, const std::string &inputtexture);
+    OdmTexturing(const pcl::PolygonMesh &inputmesh, const std::string &logicalInputPly, const std::string &inputtexture);
     ~OdmTexturing();
 
 
@@ -193,6 +194,7 @@ private:
     int nrTextures_;             /**< The number of textures created. */
 
     pcl::TextureMesh::Ptr mesh_;    /**< PCL Texture Mesh */
+    pcl::PolygonMesh::Ptr preloadedMesh_;
     std::vector<Patch> patches_;    /**< The vector containing all patches */
     pcl::texture_mapping::CameraVector cameras_;    /**< The vector containing all cameras. */
     std::vector<int> tTIA_;         /**< The vector containing the optimal cameras for all faces. */

@@ -670,6 +670,136 @@ int mysaveOBJFile(const std::string &file_name, const pcl::PolygonMesh &mesh, un
     return 0;
 }
 
+bool ConverPointCloud::createGreedMeshFromCloud(
+    const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &inputCloud,
+    const string &srcfile,
+    pcl::PolygonMesh *meshOut,
+    bool writeMeshFile)
+{
+    if (!inputCloud || inputCloud->points.empty())
+    {
+        cout << COUT_PREFIX << "input point cloud is empty." << endl;
+        return false;
+    }
+
+    pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr cloud_rgb = inputCloud;
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_rgb_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+
+    cout << COUT_PREFIX << "read memory point cloud ok . point size=" << cloud_rgb->points.size() << endl;
+
+    if (m_leafsize != 0)
+    {
+        pcl::VoxelGrid<pcl::PointXYZRGB> sor;
+        sor.setInputCloud(cloud_rgb);
+        sor.setLeafSize(m_leafsize, m_leafsize, m_leafsize);
+        sor.filter(*cloud_rgb_filtered);
+
+        cout << COUT_PREFIX << "VoxelGrid memory ok . point size = " << cloud_rgb_filtered->points.size() << endl;
+        cloud_rgb = cloud_rgb_filtered;
+    }
+
+    cout << COUT_PREFIX << "Calculating normals..." << endl;
+
+    pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+    std::unique_ptr<pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>> ne(
+        new pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal>);
+    pcl::search::KdTree<pcl::PointXYZRGB>::Ptr normal_tree(new pcl::search::KdTree<pcl::PointXYZRGB>);
+
+    normal_tree->setInputCloud(cloud_rgb);
+    ne->setInputCloud(cloud_rgb);
+    ne->setSearchMethod(normal_tree);
+    ne->setRadiusSearch(0.01);
+    ne->compute(*normals);
+
+    if (normals->points.size() != cloud_rgb->points.size())
+    {
+        cout << COUT_PREFIX << "Warning: Normal calculation failed, size mismatch." << endl;
+        ne.reset();
+        return false;
+    }
+
+    pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr cloud_normal(new pcl::PointCloud<pcl::PointXYZRGBNormal>);
+    cloud_normal->points.resize(cloud_rgb->points.size());
+    cloud_normal->width = cloud_rgb->width;
+    cloud_normal->height = cloud_rgb->height;
+    cloud_normal->is_dense = cloud_rgb->is_dense;
+
+    for (size_t i = 0; i < cloud_rgb->points.size(); ++i)
+    {
+        cloud_normal->points[i].x = cloud_rgb->points[i].x;
+        cloud_normal->points[i].y = cloud_rgb->points[i].y;
+        cloud_normal->points[i].z = cloud_rgb->points[i].z;
+        cloud_normal->points[i].r = cloud_rgb->points[i].r;
+        cloud_normal->points[i].g = cloud_rgb->points[i].g;
+        cloud_normal->points[i].b = cloud_rgb->points[i].b;
+
+        cloud_normal->points[i].normal_x = normals->points[i].normal_x;
+        cloud_normal->points[i].normal_y = normals->points[i].normal_y;
+        cloud_normal->points[i].normal_z = normals->points[i].normal_z;
+    }
+
+    cout << COUT_PREFIX << "Normals calculated successfully." << endl;
+
+    pcl::search::KdTree<pcl::PointXYZRGBNormal>::Ptr tree2(new pcl::search::KdTree<pcl::PointXYZRGBNormal>);
+    std::unique_ptr<pcl::PolygonMesh> triangles(new pcl::PolygonMesh);
+    tree2->setInputCloud(cloud_normal);
+
+    std::unique_ptr<pcl::GreedyProjectionTriangulation<pcl::PointXYZRGBNormal>> gp3(
+        new pcl::GreedyProjectionTriangulation<pcl::PointXYZRGBNormal>);
+    auto releaseGreedyProjection = [&gp3]() {
+        if (gp3)
+        {
+            gp3->setInputCloud(pcl::PointCloud<pcl::PointXYZRGBNormal>::ConstPtr());
+            gp3->setSearchMethod(pcl::search::KdTree<pcl::PointXYZRGBNormal>::Ptr());
+            gp3.reset();
+        }
+    };
+    gp3->setSearchRadius(m_searchRadius);
+    gp3->setMu(m_mu);
+    gp3->setMaximumNearestNeighbors(m_nearestNeighbors);
+    gp3->setMaximumSurfaceAngle(m_maxSurfaceAngle * (M_PI / 180));
+    gp3->setMinimumAngle(m_minAngle * (M_PI / 180));
+    gp3->setMaximumAngle(m_maxAngle * (M_PI / 180));
+    gp3->setNormalConsistency(false);
+    gp3->setConsistentVertexOrdering(true);
+    gp3->setInputCloud(cloud_normal);
+    gp3->setSearchMethod(tree2);
+    gp3->reconstruct(*triangles);
+
+    if (triangles->polygons.size() == 0){
+        cout << " polygons size 0." << endl;
+        releaseGreedyProjection();
+        ne.reset();
+        return false;
+    }
+
+    cout << COUT_PREFIX << "mesh reconstruct ok . point size:" << triangles->cloud.height * triangles->cloud.width << "\tpolygons:" << triangles->polygons.size() << endl;
+
+    std::unique_ptr<pcl::PolygonMesh> meshPoly(new pcl::PolygonMesh);
+    fillHole(*triangles, *meshPoly);
+
+    m_strOutModelPath = buildMeshOutputPath(srcfile, "_mesh.ply");
+    if (writeMeshFile && pcl::io::savePLYFile(m_strOutModelPath, *meshPoly) != 0)
+    {
+        cout << "save mesh ply file false. file= " << FileLibrary::getInstance()->getFileNameFromPath(m_strOutModelPath) << endl;
+        releaseGreedyProjection();
+        ne.reset();
+        return false;
+    }
+
+    if (meshOut)
+    {
+        *meshOut = *meshPoly;
+    }
+
+    meshPoly.reset();
+    triangles.reset();
+    releaseGreedyProjection();
+    ne.reset();
+
+    return true;
+}
+
 //璐┆绠楁硶鐢熸垚mesh
 bool ConverPointCloud::createGreedMesh(const string &filepath){
     std::string srcfile = filepath;
@@ -1042,6 +1172,13 @@ bool ConverPointCloud::createModel(const string &plyfile){
 	return true;
 }
 
+bool ConverPointCloud::createModelFromMesh(const pcl::PolygonMesh &mesh, const string &logicalMeshPath){
+
+    OdmTexturing createmodel(mesh, logicalMeshPath, m_strTexturepng);
+
+    return createmodel.run(m_focal_length) == 0;
+}
+
 
 
 bool ConverPointCloud::meshAPI(const string &flypath, const string &config, const string &outputDir){
@@ -1079,6 +1216,40 @@ bool ConverPointCloud::meshAPI(const string &flypath, const string &config, cons
         return false;
     }
 
+    return result;
+}
+
+bool ConverPointCloud::meshAPIFromCloud(
+    const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,
+    const string &logicalFlypath,
+    const string &config,
+    const string &outputDir,
+    pcl::PolygonMesh *meshOut,
+    bool writeMeshFile)
+{
+    if (!cloud || cloud->points.empty())
+    {
+        cout << COUT_PREFIX << "Error: Point cloud memory is empty." << endl;
+        return false;
+    }
+
+    if (parseArguments(config) == false){
+        cout << COUT_PREFIX << "Error: Failed to parse configuration file." << endl;
+        return false;
+    }
+    m_strMeshOutputDir = outputDir;
+
+    cout << COUT_PREFIX << "Reconstruction type: " << (m_type == 1 ? "Poisson" : "GreedyProjectionTriangulation") << endl;
+
+    if (m_type != 2) {
+        cout << COUT_PREFIX << "Error: Memory mesh path currently supports GreedyProjectionTriangulation only." << endl;
+        return false;
+    }
+
+    const bool result = createGreedMeshFromCloud(cloud, logicalFlypath, meshOut, writeMeshFile);
+    if (!result) {
+        cout << COUT_PREFIX << "GreedyProjectionTriangulation failed." << endl;
+    }
     return result;
 }
 
@@ -1162,6 +1333,35 @@ bool ConverPointCloud::modelAPI(const string &flypath, const string &config){
     }
 
     return createModel(flypath);
+}
+
+bool ConverPointCloud::modelAPIFromMesh(
+    const pcl::PolygonMesh &mesh,
+    const string &logicalMeshPath,
+    const string &texturePath,
+    const string &config)
+{
+    if (mesh.cloud.data.empty() || mesh.polygons.empty())
+    {
+        cout << COUT_PREFIX << "Error: Mesh memory is empty." << endl;
+        return false;
+    }
+
+    m_strTexturepng = texturePath;
+    cout << COUT_PREFIX << "Looking for texture file: " << m_strTexturepng << endl;
+    if (!FileLibrary::getInstance()->isFileExists(m_strTexturepng))
+    {
+        cout << COUT_PREFIX << "Error: Texture file not found. file = " << m_strTexturepng << endl;
+        return false;
+    }
+    cout << COUT_PREFIX << "Found texture file (memory path): " << m_strTexturepng << endl;
+
+    if (parseArguments(config) == false){
+        cout << COUT_PREFIX << "Error: Failed to parse configuration file." << endl;
+        return false;
+    }
+
+    return createModelFromMesh(mesh, logicalMeshPath);
 }
 
 //娉曠嚎鏍囧噯鍖?

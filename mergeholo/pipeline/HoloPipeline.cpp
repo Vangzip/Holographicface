@@ -1,6 +1,7 @@
 #include "HoloPipeline.h"
 
 #include "DepthStage.h"
+#include "DepthMeshModelMemory.h"
 #include "ElementalStage.h"
 #include "MeshStage.h"
 #include "ModelStage.h"
@@ -30,13 +31,21 @@ int runPipeline(HoloConfig& config, const CliOptions& options)
 {
     const auto pipelineStart = std::chrono::steady_clock::now();
     std::vector<StageTiming> timings;
+    DepthMemoryResult depthMemory;
+    MeshMemoryResult meshMemory;
     MultiviewMemoryResult multiviewMemory;
     ElementalMemoryResult elementalMemory;
+
+    const bool runDepth = shouldRunStage(options, "depth") && config.runDepthPointCloud;
+    const bool runMesh = shouldRunStage(options, "mesh") && config.runMesh;
+    const bool runModel = shouldRunStage(options, "model") && config.runTexturedModel;
+    const bool useDepthMemory = runDepth && runMesh && options.inputPath.empty();
+    const bool useMeshMemory = useDepthMemory && runModel;
 
     auto finish = [&](int code) {
         printTimingSummary(timings);
         const double wallSeconds = elapsedSeconds(pipelineStart);
-        writePipelineLog(config, timings, multiviewMemory, elementalMemory, code, wallSeconds);
+        writePipelineLog(config, timings, multiviewMemory, elementalMemory, useDepthMemory, useMeshMemory, code, wallSeconds);
         std::cout << "[log] pipeline log: " << config.logFile.string() << std::endl;
         return code;
     };
@@ -46,18 +55,36 @@ int runPipeline(HoloConfig& config, const CliOptions& options)
         return finish(code);
     }
 
-    if (shouldRunStage(options, "depth") && config.runDepthPointCloud) {
-        const int code = runTimedStage("depth", [&] { return runDepthStage(config, options); }, timings);
-        if (code != 0) return finish(code);
+    if (runDepth) {
+        const int code = runTimedStage("depth", [&] {
+            return runDepthStage(config, options, useDepthMemory ? &depthMemory : nullptr);
+        }, timings);
+        if (code != 0) {
+            depthMemory.clear();
+            return finish(code);
+        }
     }
 
-    if (shouldRunStage(options, "mesh") && config.runMesh) {
-        const int code = runTimedStage("mesh", [&] { return runMeshStage(config, options); }, timings);
-        if (code != 0) return finish(code);
+    if (runMesh) {
+        const int code = runTimedStage("mesh", [&] {
+            return runMeshStage(
+                config,
+                options,
+                depthMemory.hasCloud() ? &depthMemory : nullptr,
+                useMeshMemory ? &meshMemory : nullptr);
+        }, timings);
+        depthMemory.clear();
+        if (code != 0) {
+            meshMemory.clear();
+            return finish(code);
+        }
     }
 
-    if (shouldRunStage(options, "model") && config.runTexturedModel) {
-        const int code = runTimedStage("model", [&] { return runModelStage(config, options); }, timings);
+    if (runModel) {
+        const int code = runTimedStage("model", [&] {
+            return runModelStage(config, options, meshMemory.hasMesh() ? &meshMemory : nullptr);
+        }, timings);
+        meshMemory.clear();
         if (code != 0) return finish(code);
     }
 

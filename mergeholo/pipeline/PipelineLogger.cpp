@@ -14,6 +14,8 @@ void writePipelineLog(
     const std::vector<StageTiming>& timings,
     const MultiviewMemoryResult& multiviewMemory,
     const ElementalMemoryResult& elementalMemory,
+    bool depthToMeshMemory,
+    bool meshToModelMemory,
     int resultCode,
     double wallSeconds)
 {
@@ -34,6 +36,12 @@ void writePipelineLog(
             log << timing.name << ".seconds=" << formatSeconds(timing.seconds) << "\n";
             log << timing.name << ".result=" << timing.code << "\n";
         }
+
+        log << "\n[pipeline_memory]\n";
+        log << "depth_to_mesh=" << (depthToMeshMemory ? "memory" : "file") << "\n";
+        log << "mesh_to_model=" << (meshToModelMemory ? "memory" : "file") << "\n";
+        log << "depth_cloud_cleared_after_mesh=" << (depthToMeshMemory ? "true" : "not_retained") << "\n";
+        log << "mesh_cleared_after_model=" << (meshToModelMemory ? "true" : "not_retained") << "\n";
 
         log << "\n[multiview]\n";
         if (multiviewMemory.sink && multiviewMemory.plan) {

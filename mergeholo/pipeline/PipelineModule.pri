@@ -16,6 +16,7 @@ SOURCES += \
 
 HEADERS += \
     $$PIPELINE_ROOT/CaptureImport.h \
+    $$PIPELINE_ROOT/DepthMeshModelMemory.h \
     $$PIPELINE_ROOT/elemental/ElementalConfig.h \
     $$PIPELINE_ROOT/elemental/ElementalMemoryResult.h \
     $$PIPELINE_ROOT/elemental/ElementalMemoryTransform.h \

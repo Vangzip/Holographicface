@@ -21,9 +21,24 @@ bool requireExists(const fs::path& path, const std::string& label)
     return true;
 }
 
+std::string baseNameFromTiff(const std::string& depthFile)
+{
+    std::string filename = FileLibrary::getInstance()->getFileNameFromPath(depthFile);
+    const size_t extPos = filename.rfind(".tiff");
+    if (extPos != std::string::npos) {
+        filename = filename.substr(0, extPos);
+    }
+    return filename;
+}
+
 } // namespace
 
 int runDepthStage(const HoloConfig& config, const CliOptions& options)
+{
+    return runDepthStage(config, options, nullptr);
+}
+
+int runDepthStage(const HoloConfig& config, const CliOptions& options, DepthMemoryResult* memoryResult)
 {
     if (!requireExists(config.depthInputDir, "depth_input_dir")
         || !requireExists(config.depthConfig, "depth_config")) {
@@ -43,14 +58,20 @@ int runDepthStage(const HoloConfig& config, const CliOptions& options)
         return 1;
     }
 
+    if (memoryResult) {
+        memoryResult->clear();
+    }
+
     depthImage depth(0);
     int failed = 0;
+    if (memoryResult && files.size() > 1) {
+        std::cerr << "[depth] memory pipeline expects one .tiff file, found "
+                  << files.size() << "." << std::endl;
+        return 1;
+    }
+
     for (const std::string& depthFile : files) {
-        std::string filename = FileLibrary::getInstance()->getFileNameFromPath(depthFile);
-        const size_t extPos = filename.rfind(".tiff");
-        if (extPos != std::string::npos) {
-            filename = filename.substr(0, extPos);
-        }
+        const std::string filename = baseNameFromTiff(depthFile);
 
         const std::string rgbFile = FileLibrary::getInstance()->combineFilePath(
             FileLibrary::getInstance()->getFileParentPath(depthFile), filename + ".jpg");
@@ -59,6 +80,17 @@ int runDepthStage(const HoloConfig& config, const CliOptions& options)
         if (!FileLibrary::getInstance()->isFileExists(rgbFile)) {
             std::cerr << "[depth] missing RGB image: " << rgbFile << std::endl;
             ++failed;
+            continue;
+        }
+
+        if (memoryResult) {
+            memoryResult->baseName = filename;
+            memoryResult->rgbPath = rgbFile;
+            memoryResult->pointCloudPath = config.depthInputDir / (filename + "_rgb.ply");
+            memoryResult->cloud = depth.depthToPointCloudColor(depthFile, rgbFile, config.depthConfig.string());
+            if (!memoryResult->hasCloud()) {
+                ++failed;
+            }
             continue;
         }
 

@@ -282,6 +282,111 @@ bool depthImage::depthToPlyColor(const std::string &depthImageSrc, const std::st
 
 #endif
 
+pcl::PointCloud<pcl::PointXYZRGB>::Ptr depthImage::depthToPointCloudColor(
+    const std::string &depthImageSrc,
+    const std::string &colorImage,
+    const string &config)
+{
+    if (!parseArguments(config))
+    {
+        cout << COUT_PREFIX << "Error: Failed to parse depth configuration file." << endl;
+        return pcl::PointCloud<pcl::PointXYZRGB>::Ptr();
+    }
+
+    typedef pcl::PointXYZRGB Point;
+    typedef pcl::PointCloud<Point> PointCloud;
+
+    cv::Mat rgb = cv::imread(colorImage);
+    cv::Mat depth = cv::imread(depthImageSrc, -1);
+
+    if (rgb.empty())
+    {
+        cout << COUT_PREFIX << "RGB image empty: " << colorImage << endl;
+        return PointCloud::Ptr();
+    }
+
+    if (depth.empty())
+    {
+        cout << COUT_PREFIX << "Depth image empty: " << depthImageSrc << endl;
+        return PointCloud::Ptr();
+    }
+
+    if (rgb.cols != depth.cols || rgb.rows != depth.rows)
+    {
+        cout << COUT_PREFIX << "RGB and depth size mismatch." << endl;
+        cout << COUT_PREFIX << "RGB: " << rgb.cols << " x " << rgb.rows << endl;
+        cout << COUT_PREFIX << "Depth: " << depth.cols << " x " << depth.rows << endl;
+        return PointCloud::Ptr();
+    }
+
+    cout << COUT_PREFIX << "RGB cols=" << rgb.cols
+        << ", rows=" << rgb.rows
+        << ", channels=" << rgb.channels()
+        << ", type=" << rgb.type()
+        << endl;
+
+    cout << COUT_PREFIX << "Depth cols=" << depth.cols
+        << ", rows=" << depth.rows
+        << ", channels=" << depth.channels()
+        << ", type=" << depth.type()
+        << endl;
+
+    if (depth.type() != CV_32FC3)
+    {
+        cout << COUT_PREFIX << "Error: expected CV_32FC3 tiff, but got type="
+            << depth.type() << ", channels=" << depth.channels() << endl;
+        return PointCloud::Ptr();
+    }
+
+    PointCloud::Ptr cloud(new PointCloud);
+    for (int m = 0; m < depth.rows; m++)
+    {
+        for (int n = 0; n < depth.cols; n++)
+        {
+            cv::Vec3f xyz = depth.at<cv::Vec3f>(m, n);
+
+            float X = xyz[0];
+            float Y = xyz[1];
+            float Z = xyz[2];
+
+            if (!std::isfinite(X) || !std::isfinite(Y) || !std::isfinite(Z))
+            {
+                continue;
+            }
+
+            if (std::fabs(Z) < 1e-6f)
+            {
+                continue;
+            }
+
+            uchar b = rgb.ptr<uchar>(m)[n * 3];
+            uchar g = rgb.ptr<uchar>(m)[n * 3 + 1];
+            uchar r = rgb.ptr<uchar>(m)[n * 3 + 2];
+
+            if (r > 240 && g > 240 && b > 240)
+            {
+                continue;
+            }
+
+            Point p;
+            p.x = X;
+            p.y = -Y;
+            p.z = -Z;
+            p.b = b;
+            p.g = g;
+            p.r = r;
+            cloud->points.push_back(p);
+        }
+    }
+
+    cloud->height = 1;
+    cloud->width = cloud->points.size();
+    cloud->is_dense = false;
+
+    cout << COUT_PREFIX << "point cloud size = " << cloud->points.size() << endl;
+    return cloud;
+}
+
 
 bool depthImage::depthToPlyColor(const std::string &depthImageSrc, const std::string &colorImage, const string &config, const string &outputDir
 	//double disp,    //鐢ㄤ簬绠楀熀绾縝aseline 1

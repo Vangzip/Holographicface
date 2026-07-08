@@ -96,9 +96,65 @@ int runMeshOneStage(const HoloConfig& config, const CliOptions& options)
 
 int runMeshStage(const HoloConfig& config, const CliOptions& options)
 {
+    return runMeshStage(config, options, nullptr, nullptr);
+}
+
+int runMeshStage(
+    const HoloConfig& config,
+    const CliOptions& options,
+    const DepthMemoryResult* depthMemory,
+    MeshMemoryResult* meshMemory)
+{
     if (!requireExists(config.depthInputDir, "depth_input_dir")
         || !requireExists(config.meshConfig, "mesh_config")) {
         return 1;
+    }
+
+    if (meshMemory) {
+        meshMemory->clear();
+    }
+
+    if (depthMemory && depthMemory->hasCloud()) {
+        const fs::path outputPath = meshOutputPath(config, depthMemory->pointCloudPath);
+        if (options.dryRun) {
+            std::cout << "[mesh] memory " << depthMemory->pointCloudPath.string()
+                      << " -> " << outputPath.string() << std::endl;
+            return 0;
+        }
+
+        ConverPointCloud converter;
+        std::cout << "[mesh] memory " << depthMemory->pointCloudPath.string() << std::endl;
+        pcl::PolygonMesh mesh;
+        const bool keepMeshInMemory = meshMemory != nullptr;
+        const bool ok = converter.meshAPIFromCloud(
+            depthMemory->cloud,
+            depthMemory->pointCloudPath.string(),
+            config.meshConfig.string(),
+            config.depthInputDir.string(),
+            keepMeshInMemory ? &mesh : nullptr,
+            !keepMeshInMemory);
+        if (!ok) {
+            return 1;
+        }
+
+        if (keepMeshInMemory) {
+            meshMemory->baseName = depthMemory->baseName;
+            meshMemory->meshPath = outputPath;
+            meshMemory->rgbPath = depthMemory->rgbPath;
+            meshMemory->mesh = pcl::PolygonMesh::Ptr(new pcl::PolygonMesh(mesh));
+            if (!meshMemory->hasMesh()) {
+                std::cerr << "[mesh] memory mesh was not created." << std::endl;
+                return 1;
+            }
+            return 0;
+        }
+
+        if (!fs::exists(outputPath)) {
+            std::cerr << "[mesh] expected output was not created: "
+                      << outputPath.string() << std::endl;
+            return 1;
+        }
+        return 0;
     }
 
     fs::path inputPath = options.inputPath;

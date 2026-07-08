@@ -47,6 +47,30 @@ OdmTexturing::OdmTexturing(const std::string &inputply, const std::string &input
     bundlePath_ = camerafile;
 }
 
+OdmTexturing::OdmTexturing(const pcl::PolygonMesh &inputmesh, const std::string &logicalInputPly, const std::string &inputtexture){
+
+
+    logFilePath_ = "odm_texturing_log.txt";
+
+    textureResolutionH_ = 384;
+    nrTextures_ = 0;
+    padding_ = 15.0;
+
+    mesh_ = pcl::TextureMeshPtr(new pcl::TextureMesh);
+    preloadedMesh_ = pcl::PolygonMesh::Ptr(new pcl::PolygonMesh(inputmesh));
+    patches_ = std::vector<Patch>(0);
+    tTIA_ = std::vector<int>(0);
+
+    std::string parentdir = FileLibrary::getInstance()->getFileParentPath(inputtexture)+"\\";
+    std::string camerafile = parentdir + "\\cameras.out";
+
+
+    inputModelPath_ = logicalInputPly;
+    outputFolder_ = parentdir;
+    imagesPath_ = inputtexture;
+    bundlePath_ = camerafile;
+}
+
 
 OdmTexturing::~OdmTexturing()
 {
@@ -108,6 +132,15 @@ int OdmTexturing::run(float focal_length)
 //************************************
 void OdmTexturing::loadMesh()
 {
+    if (preloadedMesh_)
+    {
+        cout<<COUT_PREFIX << "Successfully loaded " << preloadedMesh_->polygons.size() << " polygons from memory.\n";
+        mesh_->cloud = preloadedMesh_->cloud;
+        mesh_->tex_polygons.push_back(preloadedMesh_->polygons);
+        preloadedMesh_.reset();
+        return;
+    }
+
     // Read model from ply-file
     pcl::PolygonMeshPtr plyMeshPtr(new pcl::PolygonMesh);
     if (pcl::io::loadPLYFile(inputModelPath_, *plyMeshPtr.get()) == -1)

@@ -2,13 +2,13 @@
 
 #include "LightFieldCapture.h"
 
-#include <QByteArray>
 #include <QElapsedTimer>
 #include <QImage>
 #include <QMainWindow>
-#include <QProcess>
 #include <QString>
+#include <QThread>
 
+#include <atomic>
 #include <memory>
 
 #include <opencv2/core.hpp>
@@ -51,10 +51,8 @@ private:
     void startProcessing();
     bool preparePipelineInput(QString* errorMessage);
     bool writePipelineConfig(QString* errorMessage);
-    void startPipelineProcess();
-    void consumeProcessOutput(QByteArray& buffer, const QByteArray& chunk);
-    void handleProcessLine(const QString& line);
-    void finishPipelineProcess(int exitCode, QProcess::ExitStatus exitStatus);
+    void startPipelineThread();
+    void finishPipelineRun(int exitCode, bool normalExit);
     void setState(State state);
     void setProgress(int value, const QString& text);
     void setPreviewImages(const cv::Mat& rgb, const cv::Mat& depthDisplay);
@@ -77,7 +75,9 @@ private:
     QPushButton* confirmButton_ = nullptr;
     QPushButton* retakeButton_ = nullptr;
     QTimer* frameTimer_ = nullptr;
-    QProcess* pipelineProcess_ = nullptr;
+    QThread* pipelineThread_ = nullptr;
+    std::atomic<int> pipelineExitCode_{0};
+    std::atomic<bool> pipelineNormalExit_{true};
 
     std::unique_ptr<LightFieldCapture> capture_;
     State state_ = State::Starting;
@@ -92,7 +92,5 @@ private:
 
     QImage rgbPreview_;
     QImage depthPreview_;
-    QByteArray stdoutBuffer_;
-    QByteArray stderrBuffer_;
     QElapsedTimer confirmTimer_;
 };

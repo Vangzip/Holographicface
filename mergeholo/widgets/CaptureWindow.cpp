@@ -1,8 +1,10 @@
 #include "CaptureWindow.h"
 
+#include "HoloPipeline.h"
 #include "ui_CaptureWindow.h"
 
 #include <QApplication>
+#include <QByteArray>
 #include <QCoreApplication>
 #include <QCloseEvent>
 #include <QDir>
@@ -10,11 +12,9 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QMessageBox>
-#include <QProcess>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QPixmap>
-#include <QRegularExpression>
 #include <QSizePolicy>
 #include <QTextStream>
 #include <QTimer>
@@ -163,9 +163,12 @@ CaptureWindow::CaptureWindow(const QString& projectRoot, const QString& cameraCo
 
 CaptureWindow::~CaptureWindow()
 {
-    if (pipelineProcess_) {
-        pipelineProcess_->kill();
-        pipelineProcess_->waitForFinished(3000);
+    if (pipelineThread_) {
+        QThread* thread = pipelineThread_;
+        pipelineThread_ = nullptr;
+        thread->requestInterruption();
+        thread->wait();
+        delete thread;
     }
     releaseCamera();
 }
@@ -334,7 +337,7 @@ void CaptureWindow::startProcessing()
         return;
     }
 
-    startPipelineProcess();
+    startPipelineThread();
 }
 
 bool CaptureWindow::preparePipelineInput(QString* errorMessage)
@@ -405,108 +408,64 @@ bool CaptureWindow::writePipelineConfig(QString* errorMessage)
     return true;
 }
 
-void CaptureWindow::startPipelineProcess()
+void CaptureWindow::startPipelineThread()
 {
-    setProgress(2, "启动处理流程");
-    stdoutBuffer_.clear();
-    stderrBuffer_.clear();
-
-    pipelineProcess_ = new QProcess(this);
-    pipelineProcess_->setWorkingDirectory(projectRoot_);
-    pipelineProcess_->setProgram(QCoreApplication::applicationFilePath());
-    pipelineProcess_->setArguments({ "--pipeline", "--config", pipelineConfigPath(), "--stage", "all" });
-
-    connect(pipelineProcess_, &QProcess::readyReadStandardOutput, this, [this] {
-        consumeProcessOutput(stdoutBuffer_, pipelineProcess_->readAllStandardOutput());
-    });
-    connect(pipelineProcess_, &QProcess::readyReadStandardError, this, [this] {
-        consumeProcessOutput(stderrBuffer_, pipelineProcess_->readAllStandardError());
-    });
-    connect(pipelineProcess_, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-        this, [this](int exitCode, QProcess::ExitStatus exitStatus) {
-            finishPipelineProcess(exitCode, exitStatus);
-        });
-    connect(pipelineProcess_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
-        if (pipelineProcess_) {
-            setProgress(progressBar_->value(), "处理进程启动失败");
-        }
-    });
-
-    pipelineProcess_->start();
-}
-
-void CaptureWindow::consumeProcessOutput(QByteArray& buffer, const QByteArray& chunk)
-{
-    buffer.append(chunk);
-    int newlineIndex = -1;
-    while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
-        const QByteArray rawLine = buffer.left(newlineIndex);
-        buffer.remove(0, newlineIndex + 1);
-        handleProcessLine(QString::fromLocal8Bit(rawLine).trimmed());
-    }
-}
-
-void CaptureWindow::handleProcessLine(const QString& line)
-{
-    if (line.isEmpty()) {
+    if (pipelineThread_) {
         return;
     }
 
-    if (line.startsWith("[depth]")) {
-        setProgress(5, "深度图转点云");
-    }
-    else if (line.contains("[timing] stage depth")) {
-        setProgress(20, "点云生成完成");
-    }
-    else if (line.startsWith("[mesh]")) {
-        setProgress(25, "点云重建网格");
-    }
-    else if (line.contains("[timing] stage mesh")) {
-        setProgress(45, "网格生成完成");
-    }
-    else if (line.startsWith("[model]")) {
-        setProgress(50, "生成贴图模型");
-    }
-    else if (line.contains("[timing] stage model")) {
-        setProgress(65, "贴图模型完成");
-    }
-    else if (line.startsWith("m_height:") || line.contains("init eye")) {
-        setProgress(std::max(progressBar_->value(), 70), "生成多视角图");
-    }
-    else if (line.contains("[timing] stage multiview")) {
-        setProgress(82, "多视角图完成");
-    }
-    else if (line.startsWith("[elemental] loaded view")) {
-        setProgress(std::max(progressBar_->value(), 86), "加载多视角缓存");
-    }
-    else if (line.startsWith("[elemental] stored ") || line.startsWith("[elemental] wrote ")) {
-        static const QRegularExpression re("\\[elemental\\]\\s+(?:stored|wrote)\\s+(\\d+)/(\\d+)\\s+images");
-        const QRegularExpressionMatch match = re.match(line);
-        if (match.hasMatch()) {
-            const int done = match.captured(1).toInt();
-            const int total = std::max(1, match.captured(2).toInt());
-            const int value = 86 + static_cast<int>((static_cast<double>(done) / total) * 13.0);
-            setProgress(std::min(99, value), "生成结果图 " + match.captured(1) + "/" + match.captured(2));
+    setProgress(2, "启动处理流程");
+    pipelineExitCode_.store(1);
+    pipelineNormalExit_.store(false);
+
+    const QString appPath = QCoreApplication::applicationFilePath();
+    const QString configPath = pipelineConfigPath();
+
+    QThread* thread = QThread::create([this, appPath, configPath] {
+        try {
+            const QByteArray appArg = QFile::encodeName(appPath);
+            const QByteArray configArg = QFile::encodeName(configPath);
+            QByteArray configName("--config");
+            QByteArray stageName("--stage");
+            QByteArray stageArg("all");
+            std::vector<char*> argv;
+            argv.reserve(5);
+            argv.push_back(const_cast<char*>(appArg.constData()));
+            argv.push_back(configName.data());
+            argv.push_back(const_cast<char*>(configArg.constData()));
+            argv.push_back(stageName.data());
+            argv.push_back(stageArg.data());
+
+            const int exitCode = runHoloPipelineCli(static_cast<int>(argv.size()), argv.data());
+            pipelineExitCode_.store(exitCode);
+            pipelineNormalExit_.store(true);
         }
-    }
-    else if (line.contains("[timing] stage elemental")) {
-        setProgress(99, "整理输出结果");
-    }
+        catch (...) {
+            pipelineExitCode_.store(1);
+            pipelineNormalExit_.store(false);
+        }
+    });
+
+    pipelineThread_ = thread;
+    connect(thread, &QThread::started, this, [this] {
+        setProgress(5, "处理中");
+    });
+    connect(thread, &QThread::finished, this, [this, thread] {
+        const int exitCode = pipelineExitCode_.load();
+        const bool normalExit = pipelineNormalExit_.load();
+        if (pipelineThread_ == thread) {
+            pipelineThread_ = nullptr;
+        }
+        thread->deleteLater();
+        finishPipelineRun(exitCode, normalExit);
+    });
+
+    thread->start();
 }
 
-void CaptureWindow::finishPipelineProcess(int exitCode, QProcess::ExitStatus exitStatus)
+void CaptureWindow::finishPipelineRun(int exitCode, bool normalExit)
 {
-    if (!stdoutBuffer_.isEmpty()) {
-        handleProcessLine(QString::fromLocal8Bit(stdoutBuffer_).trimmed());
-        stdoutBuffer_.clear();
-    }
-    if (!stderrBuffer_.isEmpty()) {
-        handleProcessLine(QString::fromLocal8Bit(stderrBuffer_).trimmed());
-        stderrBuffer_.clear();
-    }
-
-    pipelineProcess_->deleteLater();
-    pipelineProcess_ = nullptr;
+    setProgress(99, "整理输出结果");
 
     const double confirmSeconds = confirmTimer_.isValid()
         ? static_cast<double>(confirmTimer_.elapsed()) / 1000.0
@@ -518,10 +477,10 @@ void CaptureWindow::finishPipelineProcess(int exitCode, QProcess::ExitStatus exi
         log << "\n[ui]\n";
         log << "confirm_to_finish_seconds=" << QString::number(confirmSeconds, 'f', 3) << "\n";
         log << "exit_code=" << exitCode << "\n";
-        log << "exit_status=" << (exitStatus == QProcess::NormalExit ? "normal" : "crash") << "\n";
+        log << "exit_status=" << (normalExit ? "normal" : "crash") << "\n";
     }
 
-    if (exitStatus == QProcess::NormalExit && exitCode == 0) {
+    if (normalExit && exitCode == 0) {
         setState(State::Done);
         setProgress(100, "处理完成，结果已保存到 " + QDir::toNativeSeparators(outputRoot()));
         QMessageBox::information(this, "处理完成", "结果已保存到:\n" + QDir::toNativeSeparators(outputRoot()));
@@ -618,7 +577,7 @@ void CaptureWindow::resizeEvent(QResizeEvent* event)
 
 void CaptureWindow::closeEvent(QCloseEvent* event)
 {
-    if (pipelineProcess_) {
+    if (pipelineThread_ && pipelineThread_->isRunning()) {
         const QMessageBox::StandardButton answer = QMessageBox::question(
             this,
             "处理中",
@@ -627,8 +586,9 @@ void CaptureWindow::closeEvent(QCloseEvent* event)
             event->ignore();
             return;
         }
-        pipelineProcess_->kill();
-        pipelineProcess_->waitForFinished(3000);
+        setProgress(progressBar_->value(), "等待处理线程结束");
+        pipelineThread_->requestInterruption();
+        pipelineThread_->wait();
     }
     QMainWindow::closeEvent(event);
 }

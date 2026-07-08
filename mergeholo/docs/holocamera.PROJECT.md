@@ -39,7 +39,7 @@ holocamera/
 ## 本机已验证环境
 
 - Windows
-- Visual Studio 2026 Community，MSVC x64 工具链
+- Visual Studio 2019 Community，MSVC v142 x64 工具链
 - Qt 5.15.0 MSVC2019 x64：`C:/wzp/QT/5.15.0/msvc2019_64`
 - OpenCV 4.5.0：自动发现 `C:/wzp/Holographicface/opencv450/opencv/build`
 - Git LFS 3.7.1
@@ -64,7 +64,7 @@ CUDA 未作为必需项处理：`Pri/cuda.pri` 会优先读取 `CUDA_PATH`，找
 如果 Qt 或 Visual Studio 安装路径不同：
 
 ```powershell
-.\scripts\build.ps1 -QtRoot "C:\Qt\5.15.0\msvc2019_64" -VsDevCmd "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat"
+.\scripts\build.ps1 -QtRoot "C:\Qt\5.15.0\msvc2019_64" -VsDevCmd "C:\wzp\Microsoft Visual Studio\2019\Community\Common7\Tools\VsDevCmd.bat"
 ```
 
 ## 运行方法

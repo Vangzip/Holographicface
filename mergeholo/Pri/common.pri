@@ -6,10 +6,20 @@ CONFIG(debug, debug|release) {
     MERGEHOLO_BUILD_VARIANT = release
 }
 
-UI_DIR =        $$PWD/../FF-tmp/ui/$$TARGET/$$MERGEHOLO_BUILD_VARIANT
-MOC_DIR =       $$PWD/../FF-tmp/moc/$$TARGET/$$MERGEHOLO_BUILD_VARIANT
-OBJECTS_DIR =   $$PWD/../FF-tmp/obj/$$TARGET/$$MERGEHOLO_BUILD_VARIANT
-RCC_DIR =       $$PWD/../FF-tmp/rcc/$$TARGET/$$MERGEHOLO_BUILD_VARIANT
+MERGEHOLO_TOOLSET = default
+win32-msvc* {
+    MERGEHOLO_MSC_VER = $${QMAKE_CXX.QMAKE_MSC_VER}
+    isEmpty(MERGEHOLO_MSC_VER): MERGEHOLO_MSC_VER = $$QMAKE_MSC_VER
+    isEmpty(MERGEHOLO_MSC_VER): error("mergeholo requires Visual Studio 2019 MSVC v142 x64.")
+    lessThan(MERGEHOLO_MSC_VER, 1920): error("mergeholo requires Visual Studio 2019 MSVC v142 x64. Current QMAKE_MSC_VER=$$MERGEHOLO_MSC_VER")
+    greaterThan(MERGEHOLO_MSC_VER, 1929): error("mergeholo requires Visual Studio 2019 MSVC v142 x64. Current QMAKE_MSC_VER=$$MERGEHOLO_MSC_VER")
+    MERGEHOLO_TOOLSET = msvc$${MERGEHOLO_MSC_VER}
+}
+
+UI_DIR =        $$PWD/../FF-tmp/ui/$$TARGET/$$MERGEHOLO_BUILD_VARIANT/$$MERGEHOLO_TOOLSET
+MOC_DIR =       $$PWD/../FF-tmp/moc/$$TARGET/$$MERGEHOLO_BUILD_VARIANT/$$MERGEHOLO_TOOLSET
+OBJECTS_DIR =   $$PWD/../FF-tmp/obj/$$TARGET/$$MERGEHOLO_BUILD_VARIANT/$$MERGEHOLO_TOOLSET
+RCC_DIR =       $$PWD/../FF-tmp/rcc/$$TARGET/$$MERGEHOLO_BUILD_VARIANT/$$MERGEHOLO_TOOLSET
 
 win32:QMAKE_CXXFLAGS += /source-charset:utf-8 /execution-charset:utf-8
 

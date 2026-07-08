@@ -85,8 +85,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Config 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1 `
   -QtRoot "C:\Qt\5.15.0\msvc2019_64" `
-  -VsDevCmd "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat"
+  -VsDevCmd "C:\wzp\Microsoft Visual Studio\2019\Community\Common7\Tools\VsDevCmd.bat"
 ```
+
+Qt Creator 中请使用 `Desktop Qt 5.15.0 MSVC2019 64bit` Kit，编译器选择 VS2019 v142 x64，构建配置选择 Release。从 VS2026 或其他 MSVC 版本切换回来后，先删除 `mergeholo/.qmake.stash`，然后执行 Run qmake，再 Clean/Rebuild。项目会把中间文件放到 `FF-tmp/.../msvc1929`，避免和其他 MSVC 版本的 `.obj` 混用。
 
 编译成功后输出：
 

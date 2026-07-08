@@ -2,12 +2,51 @@ param(
     [ValidateSet("release", "debug")]
     [string]$Config = "release",
     [string]$QtRoot = "",
-    [string]$VsDevCmd = "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat",
+    [string]$VsDevCmd = "",
     [switch]$Clean,
     [switch]$SkipDeploy
 )
 
 $ErrorActionPreference = "Stop"
+
+function Resolve-Vs2019DevCmd {
+    $VsWhereCandidates = @()
+    if (${env:ProgramFiles(x86)}) {
+        $VsWhereCandidates += (Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe")
+    }
+    if ($env:ProgramFiles) {
+        $VsWhereCandidates += (Join-Path $env:ProgramFiles "Microsoft Visual Studio\Installer\vswhere.exe")
+    }
+
+    foreach ($VsWhere in $VsWhereCandidates) {
+        if (-not (Test-Path -LiteralPath $VsWhere)) {
+            continue
+        }
+
+        $InstallPath = & $VsWhere -version "[16.0,17.0)" -products * -property installationPath 2>$null |
+            Select-Object -First 1
+        if ($InstallPath) {
+            $Candidate = Join-Path $InstallPath "Common7\Tools\VsDevCmd.bat"
+            if (Test-Path -LiteralPath $Candidate) {
+                return $Candidate
+            }
+        }
+    }
+
+    foreach ($Candidate in @(
+        "C:\wzp\Microsoft Visual Studio\2019\Community\Common7\Tools\VsDevCmd.bat",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\Tools\VsDevCmd.bat",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\Common7\Tools\VsDevCmd.bat",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\VsDevCmd.bat",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\Tools\VsDevCmd.bat"
+    )) {
+        if (Test-Path -LiteralPath $Candidate) {
+            return $Candidate
+        }
+    }
+
+    return ""
+}
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $WorkspaceRoot = Split-Path -Parent $ProjectRoot
@@ -15,13 +54,16 @@ if (-not $QtRoot) {
     $QtRoot = Join-Path $WorkspaceRoot "..\QT\5.15.0\msvc2019_64"
     $QtRoot = [System.IO.Path]::GetFullPath($QtRoot)
 }
+if (-not $VsDevCmd) {
+    $VsDevCmd = Resolve-Vs2019DevCmd
+}
 
 $QMake = Join-Path $QtRoot "bin\qmake.exe"
 if (-not (Test-Path -LiteralPath $QMake)) {
     throw "qmake not found: $QMake. Install Qt 5.15 MSVC2019 x64 or pass -QtRoot."
 }
 if (-not (Test-Path -LiteralPath $VsDevCmd)) {
-    throw "Visual Studio developer command script not found: $VsDevCmd"
+    throw "Visual Studio 2019 developer command script not found. Install VS2019 with MSVC v142 x64 tools or pass -VsDevCmd."
 }
 
 $Makefile = if ($Config -eq "debug") { "Makefile.Debug" } else { "Makefile.Release" }
@@ -203,6 +245,11 @@ function Deploy-MergeHoloConfig {
 
 Push-Location $ProjectRoot
 try {
+    $QMakeStash = Join-Path $ProjectRoot ".qmake.stash"
+    if (Test-Path -LiteralPath $QMakeStash) {
+        Remove-Item -LiteralPath $QMakeStash -Force
+    }
+
     $Cmd = "call `"$VsDevCmd`" -arch=x64 && `"$QMake`" mergeholo.pro -spec win32-msvc $QMakeConfig"
     if ($Clean) {
         $Cmd += " && if exist $Makefile nmake /f $Makefile clean"

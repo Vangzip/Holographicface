@@ -317,7 +317,7 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options, MultiviewMe
         config.multiviewCamera);
 
     try {
-        std::unique_ptr<MemoryFrameSink> sink(new MemoryFrameSink(renderPlan, true));
+        std::shared_ptr<MemoryFrameSink> sink(new MemoryFrameSink(renderPlan, true));
         MultiviewAtlasRenderer renderer(viewer.get(), handler->modelTransform(), renderPlan, *atlasPlan, sink.get());
         const MultiviewAtlasStats stats = renderer.renderAll();
 

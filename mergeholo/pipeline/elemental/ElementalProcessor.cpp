@@ -290,47 +290,41 @@ int processElemental(
                   << formatSeconds(elapsedSeconds(loadStart)) << "s" << std::endl;
     }
 
+    elementalResult->clear();
+    elementalResult->imageCount = targetPixelCount;
+    elementalResult->imageBytes = outputImageBytes;
+    elementalResult->totalBytes = totalElementalBytes;
+    elementalResult->rows = config.viewRows;
+    elementalResult->cols = config.viewCols;
+    elementalResult->targetRows = config.targetRows;
+    elementalResult->targetCols = config.targetCols;
+    elementalResult->sourceRows = sourceRows;
+    elementalResult->sourceCols = sourceCols;
+    elementalResult->flipSourceY = config.elementalFlipSourceY;
+    elementalResult->flipViewRows = config.elementalFlipViewRows;
+    elementalResult->sourceRowsBottomUp = true;
+
+    if (useMemoryViews) {
+        const auto storeStart = std::chrono::steady_clock::now();
+        elementalResult->sourceSink = memoryResult->sink;
+        elementalResult->sourceFrameBytes = static_cast<size_t>(memoryResult->sink->frameBytes());
+        elementalResult->mode = ElementalMemoryMode::VirtualFromMultiview;
+
+        std::cout << "[elemental] registered virtual output images in "
+                  << formatSeconds(elapsedSeconds(storeStart)) << "s" << std::endl;
+        std::cout << "[elemental] physical materialization deferred; call copyImage/materialize when a downstream stage needs pixels." << std::endl;
+        return 0;
+    }
+
     try {
         elementalResult->pixels.reset(new unsigned char[totalElementalBytes]);
-        elementalResult->imageCount = targetPixelCount;
-        elementalResult->imageBytes = outputImageBytes;
-        elementalResult->totalBytes = totalElementalBytes;
-        elementalResult->rows = config.viewRows;
-        elementalResult->cols = config.viewCols;
+        elementalResult->mode = ElementalMemoryMode::Materialized;
     }
     catch (const std::bad_alloc&) {
         std::cerr << "[elemental] cannot allocate output memory: "
                   << formatBytes(totalElementalBytes) << std::endl;
+        elementalResult->clear();
         return 1;
-    }
-
-    if (useMemoryViews) {
-        const auto storeStart = std::chrono::steady_clock::now();
-        ElementalMemoryTransformConfig transformConfig;
-        transformConfig.viewRows = config.viewRows;
-        transformConfig.viewCols = config.viewCols;
-        transformConfig.sourceRows = sourceRows;
-        transformConfig.sourceCols = sourceCols;
-        transformConfig.targetRows = config.targetRows;
-        transformConfig.targetCols = config.targetCols;
-        transformConfig.flipSourceY = config.elementalFlipSourceY;
-        transformConfig.flipViewRows = config.elementalFlipViewRows;
-        transformConfig.sourceRowsBottomUp = true;
-        transformConfig.threadCount = writerThreads;
-
-        const ElementalMemoryTransformStatus status = storeElementalFromMemory(
-            memoryResult->sink->data(),
-            static_cast<std::size_t>(memoryResult->sink->frameBytes()),
-            elementalResult->pixels.get(),
-            transformConfig);
-        if (status != ElementalMemoryTransformStatus::Ok) {
-            std::cerr << "[elemental] memory transform failed." << std::endl;
-            return 1;
-        }
-
-        std::cout << "[elemental] stored output images in memory in "
-                  << formatSeconds(elapsedSeconds(storeStart)) << "s" << std::endl;
-        return 0;
     }
 
     const auto storeStart = std::chrono::steady_clock::now();

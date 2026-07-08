@@ -6,6 +6,6 @@
 #include <memory>
 
 struct MultiviewMemoryResult {
-    std::unique_ptr<MemoryFrameSink> sink;
-    std::unique_ptr<MultiviewRenderPlan> plan;
+    std::shared_ptr<MemoryFrameSink> sink;
+    std::shared_ptr<MultiviewRenderPlan> plan;
 };

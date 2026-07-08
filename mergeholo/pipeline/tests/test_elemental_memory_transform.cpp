@@ -1,10 +1,15 @@
 #include "../elemental/ElementalMemoryTransform.h"
+#include "../elemental/ElementalMemoryResult.h"
+#include "memoryFrameSink.h"
+#include "multiviewRenderPlan.h"
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -193,6 +198,57 @@ void testThreadEquivalence() {
     expect(single == threaded, "多线程输出和单线程输出不一致");
 }
 
+void testVirtualResultMatchesMaterializedTransform() {
+    ElementalMemoryTransformConfig config = baseConfig();
+    config.flipSourceY = true;
+    config.flipViewRows = true;
+    config.sourceRowsBottomUp = true;
+
+    const std::vector<unsigned char> source = makeSource(
+        config.viewRows,
+        config.viewCols,
+        config.sourceRows,
+        config.sourceCols);
+    const std::size_t frameBytes = static_cast<std::size_t>(config.sourceRows) * config.sourceCols * 3;
+    std::vector<unsigned char> materialized(
+        static_cast<std::size_t>(config.targetRows) * config.targetCols * config.viewRows * config.viewCols * 3);
+    expect(storeElementalFromMemory(source.data(), frameBytes, materialized.data(), config)
+        == ElementalMemoryTransformStatus::Ok, "materialized transform failed");
+
+    std::shared_ptr<MemoryFrameSink> sink(new MemoryFrameSink(MultiviewRenderPlan(2, 1, 2), true));
+    std::memcpy(sink->data(), source.data(), source.size());
+
+    ElementalMemoryResult result;
+    result.sourceSink = sink;
+    result.imageCount = static_cast<std::size_t>(config.targetRows) * config.targetCols;
+    result.imageBytes = static_cast<std::size_t>(config.viewRows) * config.viewCols * 3;
+    result.totalBytes = materialized.size();
+    result.rows = config.viewRows;
+    result.cols = config.viewCols;
+    result.targetRows = config.targetRows;
+    result.targetCols = config.targetCols;
+    result.sourceRows = config.sourceRows;
+    result.sourceCols = config.sourceCols;
+    result.sourceFrameBytes = frameBytes;
+    result.flipSourceY = config.flipSourceY;
+    result.flipViewRows = config.flipViewRows;
+    result.sourceRowsBottomUp = config.sourceRowsBottomUp;
+    result.mode = ElementalMemoryMode::VirtualFromMultiview;
+
+    std::vector<unsigned char> oneImage(result.imageBytes);
+    for (std::size_t index = 0; index < result.imageCount; ++index) {
+        expect(result.copyImage(index, oneImage.data()), "virtual copyImage failed");
+        const unsigned char* expected = materialized.data() + index * result.imageBytes;
+        expect(std::memcmp(oneImage.data(), expected, result.imageBytes) == 0,
+            "virtual image does not match materialized output");
+    }
+
+    expect(result.materialize(), "virtual materialize failed");
+    expect(result.isMaterialized(), "result should be materialized");
+    expect(std::memcmp(result.pixels.get(), materialized.data(), materialized.size()) == 0,
+        "materialized virtual result does not match transform output");
+}
+
 void runBenchmarkSmoke() {
     ElementalMemoryTransformConfig config;
     config.viewRows = 32;
@@ -265,6 +321,7 @@ int main() {
     testBottomUpSourceRowsMatchFilePathYFlip();
     testZeroPaddingWhenSourceSmallerThanTarget();
     testThreadEquivalence();
+    testVirtualResultMatchesMaterializedTransform();
     runBenchmarkSmoke();
     runMediumBenchmark();
     std::cout << "elemental 内存转换测试通过\n";

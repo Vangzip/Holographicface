@@ -11,6 +11,17 @@ SOURCES += \
     apps/mergeholo_main.cpp \
     camera/CaptureSession.cpp \
     camera/LightFieldCapture.cpp \
+    pipeline/CaptureImport.cpp \
+    pipeline/elemental/ElementalProcessor.cpp \
+    pipeline/HoloPipeline.cpp \
+    pipeline/PipelineConfig.cpp \
+    pipeline/PipelineLogger.cpp \
+    pipeline/PipelineTiming.cpp \
+    pipeline/stages/DepthStage.cpp \
+    pipeline/stages/ElementalStage.cpp \
+    pipeline/stages/MeshStage.cpp \
+    pipeline/stages/ModelStage.cpp \
+    pipeline/stages/MultiviewStage.cpp \
     vendor/base/FileLibrary.cpp \
     vendor/base/Logger.cpp \
     vendor/multiview/memoryFrameSink.cpp \
@@ -35,6 +46,22 @@ HEADERS += \
     camera/LightFieldCapture.h \
     camera/CommonFiles/JPDeviceInterface.h \
     camera/CommonFiles/threadsafe_queue.hpp \
+    pipeline/CaptureImport.h \
+    pipeline/elemental/ElementalConfig.h \
+    pipeline/elemental/ElementalMemoryResult.h \
+    pipeline/elemental/ElementalProcessor.h \
+    pipeline/HoloPipeline.h \
+    pipeline/PipelineConfig.h \
+    pipeline/PipelineContext.h \
+    pipeline/PipelineLogger.h \
+    pipeline/PipelineTiming.h \
+    pipeline/multiview/MultiviewConfig.h \
+    pipeline/multiview/MultiviewMemoryResult.h \
+    pipeline/stages/DepthStage.h \
+    pipeline/stages/ElementalStage.h \
+    pipeline/stages/MeshStage.h \
+    pipeline/stages/ModelStage.h \
+    pipeline/stages/MultiviewStage.h \
     vendor/base/base.h \
     vendor/base/FileLibrary.h \
     vendor/base/Logger.hpp \
@@ -59,6 +86,10 @@ FORMS += \
 INCLUDEPATH += \
     apps \
     camera \
+    pipeline \
+    pipeline/elemental \
+    pipeline/multiview \
+    pipeline/stages \
     widgets \
     vendor/base \
     vendor/multiview \
@@ -68,7 +99,6 @@ include($$PWD/Pri/common.pri)
 include($$PWD/Pri/opencv.pri)
 include($$PWD/Pri/cuda.pri)
 include($$PWD/Pri/holo_pipeline.pri)
-include($$PWD/pipeline/PipelineModule.pri)
 
 HOLO_SDK_ROOT = $$(HOLO_SDK_ROOT)
 isEmpty(HOLO_SDK_ROOT):exists($$PWD/runtime/holoLib/JpLF-v3.1.lib): HOLO_SDK_ROOT = $$PWD/runtime/holoLib

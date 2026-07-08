@@ -1,7 +1,5 @@
 #include "../elemental/ElementalMemoryTransform.h"
 #include "../elemental/ElementalMemoryResult.h"
-#include "memoryFrameSink.h"
-#include "multiviewRenderPlan.h"
 
 #include <chrono>
 #include <cstddef>
@@ -198,7 +196,7 @@ void testThreadEquivalence() {
     expect(single == threaded, "多线程输出和单线程输出不一致");
 }
 
-void testVirtualResultMatchesMaterializedTransform() {
+void testMaterializedResultCopyImage() {
     ElementalMemoryTransformConfig config = baseConfig();
     config.flipSourceY = true;
     config.flipViewRows = true;
@@ -215,11 +213,9 @@ void testVirtualResultMatchesMaterializedTransform() {
     expect(storeElementalFromMemory(source.data(), frameBytes, materialized.data(), config)
         == ElementalMemoryTransformStatus::Ok, "materialized transform failed");
 
-    std::shared_ptr<MemoryFrameSink> sink(new MemoryFrameSink(MultiviewRenderPlan(2, 1, 2), true));
-    std::memcpy(sink->data(), source.data(), source.size());
-
     ElementalMemoryResult result;
-    result.sourceSink = sink;
+    result.pixels.reset(new unsigned char[materialized.size()]);
+    std::memcpy(result.pixels.get(), materialized.data(), materialized.size());
     result.imageCount = static_cast<std::size_t>(config.targetRows) * config.targetCols;
     result.imageBytes = static_cast<std::size_t>(config.viewRows) * config.viewCols * 3;
     result.totalBytes = materialized.size();
@@ -229,24 +225,18 @@ void testVirtualResultMatchesMaterializedTransform() {
     result.targetCols = config.targetCols;
     result.sourceRows = config.sourceRows;
     result.sourceCols = config.sourceCols;
-    result.sourceFrameBytes = frameBytes;
     result.flipSourceY = config.flipSourceY;
     result.flipViewRows = config.flipViewRows;
     result.sourceRowsBottomUp = config.sourceRowsBottomUp;
-    result.mode = ElementalMemoryMode::VirtualFromMultiview;
+    result.mode = ElementalMemoryMode::Materialized;
 
     std::vector<unsigned char> oneImage(result.imageBytes);
     for (std::size_t index = 0; index < result.imageCount; ++index) {
-        expect(result.copyImage(index, oneImage.data()), "virtual copyImage failed");
+        expect(result.copyImage(index, oneImage.data()), "materialized copyImage failed");
         const unsigned char* expected = materialized.data() + index * result.imageBytes;
         expect(std::memcmp(oneImage.data(), expected, result.imageBytes) == 0,
-            "virtual image does not match materialized output");
+            "copied image does not match materialized output");
     }
-
-    expect(result.materialize(), "virtual materialize failed");
-    expect(result.isMaterialized(), "result should be materialized");
-    expect(std::memcmp(result.pixels.get(), materialized.data(), materialized.size()) == 0,
-        "materialized virtual result does not match transform output");
 }
 
 void runBenchmarkSmoke() {
@@ -321,7 +311,7 @@ int main() {
     testBottomUpSourceRowsMatchFilePathYFlip();
     testZeroPaddingWhenSourceSmallerThanTarget();
     testThreadEquivalence();
-    testVirtualResultMatchesMaterializedTransform();
+    testMaterializedResultCopyImage();
     runBenchmarkSmoke();
     runMediumBenchmark();
     std::cout << "elemental 内存转换测试通过\n";

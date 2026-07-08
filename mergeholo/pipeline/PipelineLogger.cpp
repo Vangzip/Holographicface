@@ -59,9 +59,7 @@ void writePipelineLog(
 
         log << "\n[elemental]\n";
         if (elementalMemory.hasResult()) {
-            log << "mode="
-                << (elementalMemory.isVirtual() ? "virtual_from_multiview" : "memory")
-                << "\n";
+            log << "mode=memory\n";
             log << "images=" << elementalMemory.imageCount << "\n";
             log << "image_width=" << elementalMemory.cols << "\n";
             log << "image_height=" << elementalMemory.rows << "\n";
@@ -69,7 +67,7 @@ void writePipelineLog(
             log << "total_bytes=" << elementalMemory.totalBytes << "\n";
             log << "total_readable=" << formatBytes(elementalMemory.totalBytes) << "\n";
             log << "files_written=0\n";
-            log << "materialized=" << (elementalMemory.isMaterialized() ? "true" : "false") << "\n";
+            log << "materialized=true\n";
         }
         else {
             log << "mode=not_retained\n";

@@ -103,6 +103,8 @@ include($$PWD/Pri/holo_pipeline.pri)
 HOLO_SDK_ROOT = $$(HOLO_SDK_ROOT)
 isEmpty(HOLO_SDK_ROOT):exists($$PWD/runtime/holoLib/JpLF-v3.1.lib): HOLO_SDK_ROOT = $$PWD/runtime/holoLib
 isEmpty(HOLO_SDK_ROOT):exists($$PWD/../holocamera/HoloTest/holoLib/JpLF-v3.1.lib): HOLO_SDK_ROOT = $$PWD/../holocamera/HoloTest/holoLib
+isEmpty(HOLO_SDK_ROOT):exists($$PWD/../holocamera/HoloTest_0703/HoloTest/holoLib/JpLF-v3.1.lib): HOLO_SDK_ROOT = $$PWD/../holocamera/HoloTest_0703/HoloTest/holoLib
+isEmpty(HOLO_SDK_ROOT):exists($$PWD/../holocamera/00-bin - 副本/JpLF-v3.1.lib): HOLO_SDK_ROOT = $$PWD/../holocamera/00-bin - 副本
 isEmpty(HOLO_SDK_ROOT): error("JpLF-v3.1 SDK not found. Set HOLO_SDK_ROOT or keep ../holocamera/HoloTest/holoLib available.")
 
 INCLUDEPATH += $$HOLO_SDK_ROOT

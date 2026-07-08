@@ -112,10 +112,16 @@ function Deploy-CameraRuntime {
     if (-not $HoloLib) {
         $LocalRuntime = Join-Path $ProjectRoot "runtime\holoLib"
         $LegacyRuntime = Join-Path $WorkspaceRoot "holocamera\HoloTest\holoLib"
+        $Legacy0703Runtime = Join-Path $WorkspaceRoot "holocamera\HoloTest_0703\HoloTest\holoLib"
+        $LegacyBinRuntime = Join-Path $WorkspaceRoot "holocamera\00-bin - 副本"
         if (Test-Path -LiteralPath (Join-Path $LocalRuntime "JpLF-v3.1.lib")) {
             $HoloLib = $LocalRuntime
         } elseif (Test-Path -LiteralPath (Join-Path $LegacyRuntime "JpLF-v3.1.lib")) {
             $HoloLib = $LegacyRuntime
+        } elseif (Test-Path -LiteralPath (Join-Path $Legacy0703Runtime "JpLF-v3.1.lib")) {
+            $HoloLib = $Legacy0703Runtime
+        } elseif (Test-Path -LiteralPath (Join-Path $LegacyBinRuntime "JpLF-v3.1.lib")) {
+            $HoloLib = $LegacyBinRuntime
         }
     }
     if (-not $HoloLib -or -not (Test-Path -LiteralPath $HoloLib)) {

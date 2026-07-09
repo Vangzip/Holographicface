@@ -15,6 +15,9 @@
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="rootLayout">
+    <property name="spacing">
+     <number>14</number>
+    </property>
     <property name="leftMargin">
      <number>46</number>
     </property>
@@ -26,9 +29,6 @@
     </property>
     <property name="bottomMargin">
      <number>38</number>
-    </property>
-    <property name="spacing">
-     <number>14</number>
     </property>
     <item>
      <layout class="QHBoxLayout" name="previewLayout">
@@ -50,17 +50,17 @@
       </item>
       <item>
        <widget class="QLabel" name="rgbLabel">
-        <property name="minimumSize">
-         <size>
-          <width>240</width>
-          <height>220</height>
-         </size>
-        </property>
         <property name="sizePolicy">
          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
           <horstretch>1</horstretch>
           <verstretch>1</verstretch>
          </sizepolicy>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>240</width>
+          <height>220</height>
+         </size>
         </property>
         <property name="styleSheet">
          <string notr="true">QLabel { background: #ffffff; color: #111111; border: 2px solid #111111; }</string>
@@ -81,17 +81,17 @@
       </item>
       <item>
        <widget class="QLabel" name="depthLabel">
-        <property name="minimumSize">
-         <size>
-          <width>240</width>
-          <height>220</height>
-         </size>
-        </property>
         <property name="sizePolicy">
          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
           <horstretch>1</horstretch>
           <verstretch>1</verstretch>
          </sizepolicy>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>240</width>
+          <height>220</height>
+         </size>
         </property>
         <property name="styleSheet">
          <string notr="true">QLabel { background: #ffffff; color: #111111; border: 2px solid #111111; }</string>
@@ -211,7 +211,7 @@ QProgressBar::chunk { background: #2f80ed; }</string>
          </size>
         </property>
         <property name="text">
-         <string>拍照按钮</string>
+         <string>拍照</string>
         </property>
        </widget>
       </item>

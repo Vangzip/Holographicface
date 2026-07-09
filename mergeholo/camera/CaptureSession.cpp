@@ -136,6 +136,9 @@ int runCaptureSession(const CaptureSessionOptions& options)
     config.iSerialParity = 0;
     config.strParseCfgPath = QDir::toNativeSeparators(options.cameraConfigPath).toStdString();
     std::replace(config.strParseCfgPath.begin(), config.strParseCfgPath.end(), '\\', '/');
+    config.iGpuId = 0;
+    config.strCamSeri = "571";
+    config.strCamType = "Indigo";
 
     if (!capture.initialize(&config)) {
         qDebug() << "Camera initialization failed.";

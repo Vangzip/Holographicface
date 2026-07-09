@@ -221,6 +221,9 @@ void CaptureWindow::startCamera()
     config.iSerialParity = 0;
     config.strParseCfgPath = QDir::toNativeSeparators(cameraConfigPath_).toStdString();
     std::replace(config.strParseCfgPath.begin(), config.strParseCfgPath.end(), '\\', '/');
+    config.iGpuId = 0;
+    config.strCamSeri = "571";
+    config.strCamType = "Indigo";
 
     capture_ = std::make_unique<LightFieldCapture>();
     if (!capture_->initialize(&config)) {

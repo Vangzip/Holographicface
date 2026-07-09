@@ -16,6 +16,12 @@
 #endif
 
 #ifdef WIN64
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <Windows.h>
 #else
 #include <sys/types.h>
@@ -27,41 +33,43 @@
 #include <stdlib.h>
 #include <sys/statfs.h>  
 #endif
-#include <opencv2/core.hpp>
+#include <string>
 
 namespace jp_lightfield {
 
-    #ifdef WIN64
-        struct timeval
-        {
-            long tv_sec;  // 秒
-            long tv_usec; // 微秒
-        };
-    #endif
+#ifdef WIN64
+    struct timeval
+    {
+        long tv_sec;
+        long tv_usec;
+    };
+#endif
+
 	struct strCameraConf {
-		int exposeMode; //曝光模式，0：手动, 1：自动1, 2：自动2
-		int exposeVal[3];
+		int exposeMode; //???????0?????, 1?????1, 2?????2
+		int exposeVal;
 		int id;         //in
 		double frameRate;
 		int missThresold;
 
 		int width;      //out
 		int height;     //out
-		bool bColor;    //out//彩色/黑白相机
+		bool bColor;    //out//???/??????
 
 		strCameraConf() : exposeMode(1) {
-			exposeVal[1] = 1000;
+			exposeVal = 1000;
 			id = 0;
 			frameRate = 10.0;
 			missThresold = 0;
 		}
 	};
 	struct strCameraData {
-		cv::Mat data;
+		int dataLen;
+		unsigned char* data;
 		float tempreture;
 		struct timeval tv;
 		bool bmono;
-		strCameraData() : tempreture(0.0f), bmono(false) {
+		strCameraData() :dataLen(1), data(0), tempreture(0.0f), bmono(false) {
 		}
 	};
 	class DLL_API JpICamera {
@@ -71,12 +79,17 @@ namespace jp_lightfield {
 
 		/*************************/
 		//
-		static JpICamera* GetICamera();
+		static JpICamera* GetICamera(std::string camSeri = "CXP");
 		static void ReleaseICamera(JpICamera* icam);
 
 	public:
-		virtual int Init(strCameraConf& conf) = 0;
+		/*camType: ????????
+		65M,
+		GM21M12X4,
+		*/
+		virtual int Init(strCameraConf& conf, std::string camType) = 0;
 		virtual int Capture(strCameraData& cd) = 0;
+		virtual void Free(strCameraData& cd) = 0;
 		virtual int SetExpose(int mode, int val) = 0;
 	};
 }

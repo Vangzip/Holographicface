@@ -15,7 +15,15 @@
 #endif
 #endif
 
+#include <string>
+
 #ifdef WIN64
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <Windows.h>
 #else
 #include <sys/types.h>
@@ -27,28 +35,32 @@
 #include <stdlib.h>
 #include <sys/statfs.h>  
 #endif
-#include <opencv2/core.hpp>
 
 namespace jp_lightfield {
 	struct strLightFieldInput {
-		bool bmono;
-		cv::Mat data;
+		int channel;
+		int dataLen;
+		unsigned char * data;
 		float tempreture[3];
-		strLightFieldInput() : bmono(false){
+		strLightFieldInput() : channel(1), dataLen(1), data(0){
 			tempreture[0] = 0.0f;
 			tempreture[1] = 0.0f;
 			tempreture[2] = 0.0f;
 		}
 	};
 	struct strLightFieldOutput {
-		cv::Mat img2d;
-		cv::Mat depthMap;
-		cv::Mat img3d;
-	};
-	enum enParseType
-	{
-		parseSlow = 0,
-		parseQuick
+		unsigned char* img2d;
+		unsigned char* depthMap;
+		float* img3d;
+		float* imgTest;
+
+		unsigned char* img2dCuda;
+		float* img3dCuda;
+
+		strLightFieldOutput() :
+			img2d(0),
+			depthMap(0), img3d(0), imgTest(0),
+			img2dCuda(0), img3dCuda(0) {};
 	};
 	class DLL_API JpIParse {
 	public:
@@ -56,11 +68,19 @@ namespace jp_lightfield {
 		virtual ~JpIParse() {};
 
 		/*************************/
-		static JpIParse* GetIParse(enParseType type = parseSlow);
+		static JpIParse* GetIParse();
 		static void ReleaseIParse(JpIParse* iparse);
 	public:
-		virtual int Init(std::string cfgPath, int gpuId) = 0;
-		virtual int Parse(strLightFieldInput& lfdata, 
+		virtual int Init(std::string cfgPath, int gpuId, 
+			int& height, int& width) = 0;
+		virtual int Parse(
+			strLightFieldInput&  lfdata, 
 			strLightFieldOutput& result) = 0;
+		virtual bool ParamCorrection(
+			int* pDataX,
+			int* pDataY,
+			int nData, 
+			float realDis,
+			const strLightFieldOutput& result) = 0;
 	};
 }

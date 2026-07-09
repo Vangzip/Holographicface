@@ -117,14 +117,17 @@ QString defaultCameraConfig()
     const QString cameraIni = firstExisting({ rootCameraIni, appCameraIni }, rootCameraIni);
     const QString configuredDir = readSimpleIniValue(cameraIni, "camera_config_dir");
     if (!configuredDir.isEmpty()) {
-        return firstExisting({ resolvePathRelativeToFile(cameraIni, configuredDir) }, resolvePathRelativeToFile(cameraIni, configuredDir));
+        const QString resolved = resolvePathRelativeToFile(cameraIni, configuredDir);
+        if (QFileInfo::exists(resolved)) {
+            return QFileInfo(resolved).absoluteFilePath();
+        }
     }
 
-    const QString appConfig = QDir(QCoreApplication::applicationDirPath()).filePath("config/holoConf-023C");
+    const QString appConfig = QDir(QCoreApplication::applicationDirPath()).filePath("config/084C");
     return firstExisting({
         appConfig,
-        QDir(root).filePath("runtime/holoLib/config/holoConf-023C"),
-        QDir(root).filePath("../holocamera/00-bin/config/holoConf-023C")
+        QDir(root).filePath("runtime/holoLib/config/084C"),
+        QDir(root).filePath("../holocamera/00-bin/config/084C")
     }, appConfig);
 }
 

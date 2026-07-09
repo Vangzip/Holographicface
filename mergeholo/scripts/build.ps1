@@ -150,30 +150,34 @@ function Deploy-HoloPipelineRuntime {
 function Deploy-CameraRuntime {
     param([Parameter(Mandatory = $true)][string]$DestinationRoot)
 
-    $HoloLib = $env:HOLO_SDK_ROOT
-    if (-not $HoloLib) {
-        $LocalRuntime = Join-Path $ProjectRoot "runtime\holoLib"
-        $LegacyRuntime = Join-Path $WorkspaceRoot "holocamera\HoloTest\holoLib"
-        $Legacy0703Runtime = Join-Path $WorkspaceRoot "holocamera\HoloTest_0703\HoloTest\holoLib"
-        $LegacyBinRuntime = Join-Path $WorkspaceRoot "holocamera\00-bin - 副本"
-        if (Test-Path -LiteralPath (Join-Path $LocalRuntime "JpLF-v3.1.lib")) {
-            $HoloLib = $LocalRuntime
-        } elseif (Test-Path -LiteralPath (Join-Path $LegacyRuntime "JpLF-v3.1.lib")) {
-            $HoloLib = $LegacyRuntime
-        } elseif (Test-Path -LiteralPath (Join-Path $Legacy0703Runtime "JpLF-v3.1.lib")) {
-            $HoloLib = $Legacy0703Runtime
-        } elseif (Test-Path -LiteralPath (Join-Path $LegacyBinRuntime "JpLF-v3.1.lib")) {
-            $HoloLib = $LegacyBinRuntime
+    $JpLfV4Root = $env:JP_LF_V4_ROOT
+    if (-not $JpLfV4Root) {
+        $Candidate = Join-Path $WorkspaceRoot "holocamera\HoloTest\Holo_v4.1.1"
+        if (Test-Path -LiteralPath (Join-Path $Candidate "windows\JpLFDll-v4.1.1.dll")) {
+            $JpLfV4Root = $Candidate
         }
     }
-    if (-not $HoloLib -or -not (Test-Path -LiteralPath $HoloLib)) {
-        Write-Warning "Camera SDK runtime not found. Set HOLO_SDK_ROOT or keep holocamera/HoloTest/holoLib available."
+    if (-not $JpLfV4Root -or -not (Test-Path -LiteralPath (Join-Path $JpLfV4Root "windows\JpLFDll-v4.1.1.dll"))) {
+        Write-Warning "JpLFDll-v4.1.1 runtime not found. Set JP_LF_V4_ROOT or keep holocamera/HoloTest/Holo_v4.1.1 available."
+    } else {
+        Copy-FileSet -SourceDir (Join-Path $JpLfV4Root "windows") -DestinationDir $DestinationRoot -Patterns @("JpLFDll-v4.1.1.dll")
+    }
+
+    $CameraRuntime = $env:HOLO_CAMERA_RUNTIME
+    if (-not $CameraRuntime) {
+        $Candidate = Join-Path $WorkspaceRoot "holocamera\00-bin"
+        if (Test-Path -LiteralPath $Candidate) {
+            $CameraRuntime = $Candidate
+        }
+    }
+    if (-not $CameraRuntime -or -not (Test-Path -LiteralPath $CameraRuntime)) {
+        Write-Warning "Camera runtime root not found. Set HOLO_CAMERA_RUNTIME or keep holocamera/00-bin available."
         return
     }
 
-    Copy-FileSet -SourceDir $HoloLib -DestinationDir $DestinationRoot -Patterns @("*.dll", "*.cti", "*.ini", "*.bin", "*.yaml", "*.txt", "*.db")
-    foreach ($DirName in @("Drivers", "iconengines", "imageformats", "maskDetect", "onnx_model", "platforms", "sqldrivers", "styles")) {
-        $SourceDir = Join-Path $HoloLib $DirName
+    Copy-FileSet -SourceDir $CameraRuntime -DestinationDir $DestinationRoot -Patterns @("*.dll", "*.cti", "*.ini", "*.bin", "*.yaml", "*.txt", "*.db")
+    foreach ($DirName in @("Camera", "Drivers", "iconengines", "imageformats", "maskDetect", "onnx_model", "platforms", "sqldrivers", "styles")) {
+        $SourceDir = Join-Path $CameraRuntime $DirName
         if (Test-Path -LiteralPath $SourceDir) {
             Copy-RuntimeItem -Source $SourceDir -Destination (Join-Path $DestinationRoot $DirName)
         }
@@ -183,19 +187,16 @@ function Deploy-CameraRuntime {
     if (-not (Test-Path -LiteralPath $ConfigTarget)) {
         New-Item -ItemType Directory -Path $ConfigTarget | Out-Null
     }
-    $LegacyCameraConfig = Join-Path $WorkspaceRoot "holocamera\00-bin\config\holoConf-023C"
-    if (Test-Path -LiteralPath $LegacyCameraConfig) {
-        Copy-RuntimeItem -Source $LegacyCameraConfig -Destination (Join-Path $ConfigTarget "holoConf-023C")
-    }
 
-    $HoloLibConfig = Join-Path $HoloLib "config"
-    if (Test-Path -LiteralPath $HoloLibConfig) {
-        foreach ($ConfigItem in @("182C", "database.db", "database_2024.db", "pre_database.db")) {
-            $Source = Join-Path $HoloLibConfig $ConfigItem
+    $CameraConfig = Join-Path $CameraRuntime "config"
+    if (Test-Path -LiteralPath $CameraConfig) {
+        foreach ($ConfigItem in @("084C", "182C", "holoConf-023C")) {
+            $Source = Join-Path $CameraConfig $ConfigItem
             if (Test-Path -LiteralPath $Source) {
                 Copy-RuntimeItem -Source $Source -Destination (Join-Path $ConfigTarget $ConfigItem)
             }
         }
+        Copy-FileSet -SourceDir $CameraConfig -DestinationDir $ConfigTarget -Patterns @("*.db", "*.json")
     }
 }
 

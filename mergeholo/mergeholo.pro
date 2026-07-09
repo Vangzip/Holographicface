@@ -70,12 +70,9 @@ include($$PWD/Pri/cuda.pri)
 include($$PWD/Pri/holo_pipeline.pri)
 include($$PWD/pipeline/PipelineModule.pri)
 
-HOLO_SDK_ROOT = $$(HOLO_SDK_ROOT)
-isEmpty(HOLO_SDK_ROOT):exists($$PWD/runtime/holoLib/JpLF-v3.1.lib): HOLO_SDK_ROOT = $$PWD/runtime/holoLib
-isEmpty(HOLO_SDK_ROOT):exists($$PWD/../holocamera/HoloTest/holoLib/JpLF-v3.1.lib): HOLO_SDK_ROOT = $$PWD/../holocamera/HoloTest/holoLib
-isEmpty(HOLO_SDK_ROOT):exists($$PWD/../holocamera/HoloTest_0703/HoloTest/holoLib/JpLF-v3.1.lib): HOLO_SDK_ROOT = $$PWD/../holocamera/HoloTest_0703/HoloTest/holoLib
-isEmpty(HOLO_SDK_ROOT):exists($$PWD/../holocamera/00-bin - 副本/JpLF-v3.1.lib): HOLO_SDK_ROOT = $$PWD/../holocamera/00-bin - 副本
-isEmpty(HOLO_SDK_ROOT): error("JpLF-v3.1 SDK not found. Set HOLO_SDK_ROOT or keep ../holocamera/HoloTest/holoLib available.")
+JP_LF_V4_ROOT = $$(JP_LF_V4_ROOT)
+isEmpty(JP_LF_V4_ROOT):exists($$PWD/../holocamera/HoloTest/Holo_v4.1.1/windows/JpLFDll-v4.1.1.lib): JP_LF_V4_ROOT = $$PWD/../holocamera/HoloTest/Holo_v4.1.1
+isEmpty(JP_LF_V4_ROOT): error("JpLFDll-v4.1.1 SDK not found. Set JP_LF_V4_ROOT or keep ../holocamera/HoloTest/Holo_v4.1.1 available.")
 
-INCLUDEPATH += $$HOLO_SDK_ROOT
-LIBS += -L$$HOLO_SDK_ROOT -lJpLF-v3.1
+INCLUDEPATH += $$JP_LF_V4_ROOT/include
+LIBS += -L$$JP_LF_V4_ROOT/windows -lJpLFDll-v4.1.1

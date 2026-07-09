@@ -7,7 +7,7 @@ struct ElementalConfig {
     int viewCols = 270;
     int viewNameDigits = 3;
     int jpgQuality = 100;
-    int writerThreads = 1;
+    int writerThreads = 0; // 0 = auto, capped for memory-bandwidth-bound transform
     bool flipSourceY = true;
     bool flipViewRows = true;
 };

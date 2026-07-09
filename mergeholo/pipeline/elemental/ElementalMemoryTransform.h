@@ -37,3 +37,9 @@ ElementalMemoryTransformStatus storeElementalFromMemory(
     std::size_t sourceFrameBytes,
     unsigned char* output,
     const ElementalMemoryTransformConfig& config);
+
+ElementalMemoryTransformStatus storeElementalFromMemoryBlocked(
+    const unsigned char* source,
+    std::size_t sourceFrameBytes,
+    unsigned char* output,
+    const ElementalMemoryTransformConfig& config);

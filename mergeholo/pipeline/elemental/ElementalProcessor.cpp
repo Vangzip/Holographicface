@@ -329,7 +329,7 @@ int processElemental(
         transformConfig.sourceRowsBottomUp = true;
         transformConfig.threadCount = writerThreads;
 
-        const ElementalMemoryTransformStatus status = storeElementalFromMemory(
+        const ElementalMemoryTransformStatus status = storeElementalFromMemoryBlocked(
             memoryResult->sink->data(),
             static_cast<size_t>(memoryResult->sink->frameBytes()),
             elementalResult->pixels.get(),

@@ -2,6 +2,7 @@
 /FF-tmp/
 /build/
 /debug/
+/output/
 /release/
 /runs/
 /runtime/holoLib/
@@ -10,6 +11,14 @@
 /Makefile
 /Makefile.Debug
 /Makefile.Release
+/_backup*/
+/pipeline_*/
+*.diff
+*.log
+*.obj
+*.zip
+*_status.txt
+odm_texturing_log.txt
 *.user
 *.suo
 *.VC.db

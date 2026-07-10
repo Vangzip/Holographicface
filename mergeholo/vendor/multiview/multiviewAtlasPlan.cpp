@@ -58,6 +58,10 @@ std::uint64_t MultiviewAtlasPlan::pageBytes() const {
            static_cast<std::uint64_t>(renderPlan_.channels());
 }
 
+std::uint64_t MultiviewAtlasPlan::atlasBytes() const {
+    return pageCount() * pageBytes();
+}
+
 std::uint64_t MultiviewAtlasPlan::totalBytes() const {
     return renderPlan_.totalBytes();
 }

@@ -4,10 +4,13 @@
 
 #include "MultiviewStage.h"
 
+#include "DepthMeshModelMemory.h"
+#include "elemental/ElementalAtlasDirectSink.h"
 #include "memoryFrameSink.h"
 #include "multiviewAtlasPlan.h"
 #include "multiviewAtlasRenderer.h"
 #include "multiviewGraphicsConfig.h"
+#include "multiview/PclMeshOsgBuilder.h"
 #include "multiviewRenderPlan.h"
 #include "modelMoveHandler.h"
 #include "PipelineTiming.h"
@@ -202,7 +205,27 @@ bool setMasterViewerGraphicsContext(
 
 int runMultiviewStage(HoloConfig& config, const CliOptions& options, MultiviewMemoryResult* memoryResult)
 {
-    if (config.meshObj.empty()) {
+    return runMultiviewStage(config, options, memoryResult, nullptr);
+}
+
+int runMultiviewStage(
+    HoloConfig& config,
+    const CliOptions& options,
+    MultiviewMemoryResult* memoryResult,
+    ElementalMemoryResult* directElementalResult)
+{
+    return runMultiviewStage(config, options, memoryResult, directElementalResult, nullptr);
+}
+
+int runMultiviewStage(
+    HoloConfig& config,
+    const CliOptions& options,
+    MultiviewMemoryResult* memoryResult,
+    ElementalMemoryResult* directElementalResult,
+    const MeshMemoryResult* meshMemory)
+{
+    const bool useMemoryMesh = meshMemory != nullptr && meshMemory->hasMesh();
+    if (!useMemoryMesh && config.meshObj.empty()) {
         config.meshObj = findFirstObj(config.depthInputDir);
     }
 
@@ -213,7 +236,8 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options, MultiviewMe
     }
 
     if (options.dryRun) {
-        std::cout << "[multiview] render " << config.meshObj.string()
+        std::cout << "[multiview] render "
+                  << (useMemoryMesh ? std::string("memory mesh") : config.meshObj.string())
                   << " to memory as " << expectedViews << "x" << expectedViews
                   << " views, " << config.multiviewResolution << "x"
                   << config.multiviewResolution << " each" << std::endl;
@@ -249,11 +273,11 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options, MultiviewMe
         return 0;
     }
 
-    if (!requireExists(config.meshObj, "mesh_obj")) {
+    if (!useMemoryMesh && !requireExists(config.meshObj, "mesh_obj")) {
         return 1;
     }
 
-    if (config.modelType != "obj") {
+    if (!useMemoryMesh && config.modelType != "obj") {
         std::cerr << "[multiview] integrated renderer currently supports model_type=obj." << std::endl;
         return 1;
     }
@@ -301,14 +325,45 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options, MultiviewMe
     osg::StateSet* state = viewer->getCamera()->getOrCreateStateSet();
     state->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::PROTECTED);
 
-    osg::ref_ptr<osg::Node> node = osgDB::readNodeFile(config.meshObj.string());
-    if (!node.valid()) {
-        std::cerr << "[multiview] cannot read OBJ: " << config.meshObj.string() << std::endl;
-        return 1;
-    }
-
     osg::ref_ptr<osg::Group> group = new osg::Group;
-    group->addChild(node.get());
+    std::string modelSource = "obj_file";
+    double modelBuildSeconds = 0.0;
+    std::size_t modelVertexCount = 0;
+    std::size_t modelTriangleCount = 0;
+    std::size_t modelSkippedFaces = 0;
+
+    if (useMemoryMesh) {
+        try {
+            const auto buildStart = std::chrono::steady_clock::now();
+            const PclMeshOsgBuildResult buildResult = buildOsgGroupFromPclMesh(*meshMemory->mesh);
+            modelBuildSeconds = elapsedSeconds(buildStart);
+            if (!buildResult.group.valid() || buildResult.group->getNumChildren() == 0) {
+                std::cerr << "[multiview] memory mesh did not produce an OSG node." << std::endl;
+                return 1;
+            }
+            group = buildResult.group;
+            modelSource = "memory_mesh";
+            modelVertexCount = buildResult.vertexCount;
+            modelTriangleCount = buildResult.triangleCount;
+            modelSkippedFaces = buildResult.skippedFaces;
+            std::cout << "[multiview] model source: memory mesh, vertices: "
+                      << modelVertexCount << ", triangles: " << modelTriangleCount
+                      << ", skipped faces: " << modelSkippedFaces
+                      << ", build: " << formatSeconds(modelBuildSeconds) << "s" << std::endl;
+        }
+        catch (const std::exception& ex) {
+            std::cerr << "[multiview] memory mesh build failed: " << ex.what() << std::endl;
+            return 1;
+        }
+    }
+    else {
+        osg::ref_ptr<osg::Node> node = osgDB::readNodeFile(config.meshObj.string());
+        if (!node.valid()) {
+            std::cerr << "[multiview] cannot read OBJ: " << config.meshObj.string() << std::endl;
+            return 1;
+        }
+        group->addChild(node.get());
+    }
 
     std::string outDir = config.multiviewOutDir.string();
     modelMoveHandler* handler = new modelMoveHandler(
@@ -317,11 +372,37 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options, MultiviewMe
         config.multiviewCamera);
 
     try {
-        std::shared_ptr<MemoryFrameSink> sink(new MemoryFrameSink(renderPlan, true));
-        MultiviewAtlasRenderer renderer(viewer.get(), handler->modelTransform(), renderPlan, *atlasPlan, sink.get());
-        const MultiviewAtlasStats stats = renderer.renderAll();
+        std::shared_ptr<MemoryFrameSink> sink;
+        MultiviewAtlasStats stats = {};
+        double directScatterSeconds = 0.0;
 
-        std::cout << "[multiview] output mode: atlas-memory" << std::endl;
+        if (directElementalResult != nullptr) {
+            ElementalMemoryTransformConfig transformConfig;
+            transformConfig.viewRows = config.viewRows;
+            transformConfig.viewCols = config.viewCols;
+            transformConfig.sourceRows = renderPlan.resolution();
+            transformConfig.sourceCols = renderPlan.resolution();
+            transformConfig.targetRows = config.targetRows;
+            transformConfig.targetCols = config.targetCols;
+            transformConfig.flipSourceY = config.elementalFlipSourceY;
+            transformConfig.flipViewRows = config.elementalFlipViewRows;
+            transformConfig.sourceRowsBottomUp = true;
+            transformConfig.threadCount = config.elementalWriterThreads;
+
+            ElementalAtlasDirectSink directSink(*atlasPlan, renderPlan, transformConfig, directElementalResult);
+            MultiviewAtlasRenderer renderer(viewer.get(), handler->modelTransform(), renderPlan, *atlasPlan, &directSink);
+            stats = renderer.renderAll();
+            directScatterSeconds = directSink.scatterSeconds();
+        }
+        else {
+            sink.reset(new MemoryFrameSink(*atlasPlan, renderPlan, true));
+            MultiviewAtlasRenderer renderer(viewer.get(), handler->modelTransform(), renderPlan, *atlasPlan, sink.get());
+            stats = renderer.renderAll();
+        }
+
+        std::cout << "[multiview] output mode: "
+                  << (directElementalResult != nullptr ? "direct-atlas-elemental" : "atlas-memory")
+                  << std::endl;
         std::cout << "[multiview] pbuffer: " << graphicsConfig.pbuffer
                   << ", double buffer: " << graphicsConfig.doubleBuffer
                   << ", vsync: " << graphicsConfig.vsync
@@ -338,11 +419,18 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options, MultiviewMe
                   << "s, readback: " << formatSeconds(stats.readbackSeconds)
                   << "s, copy: " << formatSeconds(stats.copySeconds)
                   << "s, total: " << formatSeconds(stats.totalSeconds) << "s" << std::endl;
+        if (directElementalResult != nullptr) {
+            std::cout << "[multiview] direct elemental scatter: "
+                      << formatSeconds(directScatterSeconds) << "s" << std::endl;
+        }
 
+        const std::uint64_t expectedCapturedBytes = directElementalResult != nullptr
+            ? atlasPlan->atlasBytes()
+            : renderPlan.totalBytes();
         if (stats.pagesRendered != atlasPlan->pageCount()
             || stats.pageReadbacks != atlasPlan->pageCount()
             || stats.framesCaptured != renderPlan.frameCount()
-            || stats.bytesCaptured != renderPlan.totalBytes()
+            || stats.bytesCaptured != expectedCapturedBytes
             || stats.readbackErrors != 0) {
             std::cerr << "[multiview] memory render did not capture all frames." << std::endl;
             return 1;
@@ -350,7 +438,25 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options, MultiviewMe
 
         if (memoryResult != nullptr) {
             memoryResult->plan.reset(new MultiviewRenderPlan(renderPlan));
-            memoryResult->sink = std::move(sink);
+            memoryResult->directAtlasElemental = directElementalResult != nullptr;
+            memoryResult->directFramesCaptured = stats.framesCaptured;
+            memoryResult->directBytesCaptured = stats.bytesCaptured;
+            memoryResult->directPagesRendered = stats.pagesRendered;
+            memoryResult->directPageReadbacks = stats.pageReadbacks;
+            memoryResult->directReadbackErrors = stats.readbackErrors;
+            memoryResult->directRenderSeconds = stats.renderSeconds;
+            memoryResult->directReadbackSeconds = stats.readbackSeconds;
+            memoryResult->directCopySeconds = stats.copySeconds;
+            memoryResult->directTotalSeconds = stats.totalSeconds;
+            memoryResult->directScatterSeconds = directScatterSeconds;
+            memoryResult->modelSource = modelSource;
+            memoryResult->modelBuildSeconds = modelBuildSeconds;
+            memoryResult->modelVertexCount = modelVertexCount;
+            memoryResult->modelTriangleCount = modelTriangleCount;
+            memoryResult->modelSkippedFaces = modelSkippedFaces;
+            if (sink) {
+                memoryResult->sink = std::move(sink);
+            }
         }
     }
     catch (const std::exception& ex) {

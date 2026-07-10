@@ -9,6 +9,20 @@
 
 namespace fs = std::filesystem;
 
+namespace {
+
+bool hasSuccessfulStage(const std::vector<StageTiming>& timings, const std::string& name)
+{
+    for (const StageTiming& timing : timings) {
+        if (timing.name == name && timing.code == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 void writePipelineLog(
     const HoloConfig& config,
     const std::vector<StageTiming>& timings,
@@ -39,13 +53,56 @@ void writePipelineLog(
 
         log << "\n[pipeline_memory]\n";
         log << "depth_to_mesh=" << (depthToMeshMemory ? "memory" : "file") << "\n";
+        const bool memoryMeshMultiview = multiviewMemory.modelSource == "memory_mesh";
         log << "mesh_to_model=" << (meshToModelMemory ? "memory" : "file") << "\n";
+        log << "mesh_to_multiview="
+            << (memoryMeshMultiview ? "memory" : "file") << "\n";
         log << "depth_cloud_cleared_after_mesh=" << (depthToMeshMemory ? "true" : "not_retained") << "\n";
-        log << "mesh_cleared_after_model=" << (meshToModelMemory ? "true" : "not_retained") << "\n";
+        if (memoryMeshMultiview) {
+            log << "mesh_cleared_after_model=after_multiview\n";
+        }
+        else {
+            log << "mesh_cleared_after_model=" << (meshToModelMemory ? "true" : "not_retained") << "\n";
+        }
+
+        if (hasSuccessfulStage(timings, "model")) {
+            log << "\n[model]\n";
+            log << "mode="
+                << (memoryMeshMultiview ? "skipped_for_memory_multiview" : "normal")
+                << "\n";
+        }
 
         log << "\n[multiview]\n";
-        if (multiviewMemory.sink && multiviewMemory.plan) {
+        auto writeModelSource = [&]() {
+            if (!multiviewMemory.modelSource.empty()) {
+                log << "model_source=" << multiviewMemory.modelSource << "\n";
+                log << "model_build_seconds=" << formatSeconds(multiviewMemory.modelBuildSeconds) << "\n";
+                log << "model_vertex_count=" << multiviewMemory.modelVertexCount << "\n";
+                log << "model_triangle_count=" << multiviewMemory.modelTriangleCount << "\n";
+                log << "model_skipped_faces=" << multiviewMemory.modelSkippedFaces << "\n";
+            }
+        };
+        if (multiviewMemory.directAtlasElemental && multiviewMemory.plan) {
+            log << "mode=direct-atlas-elemental\n";
+            writeModelSource();
+            log << "frames=" << multiviewMemory.directFramesCaptured << "\n";
+            log << "total_bytes=" << multiviewMemory.directBytesCaptured << "\n";
+            log << "total_readable=" << formatBytes(static_cast<size_t>(multiviewMemory.directBytesCaptured)) << "\n";
+            log << "resolution=" << multiviewMemory.plan->resolution() << "\n";
+            log << "samples_per_axis=" << multiviewMemory.plan->samplesPerAxis() << "\n";
+            log << "atlas_pages=" << multiviewMemory.directPagesRendered << "\n";
+            log << "atlas_page_readbacks=" << multiviewMemory.directPageReadbacks << "\n";
+            log << "atlas_readback_errors=" << multiviewMemory.directReadbackErrors << "\n";
+            log << "atlas_render_seconds=" << formatSeconds(multiviewMemory.directRenderSeconds) << "\n";
+            log << "atlas_readback_seconds=" << formatSeconds(multiviewMemory.directReadbackSeconds) << "\n";
+            log << "atlas_copy_seconds=" << formatSeconds(multiviewMemory.directCopySeconds) << "\n";
+            log << "atlas_scatter_seconds=" << formatSeconds(multiviewMemory.directScatterSeconds) << "\n";
+            log << "atlas_total_seconds=" << formatSeconds(multiviewMemory.directTotalSeconds) << "\n";
+            log << "frame_major_buffer=0\n";
+        }
+        else if (multiviewMemory.sink && multiviewMemory.plan) {
             log << "mode=atlas-memory\n";
+            writeModelSource();
             log << "frames=" << multiviewMemory.sink->frameCount() << "\n";
             log << "frame_bytes=" << multiviewMemory.sink->frameBytes() << "\n";
             log << "total_bytes=" << multiviewMemory.sink->totalBytes() << "\n";

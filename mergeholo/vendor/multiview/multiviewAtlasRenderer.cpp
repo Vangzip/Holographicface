@@ -3,9 +3,7 @@
 #include <osg/Scissor>
 
 #include <chrono>
-#include <cstring>
 #include <stdexcept>
-#include <vector>
 
 namespace {
 double secondsBetween(std::chrono::high_resolution_clock::time_point start,
@@ -15,7 +13,7 @@ double secondsBetween(std::chrono::high_resolution_clock::time_point start,
 
 class AtlasCaptureDrawCallback : public osg::Camera::DrawCallback {
 public:
-    AtlasCaptureDrawCallback(const MultiviewAtlasPlan& atlasPlan, MemoryFrameSink* sink)
+    AtlasCaptureDrawCallback(const MultiviewAtlasPlan& atlasPlan, MemoryAtlasPageSink* sink)
         : atlasPlan_(atlasPlan),
           sink_(sink),
           pageIndex_(0),
@@ -23,8 +21,7 @@ public:
           framesCaptured_(0),
           readbackErrors_(0),
           readbackSeconds_(0.0),
-          copySeconds_(0.0),
-          pageBuffer_(static_cast<std::size_t>(atlasPlan.pageBytes())) {}
+          copySeconds_(0.0) {}
 
     void setPage(std::uint64_t pageIndex) const {
         pageIndex_ = pageIndex;
@@ -69,13 +66,14 @@ public:
         glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
 
         const auto readStart = std::chrono::high_resolution_clock::now();
+        unsigned char* pageBuffer = sink_->pageData(pageIndex_);
         glReadPixels(0,
                      0,
                      atlasPlan_.pageWidth(),
                      atlasPlan_.pageHeight(),
                      GL_RGB,
                      GL_UNSIGNED_BYTE,
-                     pageBuffer_.data());
+                     pageBuffer);
         const auto readEnd = std::chrono::high_resolution_clock::now();
 
         glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
@@ -91,27 +89,7 @@ public:
 
         const auto copyStart = std::chrono::high_resolution_clock::now();
         const std::uint64_t framesOnPage = atlasPlan_.frameCountOnPage(pageIndex_);
-        const std::uint64_t firstFrame = atlasPlan_.firstFrameOnPage(pageIndex_);
-        const int tileSize = atlasPlan_.tileSize();
-        const int channels = 3;
-        const std::size_t rowBytes = static_cast<std::size_t>(tileSize) * channels;
-
-        for (std::uint64_t i = 0; i < framesOnPage; ++i) {
-            const std::uint64_t frameIndex = firstFrame + i;
-            const MultiviewAtlasTile tile = atlasPlan_.tileForFrame(frameIndex);
-            unsigned char* target = sink_->frameData(frameIndex);
-
-            for (int row = 0; row < tileSize; ++row) {
-                const std::size_t sourceOffset =
-                    (static_cast<std::size_t>(tile.y + row) *
-                         static_cast<std::size_t>(atlasPlan_.pageWidth()) +
-                     static_cast<std::size_t>(tile.x)) *
-                    channels;
-                std::memcpy(target + static_cast<std::size_t>(row) * rowBytes,
-                            pageBuffer_.data() + sourceOffset,
-                            rowBytes);
-            }
-        }
+        sink_->afterPageReadback(pageIndex_);
         const auto copyEnd = std::chrono::high_resolution_clock::now();
 
         ++pageReadbacks_;
@@ -122,14 +100,13 @@ public:
 
 private:
     const MultiviewAtlasPlan& atlasPlan_;
-    MemoryFrameSink* sink_;
+    MemoryAtlasPageSink* sink_;
     mutable std::uint64_t pageIndex_;
     mutable std::uint64_t pageReadbacks_;
     mutable std::uint64_t framesCaptured_;
     mutable unsigned int readbackErrors_;
     mutable double readbackSeconds_;
     mutable double copySeconds_;
-    mutable std::vector<unsigned char> pageBuffer_;
 };
 }
 
@@ -137,7 +114,7 @@ MultiviewAtlasRenderer::MultiviewAtlasRenderer(osgViewer::Viewer* viewer,
                                                osg::MatrixTransform* modelTransform,
                                                const MultiviewRenderPlan& renderPlan,
                                                const MultiviewAtlasPlan& atlasPlan,
-                                               MemoryFrameSink* sink)
+                                               MemoryAtlasPageSink* sink)
     : viewer_(viewer),
       modelTransform_(modelTransform),
       renderPlan_(renderPlan),
@@ -194,7 +171,7 @@ MultiviewAtlasStats MultiviewAtlasRenderer::renderAll() {
     stats.copySeconds = captureCallback->copySeconds();
     stats.bytesCaptured =
         stats.readbackErrors == 0 && stats.framesCaptured == renderPlan_.frameCount()
-            ? renderPlan_.totalBytes()
+            ? sink_->capturedBytes(stats.pageReadbacks)
             : 0;
     stats.renderSeconds -= stats.readbackSeconds;
     if (stats.renderSeconds < 0.0) {

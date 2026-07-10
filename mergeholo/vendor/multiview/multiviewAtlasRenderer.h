@@ -1,7 +1,7 @@
 #ifndef MULTIVIEW_ATLAS_RENDERER_H
 #define MULTIVIEW_ATLAS_RENDERER_H
 
-#include "memoryFrameSink.h"
+#include "memoryAtlasPageSink.h"
 #include "multiviewAtlasPlan.h"
 #include "multiviewRenderPlan.h"
 
@@ -28,7 +28,7 @@ public:
                            osg::MatrixTransform* modelTransform,
                            const MultiviewRenderPlan& renderPlan,
                            const MultiviewAtlasPlan& atlasPlan,
-                           MemoryFrameSink* sink);
+                           MemoryAtlasPageSink* sink);
 
     MultiviewAtlasStats renderAll();
 
@@ -44,7 +44,7 @@ private:
     osg::MatrixTransform* modelTransform_;
     MultiviewRenderPlan renderPlan_;
     MultiviewAtlasPlan atlasPlan_;
-    MemoryFrameSink* sink_;
+    MemoryAtlasPageSink* sink_;
     osg::Vec3d rotationCenter_;
     std::vector<osg::Matrixd> frameMatrices_;
 };

@@ -27,6 +27,7 @@ public:
     int pageHeight() const;
     std::uint64_t pageCount() const;
     std::uint64_t pageBytes() const;
+    std::uint64_t atlasBytes() const;
     std::uint64_t totalBytes() const;
     std::uint64_t firstFrameOnPage(std::uint64_t pageIndex) const;
     std::uint64_t frameCountOnPage(std::uint64_t pageIndex) const;

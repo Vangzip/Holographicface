@@ -13,6 +13,7 @@ SOURCES += \
     camera/LightFieldCapture.cpp \
     vendor/base/FileLibrary.cpp \
     vendor/base/Logger.cpp \
+    vendor/multiview/memoryAtlasPageSink.cpp \
     vendor/multiview/memoryFrameSink.cpp \
     vendor/multiview/multiviewAtlasPlan.cpp \
     vendor/multiview/multiviewAtlasRenderer.cpp \
@@ -39,6 +40,7 @@ HEADERS += \
     vendor/base/FileLibrary.h \
     vendor/base/Logger.hpp \
     vendor/multiview/ModelMoveCameraConfig.h \
+    vendor/multiview/memoryAtlasPageSink.h \
     vendor/multiview/memoryFrameSink.h \
     vendor/multiview/multiviewAtlasPlan.h \
     vendor/multiview/multiviewAtlasRenderer.h \

@@ -2,9 +2,11 @@ PIPELINE_ROOT = $$PWD
 
 SOURCES += \
     $$PIPELINE_ROOT/CaptureImport.cpp \
+    $$PIPELINE_ROOT/elemental/ElementalAtlasDirectSink.cpp \
     $$PIPELINE_ROOT/elemental/ElementalMemoryTransform.cpp \
     $$PIPELINE_ROOT/elemental/ElementalProcessor.cpp \
     $$PIPELINE_ROOT/HoloPipeline.cpp \
+    $$PIPELINE_ROOT/multiview/PclMeshOsgBuilder.cpp \
     $$PIPELINE_ROOT/PipelineConfig.cpp \
     $$PIPELINE_ROOT/PipelineLogger.cpp \
     $$PIPELINE_ROOT/PipelineTiming.cpp \
@@ -18,6 +20,7 @@ HEADERS += \
     $$PIPELINE_ROOT/CaptureImport.h \
     $$PIPELINE_ROOT/DepthMeshModelMemory.h \
     $$PIPELINE_ROOT/elemental/ElementalConfig.h \
+    $$PIPELINE_ROOT/elemental/ElementalAtlasDirectSink.h \
     $$PIPELINE_ROOT/elemental/ElementalMemoryResult.h \
     $$PIPELINE_ROOT/elemental/ElementalMemoryTransform.h \
     $$PIPELINE_ROOT/elemental/ElementalProcessor.h \
@@ -28,6 +31,7 @@ HEADERS += \
     $$PIPELINE_ROOT/PipelineTiming.h \
     $$PIPELINE_ROOT/multiview/MultiviewConfig.h \
     $$PIPELINE_ROOT/multiview/MultiviewMemoryResult.h \
+    $$PIPELINE_ROOT/multiview/PclMeshOsgBuilder.h \
     $$PIPELINE_ROOT/stages/DepthStage.h \
     $$PIPELINE_ROOT/stages/ElementalStage.h \
     $$PIPELINE_ROOT/stages/MeshStage.h \

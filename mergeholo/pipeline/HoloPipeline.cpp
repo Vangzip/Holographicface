@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -27,7 +28,7 @@ bool shouldRunStage(const CliOptions& options, const std::string& stageName)
     return options.stage == "all" || options.stage == stageName;
 }
 
-int runPipeline(HoloConfig& config, const CliOptions& options)
+int runPipeline(HoloConfig& config, const CliOptions& options, ElementalMemoryResult* elementalOutput)
 {
     const auto pipelineStart = std::chrono::steady_clock::now();
     std::vector<StageTiming> timings;
@@ -35,18 +36,32 @@ int runPipeline(HoloConfig& config, const CliOptions& options)
     MeshMemoryResult meshMemory;
     MultiviewMemoryResult multiviewMemory;
     ElementalMemoryResult elementalMemory;
+    bool skippedModelForMemoryMultiview = false;
 
     const bool runDepth = shouldRunStage(options, "depth") && config.runDepthPointCloud;
     const bool runMesh = shouldRunStage(options, "mesh") && config.runMesh;
     const bool runModel = shouldRunStage(options, "model") && config.runTexturedModel;
+    const bool willRunMultiview = shouldRunStage(options, "multiview") && config.runMultiview;
     const bool useDepthMemory = runDepth && runMesh && options.inputPath.empty();
-    const bool useMeshMemory = useDepthMemory && runModel;
+    const bool useMeshForModel = useDepthMemory && runModel;
+    const bool useMeshMemory = useDepthMemory && (runModel || willRunMultiview);
 
     auto finish = [&](int code) {
         printTimingSummary(timings);
         const double wallSeconds = elapsedSeconds(pipelineStart);
-        writePipelineLog(config, timings, multiviewMemory, elementalMemory, useDepthMemory, useMeshMemory, code, wallSeconds);
+        writePipelineLog(
+            config,
+            timings,
+            multiviewMemory,
+            elementalMemory,
+            useDepthMemory,
+            useMeshForModel && !skippedModelForMemoryMultiview,
+            code,
+            wallSeconds);
         std::cout << "[log] pipeline log: " << config.logFile.string() << std::endl;
+        if (code == 0 && elementalOutput != nullptr) {
+            *elementalOutput = std::move(elementalMemory);
+        }
         return code;
     };
 
@@ -81,23 +96,44 @@ int runPipeline(HoloConfig& config, const CliOptions& options)
     }
 
     if (runModel) {
+        const bool skipModelForMemoryMultiview =
+            options.stage == "all" && willRunMultiview && meshMemory.hasMesh();
         const int code = runTimedStage("model", [&] {
+            if (skipModelForMemoryMultiview) {
+                skippedModelForMemoryMultiview = true;
+                std::cout << "[model] skipped: multiview will consume memory mesh directly." << std::endl;
+                return 0;
+            }
             return runModelStage(config, options, meshMemory.hasMesh() ? &meshMemory : nullptr);
+        }, timings);
+        if (!skipModelForMemoryMultiview) {
+            meshMemory.clear();
+        }
+        if (code != 0) return finish(code);
+    }
+
+    if (willRunMultiview) {
+        // Direct atlas scatter is available, but the current strided memory writes are slower
+        // than the threaded elemental transform for the 270x270 view set.
+        const bool directAtlasElemental = false;
+        const int code = runTimedStage("multiview", [&] {
+            return runMultiviewStage(
+                config,
+                options,
+                &multiviewMemory,
+                directAtlasElemental ? &elementalMemory : nullptr,
+                meshMemory.hasMesh() ? &meshMemory : nullptr);
         }, timings);
         meshMemory.clear();
         if (code != 0) return finish(code);
     }
 
-    if (shouldRunStage(options, "multiview") && config.runMultiview) {
-        const bool keepForElemental = shouldRunStage(options, "elemental") && config.runElemental;
-        const int code = runTimedStage("multiview", [&] {
-            return runMultiviewStage(config, options, keepForElemental ? &multiviewMemory : nullptr);
-        }, timings);
-        if (code != 0) return finish(code);
-    }
-
     if (shouldRunStage(options, "elemental") && config.runElemental) {
         const int code = runTimedStage("elemental", [&] {
+            if (elementalMemory.hasResult()) {
+                std::cout << "[elemental] output already materialized by direct atlas path." << std::endl;
+                return 0;
+            }
             return runElementalStage(
                 config,
                 options,
@@ -113,6 +149,11 @@ int runPipeline(HoloConfig& config, const CliOptions& options)
 } // namespace
 
 int runHoloPipelineCli(int argc, char* argv[])
+{
+    return runHoloPipelineCliWithResult(argc, argv, nullptr);
+}
+
+int runHoloPipelineCliWithResult(int argc, char* argv[], ElementalMemoryResult* elementalResult)
 {
     const CliOptions options = parseCli(argc, argv);
     if (options.showHelp) {
@@ -134,7 +175,7 @@ int runHoloPipelineCli(int argc, char* argv[])
     try {
         HoloConfig config;
         applyConfig(config, configPath);
-        return runPipeline(config, options);
+        return runPipeline(config, options, elementalResult);
     }
     catch (const std::exception& ex) {
         std::cerr << "[error] " << ex.what() << std::endl;

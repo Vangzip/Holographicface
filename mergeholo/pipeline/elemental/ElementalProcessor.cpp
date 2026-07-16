@@ -252,20 +252,24 @@ int processElemental(
                     }
                 }
 
-                const bool mismatchedSize = input.rows != config.targetRows || input.cols != config.targetCols;
+                cv::Mat rgbInput;
+                cv::cvtColor(input, rgbInput, cv::COLOR_BGR2RGB);
+
+                const bool mismatchedSize = rgbInput.rows != config.targetRows
+                    || rgbInput.cols != config.targetCols;
                 if (mismatchedSize) {
                     ++mismatchedViewImages;
                 }
                 for (int targetRow = 0; targetRow < config.targetRows; ++targetRow) {
                     const int sourceRow = config.elementalFlipSourceY
-                        ? input.rows - 1 - targetRow
+                        ? rgbInput.rows - 1 - targetRow
                         : targetRow;
-                    if (sourceRow < 0 || sourceRow >= input.rows) {
+                    if (sourceRow < 0 || sourceRow >= rgbInput.rows) {
                         continue;
                     }
                     std::memcpy(
                         viewBase + static_cast<size_t>(targetRow) * targetRowBytes,
-                        input.ptr<unsigned char>(sourceRow),
+                        rgbInput.ptr<unsigned char>(sourceRow),
                         copyBytes);
                 }
             }

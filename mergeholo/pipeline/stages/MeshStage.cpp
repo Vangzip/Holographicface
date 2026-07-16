@@ -51,7 +51,8 @@ int runSingleMeshInput(
     const HoloConfig& config,
     const fs::path& inputPath,
     bool dryRun,
-    const std::string& label)
+    const std::string& label,
+    MeshMemoryResult* meshMemory)
 {
     if (!requireExists(inputPath, label + " input")
         || !requireExists(config.meshConfig, "mesh_config")) {
@@ -79,6 +80,11 @@ int runSingleMeshInput(
                   << outputPath.string() << std::endl;
         return 1;
     }
+
+    if (meshMemory) {
+        meshMemory->baseName = outputPath.stem().string();
+        meshMemory->meshPath = outputPath;
+    }
     return 0;
 }
 
@@ -91,7 +97,7 @@ int runMeshOneStage(const HoloConfig& config, const CliOptions& options)
         return 1;
     }
 
-    return runSingleMeshInput(config, options.inputPath, options.dryRun, "mesh-one");
+    return runSingleMeshInput(config, options.inputPath, options.dryRun, "mesh-one", nullptr);
 }
 
 int runMeshStage(const HoloConfig& config, const CliOptions& options)
@@ -174,5 +180,5 @@ int runMeshStage(
         inputPath = files.front();
     }
 
-    return runSingleMeshInput(config, inputPath, options.dryRun, "mesh");
+    return runSingleMeshInput(config, inputPath, options.dryRun, "mesh", meshMemory);
 }

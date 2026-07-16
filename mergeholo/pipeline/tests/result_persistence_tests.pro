@@ -17,11 +17,23 @@ INCLUDEPATH += \
 
 SOURCES += \
     test_result_persistence.cpp \
-    ../PipelineConfig.cpp
+    ../elemental/ElementalMemoryTransform.cpp \
+    ../elemental/ElementalProcessor.cpp \
+    ../PipelineConfig.cpp \
+    ../PipelineTiming.cpp \
+    ../ResultPersistence.cpp \
+    ../../vendor/multiview/memoryAtlasPageSink.cpp \
+    ../../vendor/multiview/memoryFrameSink.cpp \
+    ../../vendor/multiview/multiviewAtlasPlan.cpp \
+    ../../vendor/multiview/multiviewRenderPlan.cpp
 
 HEADERS += \
     ../PipelineConfig.h \
-    ../PipelineContext.h
+    ../PipelineContext.h \
+    ../ResultPersistence.h \
+    ../ResultSaveSettings.h
 
 include(../../Pri/opencv.pri)
 include(../../Pri/holo_pipeline.pri)
+
+LIBS += -lpcl_io -lpcl_io_ply -lpcl_common

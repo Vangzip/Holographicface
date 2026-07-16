@@ -10,6 +10,7 @@ enum class ElementalMemoryMode {
 };
 
 struct ElementalMemoryResult {
+    // Materialized images always use packed RGB byte order.
     std::unique_ptr<unsigned char[]> pixels;
     size_t imageCount = 0;
     size_t imageBytes = 0;

@@ -10,6 +10,7 @@
 #include "PipelineContext.h"
 #include "PipelineLogger.h"
 #include "PipelineTiming.h"
+#include "ResultPersistence.h"
 
 #include <chrono>
 #include <exception>
@@ -28,14 +29,22 @@ bool shouldRunStage(const CliOptions& options, const std::string& stageName)
     return options.stage == "all" || options.stage == stageName;
 }
 
-int runPipeline(HoloConfig& config, const CliOptions& options, ElementalMemoryResult* elementalOutput)
+int runPipeline(
+    HoloConfig& config,
+    const CliOptions& options,
+    ElementalMemoryResult* elementalOutput,
+    ResultSaveReport* saveReportOutput)
 {
     const auto pipelineStart = std::chrono::steady_clock::now();
     std::vector<StageTiming> timings;
     DepthMemoryResult depthMemory;
     MeshMemoryResult meshMemory;
+    MeshMemoryResult persistenceMeshMemory;
     MultiviewMemoryResult multiviewMemory;
     ElementalMemoryResult elementalMemory;
+    ResultSaveReport localSaveReport;
+    ResultSaveReport& saveReport = saveReportOutput ? *saveReportOutput : localSaveReport;
+    saveReport.clear();
     bool skippedModelForMemoryMultiview = false;
 
     const bool runDepth = shouldRunStage(options, "depth") && config.runDepthPointCloud;
@@ -54,6 +63,7 @@ int runPipeline(HoloConfig& config, const CliOptions& options, ElementalMemoryRe
             timings,
             multiviewMemory,
             elementalMemory,
+            saveReport,
             useDepthMemory,
             useMeshForModel && !skippedModelForMemoryMultiview,
             code,
@@ -82,17 +92,27 @@ int runPipeline(HoloConfig& config, const CliOptions& options, ElementalMemoryRe
 
     if (runMesh) {
         const int code = runTimedStage("mesh", [&] {
+            MeshMemoryResult* meshOutput = useMeshMemory
+                ? &meshMemory
+                : (config.saveSettings.mesh ? &persistenceMeshMemory : nullptr);
             return runMeshStage(
                 config,
                 options,
                 depthMemory.hasCloud() ? &depthMemory : nullptr,
-                useMeshMemory ? &meshMemory : nullptr);
+                meshOutput);
         }, timings);
         depthMemory.clear();
         if (code != 0) {
             meshMemory.clear();
             return finish(code);
         }
+        if (config.saveSettings.mesh) {
+            const MeshMemoryResult& result = meshMemory.hasMesh()
+                ? meshMemory
+                : persistenceMeshMemory;
+            persistMeshResult(config, result, saveReport);
+        }
+        persistenceMeshMemory.clear();
     }
 
     if (runModel) {
@@ -124,8 +144,14 @@ int runPipeline(HoloConfig& config, const CliOptions& options, ElementalMemoryRe
                 directAtlasElemental ? &elementalMemory : nullptr,
                 meshMemory.hasMesh() ? &meshMemory : nullptr);
         }, timings);
+        if (code != 0) {
+            meshMemory.clear();
+            return finish(code);
+        }
+        if (config.saveSettings.multiview && multiviewMemory.sink) {
+            persistMultiviewResult(config, multiviewMemory, saveReport);
+        }
         meshMemory.clear();
-        if (code != 0) return finish(code);
     }
 
     if (shouldRunStage(options, "elemental") && config.runElemental) {
@@ -141,6 +167,9 @@ int runPipeline(HoloConfig& config, const CliOptions& options, ElementalMemoryRe
                 &elementalMemory);
         }, timings);
         if (code != 0) return finish(code);
+        if (config.saveSettings.elemental && elementalMemory.hasResult()) {
+            persistElementalResult(config, elementalMemory, saveReport);
+        }
     }
 
     return finish(0);
@@ -155,6 +184,18 @@ int runHoloPipelineCli(int argc, char* argv[])
 
 int runHoloPipelineCliWithResult(int argc, char* argv[], ElementalMemoryResult* elementalResult)
 {
+    return runHoloPipelineCliWithResult(argc, argv, elementalResult, nullptr);
+}
+
+int runHoloPipelineCliWithResult(
+    int argc,
+    char* argv[],
+    ElementalMemoryResult* elementalResult,
+    ResultSaveReport* saveReport)
+{
+    if (saveReport) {
+        saveReport->clear();
+    }
     const CliOptions options = parseCli(argc, argv);
     if (options.showHelp) {
         printUsage();
@@ -175,7 +216,7 @@ int runHoloPipelineCliWithResult(int argc, char* argv[], ElementalMemoryResult* 
     try {
         HoloConfig config;
         applyConfig(config, configPath);
-        return runPipeline(config, options, elementalResult);
+        return runPipeline(config, options, elementalResult, saveReport);
     }
     catch (const std::exception& ex) {
         std::cerr << "[error] " << ex.what() << std::endl;

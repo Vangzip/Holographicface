@@ -1,6 +1,7 @@
 #include "PipelineLogger.h"
 
 #include "PipelineTiming.h"
+#include "ResultPersistence.h"
 
 #include <filesystem>
 #include <fstream>
@@ -28,6 +29,7 @@ void writePipelineLog(
     const std::vector<StageTiming>& timings,
     const MultiviewMemoryResult& multiviewMemory,
     const ElementalMemoryResult& elementalMemory,
+    const ResultSaveReport& saveReport,
     bool depthToMeshMemory,
     bool meshToModelMemory,
     int resultCode,
@@ -45,6 +47,24 @@ void writePipelineLog(
         log << "result_code=" << resultCode << "\n";
         log << "wall_seconds=" << formatSeconds(wallSeconds) << "\n";
         log << "measured_stage_seconds=" << formatSeconds(totalTimingSeconds(timings)) << "\n";
+        log << "\n[result_persistence]\n";
+        log << "timestamp=" << config.resultTimestamp << "\n";
+        log << "mesh.selected=" << (config.saveSettings.mesh ? "true" : "false") << "\n";
+        log << "mesh.directory="
+            << timestampedResultDirectory(config.meshOutDir, config.resultTimestamp).string() << "\n";
+        log << "multiview.selected=" << (config.saveSettings.multiview ? "true" : "false") << "\n";
+        log << "multiview.directory="
+            << timestampedResultDirectory(config.multiviewOutDir, config.resultTimestamp).string() << "\n";
+        log << "elemental.selected=" << (config.saveSettings.elemental ? "true" : "false") << "\n";
+        log << "elemental.directory="
+            << timestampedResultDirectory(config.elementalOutDir, config.resultTimestamp).string() << "\n";
+        log << "warning_count=" << saveReport.warnings().size() << "\n";
+        for (size_t index = 0; index < saveReport.warnings().size(); ++index) {
+            const ResultSaveWarning& warning = saveReport.warnings()[index];
+            log << "warning." << index << ".result_type=" << warning.resultType << "\n";
+            log << "warning." << index << ".directory=" << warning.outputDirectory.string() << "\n";
+            log << "warning." << index << ".message=" << warning.message << "\n";
+        }
         log << "\n[stages]\n";
         for (const StageTiming& timing : timings) {
             log << timing.name << ".seconds=" << formatSeconds(timing.seconds) << "\n";

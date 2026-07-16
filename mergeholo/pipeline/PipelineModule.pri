@@ -10,6 +10,7 @@ SOURCES += \
     $$PIPELINE_ROOT/PipelineConfig.cpp \
     $$PIPELINE_ROOT/PipelineLogger.cpp \
     $$PIPELINE_ROOT/PipelineTiming.cpp \
+    $$PIPELINE_ROOT/ResultPersistence.cpp \
     $$PIPELINE_ROOT/stages/DepthStage.cpp \
     $$PIPELINE_ROOT/stages/ElementalStage.cpp \
     $$PIPELINE_ROOT/stages/MeshStage.cpp \
@@ -29,6 +30,8 @@ HEADERS += \
     $$PIPELINE_ROOT/PipelineContext.h \
     $$PIPELINE_ROOT/PipelineLogger.h \
     $$PIPELINE_ROOT/PipelineTiming.h \
+    $$PIPELINE_ROOT/ResultPersistence.h \
+    $$PIPELINE_ROOT/ResultSaveSettings.h \
     $$PIPELINE_ROOT/multiview/MultiviewConfig.h \
     $$PIPELINE_ROOT/multiview/MultiviewMemoryResult.h \
     $$PIPELINE_ROOT/multiview/PclMeshOsgBuilder.h \

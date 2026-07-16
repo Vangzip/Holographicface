@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SaveSettingsDialog</class>
+ <widget class="QDialog" name="SaveSettingsDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>360</width>
+    <height>440</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>360</width>
+    <height>440</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>360</width>
+    <height>440</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>保存设置</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">#SaveSettingsDialog {
+    background: #ffffff;
+    border: 3px solid #121212;
+}
+QCheckBox {
+    color: #111111;
+    font-size: 15px;
+    spacing: 16px;
+}
+QPushButton {
+    min-width: 92px;
+    min-height: 38px;
+    color: #111111;
+    background: #ffffff;
+    border: 2px solid #111111;
+    font-size: 14px;
+}
+QPushButton:hover {
+    background: #f2f2f2;
+}
+QPushButton:pressed {
+    background: #e4e4e4;
+}
+QToolButton {
+    border: none;
+    background: transparent;
+}</string>
+  </property>
+  <layout class="QVBoxLayout" name="rootLayout">
+   <property name="leftMargin">
+    <number>28</number>
+   </property>
+   <property name="topMargin">
+    <number>14</number>
+   </property>
+   <property name="rightMargin">
+    <number>18</number>
+   </property>
+   <property name="bottomMargin">
+    <number>24</number>
+   </property>
+   <item>
+    <layout class="QHBoxLayout" name="titleRow">
+     <item>
+      <spacer name="titleSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QToolButton" name="closeButton">
+       <property name="minimumSize">
+        <size>
+         <width>32</width>
+         <height>32</height>
+        </size>
+       </property>
+       <property name="maximumSize">
+        <size>
+         <width>32</width>
+         <height>32</height>
+        </size>
+       </property>
+       <property name="text">
+        <string/>
+       </property>
+       <property name="autoRaise">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <spacer name="topSpacer">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>20</width>
+       <height>10</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="meshCheckBox">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>44</height>
+      </size>
+     </property>
+     <property name="text">
+      <string>保存 mesh 结果</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <spacer name="meshSpacer">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>20</width>
+       <height>24</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="multiviewCheckBox">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>44</height>
+      </size>
+     </property>
+     <property name="text">
+      <string>保存 multiview 结果</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <spacer name="multiviewSpacer">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>20</width>
+       <height>24</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="elementalCheckBox">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>44</height>
+      </size>
+     </property>
+     <property name="text">
+      <string>保存 elemental 结果</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <spacer name="buttonSpacer">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>20</width>
+       <height>40</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="buttonRow">
+     <property name="spacing">
+      <number>24</number>
+     </property>
+     <item>
+      <spacer name="buttonLeftSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>16</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="confirmButton">
+       <property name="text">
+        <string>确认</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="cancelButton">
+       <property name="text">
+        <string>取消</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

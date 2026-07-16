@@ -122,9 +122,14 @@ void applyConfig(HoloConfig& config, const fs::path& configPath) {
     config.meshConfig = resolvePath(configDir, get("mesh_config"));
     config.meshObj = resolvePath(configDir, get("mesh_obj"));
     config.outputRoot = resolvePathOrDefault(configDir, get("output_root"), "output");
+    config.meshOutDir = resolvePathOrDefault(config.outputRoot, get("mesh_out_dir"), "mesh");
     config.multiviewOutDir = resolvePathOrDefault(config.outputRoot, get("multiview_out_dir"), "multiview");
     config.elementalOutDir = resolvePathOrDefault(config.outputRoot, get("elemental_out_dir"), "elemental");
     config.logFile = resolvePathOrDefault(config.outputRoot, get("log_file"), "pipeline.log");
+    config.saveSettings.mesh = parseBool(get("save_mesh_result"), config.saveSettings.mesh);
+    config.saveSettings.multiview = parseBool(get("save_multiview_result"), config.saveSettings.multiview);
+    config.saveSettings.elemental = parseBool(get("save_elemental_result"), config.saveSettings.elemental);
+    config.resultTimestamp = get("result_timestamp");
 
     if (!get("model_type").empty()) config.modelType = get("model_type");
     config.multiviewAngle = parseInt(get("multiview_angle"), config.multiviewAngle);

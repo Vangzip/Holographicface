@@ -3,6 +3,7 @@
 #include "elemental/ElementalMemoryResult.h"
 #include "ModelMoveCameraConfig.h"
 #include "multiview/MultiviewMemoryResult.h"
+#include "ResultSaveSettings.h"
 
 #include <filesystem>
 #include <string>
@@ -14,9 +15,12 @@ struct HoloConfig {
     std::filesystem::path meshObj;
 
     std::filesystem::path outputRoot;
+    std::filesystem::path meshOutDir;
     std::filesystem::path multiviewOutDir;
     std::filesystem::path elementalOutDir;
     std::filesystem::path logFile;
+    ResultSaveSettings saveSettings;
+    std::string resultTimestamp;
 
     std::string modelType = "obj";
     int multiviewAngle = 90;

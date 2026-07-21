@@ -202,6 +202,10 @@ bool loadProcessingSettings(
     settings->camera.gpuId = intValue(camera, "gpu_id", settings->camera.gpuId);
     settings->camera.missedFrameThreshold = intValue(
         camera, "missed_frame_threshold", settings->camera.missedFrameThreshold);
+    CaptureRotation rotation = settings->camera.rotation;
+    if (parseCaptureRotation(camera.value("capture_rotation").toStdString(), &rotation)) {
+        settings->camera.rotation = rotation;
+    }
     return true;
 }
 
@@ -282,6 +286,8 @@ bool saveProcessingSettings(
     camera.setValue("camera_id", QString::number(settings.camera.cameraId));
     camera.setValue("gpu_id", QString::number(settings.camera.gpuId));
     camera.setValue("missed_frame_threshold", QString::number(settings.camera.missedFrameThreshold));
+    camera.setValue("capture_rotation",
+        QString::fromLatin1(captureRotationName(settings.camera.rotation)));
 
     return pipeline.save(errorMessage)
         && pointCloud.save(errorMessage)

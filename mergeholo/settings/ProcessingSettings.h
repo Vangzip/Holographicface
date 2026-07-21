@@ -3,6 +3,7 @@
 #include "PipelineInput.h"
 #include "ResultSaveSettings.h"
 #include "LightFieldCapture.h"
+#include "CaptureOrientation.h"
 
 #include <QString>
 #include <QtGlobal>
@@ -17,6 +18,7 @@ struct CameraCaptureSettings {
     int cameraId = 0;
     int gpuId = 0;
     int missedFrameThreshold = 100;
+    CaptureRotation rotation = CaptureRotation::Clockwise90;
 };
 
 struct PipelineUiSettings {

@@ -20,6 +20,7 @@ SOURCES += \
     ../../settings/ProcessingSettings.cpp \
     ../../settings/KeyValueConfig.cpp \
     ../../settings/ProcessingSettingsStore.cpp \
+    ../../camera/CaptureOrientation.cpp \
     ../ProcessingSettingsDialog.cpp \
     ../../pipeline/PipelineInput.cpp
 
@@ -27,6 +28,7 @@ HEADERS += \
     ../../settings/ProcessingSettings.h \
     ../../settings/KeyValueConfig.h \
     ../../settings/ProcessingSettingsStore.h \
+    ../../camera/CaptureOrientation.h \
     ../ProcessingSettingsDialog.h \
     ../../pipeline/PipelineInput.h \
     ../../pipeline/DepthMeshModelMemory.h \

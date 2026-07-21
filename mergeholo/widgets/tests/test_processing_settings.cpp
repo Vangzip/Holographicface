@@ -93,6 +93,7 @@ ProcessingSettingsPaths createSettingsFiles(QTemporaryDir& directory)
     writeFile(QDir(configDirectory).filePath("default_camera.ini"),
         "# camera comment\n"
         "camera_config_dir=084C\n"
+        "capture_rotation=COUNTERCLOCKWISE_90\n"
         "vendor_camera_key=keep-camera\n");
 
     return ProcessingSettingsPaths::fromProjectRoot(directory.path());
@@ -121,6 +122,8 @@ void testProcessingSettingsDefaults()
         "default camera interface must preserve current capture behavior");
     expect(settings.camera.cameraType == "Indigo",
         "default camera type must preserve current capture behavior");
+    expect(settings.camera.rotation == CaptureRotation::Clockwise90,
+        "default camera rotation must match the inverted installation");
     expect(viewCountPerAxis(settings) == 270,
         "view count must be angle times samples per degree");
     expect(elementalImageCount(settings) == 22500,
@@ -191,9 +194,35 @@ void testSettingsStoreLoadsKnownValuesAndCameraFallbacks()
     expect(settings.mesh.kSearch == 24, "mesh neighbor count must load");
     expect(settings.camera.exposureValue == 15000,
         "missing camera exposure must keep the backward-compatible default");
+    expect(settings.camera.rotation == CaptureRotation::CounterClockwise90,
+        "camera rotation must load");
     expect(QDir::cleanPath(settings.camera.configDirectory)
             == QDir::cleanPath(QDir(directory.path()).filePath("config/084C")),
         "relative camera directory must resolve from the camera ini");
+}
+
+void testSettingsStoreUsesSafeCameraRotationFallback()
+{
+    QTemporaryDir directory;
+    const ProcessingSettingsPaths paths = createSettingsFiles(directory);
+    QString error;
+
+    writeFile(paths.cameraConfig,
+        "camera_config_dir=084C\n");
+    ProcessingSettings missing = defaultProcessingSettings(
+        directory.path(), QDir(directory.path()).filePath("config/084C"));
+    expect(loadProcessingSettings(paths, &missing, &error), qPrintable(error));
+    expect(missing.camera.rotation == CaptureRotation::Clockwise90,
+        "missing camera rotation must use the inverted-installation default");
+
+    writeFile(paths.cameraConfig,
+        "camera_config_dir=084C\n"
+        "capture_rotation=sideways\n");
+    ProcessingSettings invalid = defaultProcessingSettings(
+        directory.path(), QDir(directory.path()).filePath("config/084C"));
+    expect(loadProcessingSettings(paths, &invalid, &error), qPrintable(error));
+    expect(invalid.camera.rotation == CaptureRotation::Clockwise90,
+        "invalid camera rotation must use the safe default");
 }
 
 void testSettingsStorePreservesCommentsAndUnknownKeys()
@@ -209,6 +238,7 @@ void testSettingsStorePreservesCommentsAndUnknownKeys()
     settings.pointCloud.focus = 105.0;
     settings.mesh.kSearch = 20;
     settings.camera.exposureValue = 12000;
+    settings.camera.rotation = CaptureRotation::Clockwise90;
     expect(saveProcessingSettings(paths, settings, &error), qPrintable(error));
 
     const QByteArray pipeline = readFile(paths.pipelineConfig);
@@ -228,6 +258,8 @@ void testSettingsStorePreservesCommentsAndUnknownKeys()
         "unknown camera key must survive");
     expect(camera.contains("exposure_value=12000"),
         "new camera exposure key must be appended");
+    expect(camera.contains("capture_rotation=clockwise_90"),
+        "camera rotation must persist");
 }
 
 void testDialogNavigationAndNativeShell()
@@ -438,6 +470,7 @@ int main(int argc, char* argv[])
     testValidationRejectsMissingExternalInput();
     testValidationRejectsIncompleteCameraPreset();
     testSettingsStoreLoadsKnownValuesAndCameraFallbacks();
+    testSettingsStoreUsesSafeCameraRotationFallback();
     testSettingsStorePreservesCommentsAndUnknownKeys();
     testDialogNavigationAndNativeShell();
     testPrintNavigationEmitsWithoutChangingPage();

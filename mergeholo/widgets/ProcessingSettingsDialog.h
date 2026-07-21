@@ -25,9 +25,11 @@ public:
 
 public slots:
     void accept() override;
+    void setCameraTestResult(bool success, const QString& message);
 
 signals:
     void printRequested();
+    void cameraTestRequested(const CameraCaptureSettings& settings);
     void cameraReinitializeRequested(const CameraCaptureSettings& settings);
 
 private:
@@ -50,6 +52,8 @@ private:
     void browseInputDirectory();
     void browseOutputDirectory();
     void browseCameraDirectory();
+    void openPointCloudDetails();
+    void openMeshDetails();
     void openEngineerSettings();
     void restoreCurrentPageDefaults();
 

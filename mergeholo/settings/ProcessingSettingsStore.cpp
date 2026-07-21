@@ -157,11 +157,39 @@ bool loadProcessingSettings(
     settings->pointCloud.step = doubleValue(pointCloud, "step", settings->pointCloud.step);
     settings->pointCloud.outlierFilterEnabled = boolValue(
         pointCloud, "outlier_filter_enabled", settings->pointCloud.outlierFilterEnabled);
+    settings->pointCloud.label = intValue(pointCloud, "label", settings->pointCloud.label);
+    settings->pointCloud.fdis = doubleValue(pointCloud, "fdis", settings->pointCloud.fdis);
+    settings->pointCloud.greenRgb = intValue(pointCloud, "greenRGB", settings->pointCloud.greenRgb);
+    settings->pointCloud.meanK = intValue(pointCloud, "meanK", settings->pointCloud.meanK);
+    settings->pointCloud.stddevMulThreshold = doubleValue(
+        pointCloud, "stddevMulThresh", settings->pointCloud.stddevMulThreshold);
+    settings->pointCloud.radiusSearch = doubleValue(
+        pointCloud, "radiussearch", settings->pointCloud.radiusSearch);
+    settings->pointCloud.minNeighborsInRadius = intValue(
+        pointCloud, "minNeighborInRadius", settings->pointCloud.minNeighborsInRadius);
 
     settings->mesh.reconstruct = intValue(mesh, "reconstruct", settings->mesh.reconstruct);
     settings->mesh.kSearch = intValue(mesh, "kSearch", settings->mesh.kSearch);
     settings->mesh.searchRadius = doubleValue(mesh, "searchradius", settings->mesh.searchRadius);
     settings->mesh.leafSize = doubleValue(mesh, "leafsize", settings->mesh.leafSize);
+    settings->mesh.mu = doubleValue(mesh, "mu", settings->mesh.mu);
+    settings->mesh.maximumNearestNeighbors = intValue(
+        mesh, "maximumNearestNeighbors", settings->mesh.maximumNearestNeighbors);
+    settings->mesh.maximumSurfaceAngle = doubleValue(
+        mesh, "maximumSurfaceAngle", settings->mesh.maximumSurfaceAngle);
+    settings->mesh.minimumAngle = doubleValue(mesh, "minimumAngle", settings->mesh.minimumAngle);
+    settings->mesh.maximumAngle = doubleValue(mesh, "maximumAngle", settings->mesh.maximumAngle);
+    settings->mesh.holeSize = doubleValue(mesh, "holesize", settings->mesh.holeSize);
+    settings->mesh.textureFocus = doubleValue(mesh, "focus", settings->mesh.textureFocus);
+    settings->mesh.mlsSearchRadius = doubleValue(
+        mesh, "mlsSearchRadius", settings->mesh.mlsSearchRadius);
+    settings->mesh.normalsFitIterations1 = intValue(
+        mesh, "normalsFitIter1", settings->mesh.normalsFitIterations1);
+    settings->mesh.normalsFitIterations2 = intValue(
+        mesh, "normalsFitIter2", settings->mesh.normalsFitIterations2);
+    settings->mesh.neighborCount = intValue(mesh, "neighbor_num", settings->mesh.neighborCount);
+    settings->mesh.nearestDistance = doubleValue(
+        mesh, "nearest_distance", settings->mesh.nearestDistance);
 
     const QString cameraDirectory = resolvedPath(paths.cameraConfig, camera.value("camera_config_dir"));
     if (!cameraDirectory.isEmpty()) settings->camera.configDirectory = cameraDirectory;
@@ -220,11 +248,30 @@ bool saveProcessingSettings(
     pointCloud.setValue("disp", QString::number(settings.pointCloud.disp, 'g', 15));
     pointCloud.setValue("step", QString::number(settings.pointCloud.step, 'g', 15));
     pointCloud.setValue("outlier_filter_enabled", boolText(settings.pointCloud.outlierFilterEnabled));
+    pointCloud.setValue("label", QString::number(settings.pointCloud.label));
+    pointCloud.setValue("fdis", QString::number(settings.pointCloud.fdis, 'g', 15));
+    pointCloud.setValue("greenRGB", QString::number(settings.pointCloud.greenRgb));
+    pointCloud.setValue("meanK", QString::number(settings.pointCloud.meanK));
+    pointCloud.setValue("stddevMulThresh", QString::number(settings.pointCloud.stddevMulThreshold, 'g', 15));
+    pointCloud.setValue("radiussearch", QString::number(settings.pointCloud.radiusSearch, 'g', 15));
+    pointCloud.setValue("minNeighborInRadius", QString::number(settings.pointCloud.minNeighborsInRadius));
 
     mesh.setValue("reconstruct", QString::number(settings.mesh.reconstruct));
     mesh.setValue("kSearch", QString::number(settings.mesh.kSearch));
     mesh.setValue("searchradius", QString::number(settings.mesh.searchRadius, 'g', 15));
     mesh.setValue("leafsize", QString::number(settings.mesh.leafSize, 'g', 15));
+    mesh.setValue("mu", QString::number(settings.mesh.mu, 'g', 15));
+    mesh.setValue("maximumNearestNeighbors", QString::number(settings.mesh.maximumNearestNeighbors));
+    mesh.setValue("maximumSurfaceAngle", QString::number(settings.mesh.maximumSurfaceAngle, 'g', 15));
+    mesh.setValue("minimumAngle", QString::number(settings.mesh.minimumAngle, 'g', 15));
+    mesh.setValue("maximumAngle", QString::number(settings.mesh.maximumAngle, 'g', 15));
+    mesh.setValue("holesize", QString::number(settings.mesh.holeSize, 'g', 15));
+    mesh.setValue("focus", QString::number(settings.mesh.textureFocus, 'g', 15));
+    mesh.setValue("mlsSearchRadius", QString::number(settings.mesh.mlsSearchRadius, 'g', 15));
+    mesh.setValue("normalsFitIter1", QString::number(settings.mesh.normalsFitIterations1));
+    mesh.setValue("normalsFitIter2", QString::number(settings.mesh.normalsFitIterations2));
+    mesh.setValue("neighbor_num", QString::number(settings.mesh.neighborCount));
+    mesh.setValue("nearest_distance", QString::number(settings.mesh.nearestDistance, 'g', 15));
 
     camera.setValue("camera_config_dir", storedPath(paths.cameraConfig, settings.camera.configDirectory));
     camera.setValue("exposure_mode", QString::number(settings.camera.exposureMode));

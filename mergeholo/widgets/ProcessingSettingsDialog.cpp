@@ -144,6 +144,18 @@ void ProcessingSettingsDialog::setBusy(bool busy)
     ui_->applyButton->setEnabled(!busy);
 }
 
+void ProcessingSettingsDialog::setCameraTestResult(bool success, const QString& message)
+{
+    QLabel* status = findChild<QLabel*>("cameraStatusLabel");
+    if (!status) {
+        return;
+    }
+    status->setText(message.isEmpty()
+        ? (success ? QString::fromUtf8("相机连接测试成功")
+                   : QString::fromUtf8("相机连接测试失败"))
+        : message);
+}
+
 void ProcessingSettingsDialog::selectPage(int pageIndex)
 {
     if (pageIndex < 0 || pageIndex >= ui_->settingsPages->count()) {
@@ -378,6 +390,10 @@ void ProcessingSettingsDialog::buildAdvancedPage()
 
     connect(adaptive, &QCheckBox::toggled,
         this, &ProcessingSettingsDialog::updateHardwareAdaptiveState);
+    connect(pointDetails, &QPushButton::clicked,
+        this, &ProcessingSettingsDialog::openPointCloudDetails);
+    connect(meshDetails, &QPushButton::clicked,
+        this, &ProcessingSettingsDialog::openMeshDetails);
 }
 
 void ProcessingSettingsDialog::buildDevicePage()
@@ -457,9 +473,13 @@ void ProcessingSettingsDialog::buildDevicePage()
             && QFileInfo(directory.filePath("jp.xml")).isFile()
             && QFileInfo(directory.filePath("param.txt")).isFile()
             && !directory.entryList({ "*.cen" }, QDir::Files).isEmpty();
-        findChild<QLabel*>("cameraStatusLabel")->setText(valid
-            ? QString::fromUtf8("配置目录有效，可以重新初始化相机")
-            : QString::fromUtf8("配置目录无效，请检查标定文件"));
+        if (!valid) {
+            setCameraTestResult(false, QString::fromUtf8("配置目录无效，请检查标定文件"));
+            return;
+        }
+        findChild<QLabel*>("cameraStatusLabel")->setText(
+            QString::fromUtf8("正在测试相机连接..."));
+        emit cameraTestRequested(settings().camera);
     });
     connect(reinitializeButton, &QPushButton::clicked, this, [this] {
         emit cameraReinitializeRequested(settings().camera);
@@ -664,6 +684,137 @@ void ProcessingSettingsDialog::browseCameraDirectory()
         findChild<QLabel*>("cameraStatusLabel")->setText(
             QString::fromUtf8("配置目录已更改，尚未检查"));
     }
+}
+
+void ProcessingSettingsDialog::openPointCloudDetails()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(QString::fromUtf8("点云详细参数"));
+    auto* root = new QVBoxLayout(&dialog);
+    auto* hint = new QLabel(
+        QString::fromUtf8("这些参数用于深度标定与离群点过滤，通常保持标定方案默认值。"),
+        &dialog);
+    hint->setWordWrap(true);
+    root->addWidget(hint);
+    auto* form = new QFormLayout;
+    auto* label = integerSpin(&dialog, "pointDetailLabelSpin", 1, 65535);
+    auto* fdis = decimalSpin(&dialog, "pointDetailFdisSpin", 0.0, 10000.0, 4, 0.1);
+    auto* greenRgb = integerSpin(&dialog, "pointDetailGreenRgbSpin", 0, 255);
+    auto* meanK = integerSpin(&dialog, "pointDetailMeanKSpin", 1, 100000);
+    auto* stddev = decimalSpin(&dialog, "pointDetailStddevSpin", 0.0, 1000.0, 4, 0.1);
+    auto* radius = decimalSpin(&dialog, "pointDetailRadiusSpin", 0.000001, 1000.0, 6, 0.001);
+    auto* minNeighbors = integerSpin(&dialog, "pointDetailMinNeighborsSpin", 1, 100000);
+    label->setValue(draft_.pointCloud.label);
+    fdis->setValue(draft_.pointCloud.fdis);
+    greenRgb->setValue(draft_.pointCloud.greenRgb);
+    meanK->setValue(draft_.pointCloud.meanK);
+    stddev->setValue(draft_.pointCloud.stddevMulThreshold);
+    radius->setValue(draft_.pointCloud.radiusSearch);
+    minNeighbors->setValue(draft_.pointCloud.minNeighborsInRadius);
+    form->addRow(QString::fromUtf8("最大标签值"), label);
+    form->addRow(QString::fromUtf8("视差像素偏移"), fdis);
+    form->addRow(QString::fromUtf8("绿色背景阈值"), greenRgb);
+    form->addRow(QString::fromUtf8("统计邻居数"), meanK);
+    form->addRow(QString::fromUtf8("标准差倍数"), stddev);
+    form->addRow(QString::fromUtf8("半径过滤范围"), radius);
+    form->addRow(QString::fromUtf8("半径内最少邻居"), minNeighbors);
+    root->addLayout(form);
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QString::fromUtf8("确定"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QString::fromUtf8("取消"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    root->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    draft_.pointCloud.label = label->value();
+    draft_.pointCloud.fdis = fdis->value();
+    draft_.pointCloud.greenRgb = greenRgb->value();
+    draft_.pointCloud.meanK = meanK->value();
+    draft_.pointCloud.stddevMulThreshold = stddev->value();
+    draft_.pointCloud.radiusSearch = radius->value();
+    draft_.pointCloud.minNeighborsInRadius = minNeighbors->value();
+}
+
+void ProcessingSettingsDialog::openMeshDetails()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(QString::fromUtf8("网格详细参数"));
+    auto* root = new QVBoxLayout(&dialog);
+    auto* hint = new QLabel(
+        QString::fromUtf8("灰色项目不用于当前重建算法；切换算法后再修改对应参数。"),
+        &dialog);
+    hint->setWordWrap(true);
+    root->addWidget(hint);
+    auto* form = new QFormLayout;
+    auto* mu = decimalSpin(&dialog, "meshDetailMuSpin", 0.0, 1000.0, 4, 0.1);
+    auto* maximumNeighbors = integerSpin(&dialog, "meshDetailMaximumNeighborsSpin", 1, 100000);
+    auto* surfaceAngle = decimalSpin(&dialog, "meshDetailSurfaceAngleSpin", 0.0, 180.0, 2, 1.0);
+    auto* minimumAngle = decimalSpin(&dialog, "meshDetailMinimumAngleSpin", 0.0, 180.0, 2, 1.0);
+    auto* maximumAngle = decimalSpin(&dialog, "meshDetailMaximumAngleSpin", 0.0, 180.0, 2, 1.0);
+    auto* holeSize = decimalSpin(&dialog, "meshDetailHoleSizeSpin", 0.0, 1000.0, 6, 0.001);
+    auto* textureFocus = decimalSpin(&dialog, "meshDetailTextureFocusSpin", 0.001, 100000.0, 3, 1.0);
+    auto* mlsRadius = decimalSpin(&dialog, "meshDetailMlsRadiusSpin", 0.0, 1000.0, 6, 0.001);
+    auto* iterations1 = integerSpin(&dialog, "meshDetailIterations1Spin", 0, 100000);
+    auto* iterations2 = integerSpin(&dialog, "meshDetailIterations2Spin", 0, 100000);
+    auto* neighborCount = integerSpin(&dialog, "meshDetailNeighborCountSpin", 1, 100000);
+    auto* nearestDistance = decimalSpin(&dialog, "meshDetailNearestDistanceSpin", 0.0, 1000.0, 6, 0.001);
+    mu->setValue(draft_.mesh.mu);
+    maximumNeighbors->setValue(draft_.mesh.maximumNearestNeighbors);
+    surfaceAngle->setValue(draft_.mesh.maximumSurfaceAngle);
+    minimumAngle->setValue(draft_.mesh.minimumAngle);
+    maximumAngle->setValue(draft_.mesh.maximumAngle);
+    holeSize->setValue(draft_.mesh.holeSize);
+    textureFocus->setValue(draft_.mesh.textureFocus);
+    mlsRadius->setValue(draft_.mesh.mlsSearchRadius);
+    iterations1->setValue(draft_.mesh.normalsFitIterations1);
+    iterations2->setValue(draft_.mesh.normalsFitIterations2);
+    neighborCount->setValue(draft_.mesh.neighborCount);
+    nearestDistance->setValue(draft_.mesh.nearestDistance);
+    form->addRow(QString::fromUtf8("最近邻距离倍数"), mu);
+    form->addRow(QString::fromUtf8("最大最近邻数"), maximumNeighbors);
+    form->addRow(QString::fromUtf8("最大表面角"), surfaceAngle);
+    form->addRow(QString::fromUtf8("最小三角角度"), minimumAngle);
+    form->addRow(QString::fromUtf8("最大三角角度"), maximumAngle);
+    form->addRow(QString::fromUtf8("孔洞尺寸"), holeSize);
+    form->addRow(QString::fromUtf8("纹理焦距"), textureFocus);
+    form->addRow(QString::fromUtf8("MLS 搜索半径"), mlsRadius);
+    form->addRow(QString::fromUtf8("法线拟合迭代 1"), iterations1);
+    form->addRow(QString::fromUtf8("法线拟合迭代 2"), iterations2);
+    form->addRow(QString::fromUtf8("法线邻居数"), neighborCount);
+    form->addRow(QString::fromUtf8("最近邻距离"), nearestDistance);
+    root->addLayout(form);
+    const bool greedy = findChild<QComboBox*>("reconstructCombo")->currentData().toInt() == 2;
+    QWidget* greedyControls[] = {
+        mu, maximumNeighbors, surfaceAngle, minimumAngle, maximumAngle
+    };
+    for (QWidget* control : greedyControls) {
+        control->setEnabled(greedy);
+    }
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QString::fromUtf8("确定"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QString::fromUtf8("取消"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    root->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    draft_.mesh.mu = mu->value();
+    draft_.mesh.maximumNearestNeighbors = maximumNeighbors->value();
+    draft_.mesh.maximumSurfaceAngle = surfaceAngle->value();
+    draft_.mesh.minimumAngle = minimumAngle->value();
+    draft_.mesh.maximumAngle = maximumAngle->value();
+    draft_.mesh.holeSize = holeSize->value();
+    draft_.mesh.textureFocus = textureFocus->value();
+    draft_.mesh.mlsSearchRadius = mlsRadius->value();
+    draft_.mesh.normalsFitIterations1 = iterations1->value();
+    draft_.mesh.normalsFitIterations2 = iterations2->value();
+    draft_.mesh.neighborCount = neighborCount->value();
+    draft_.mesh.nearestDistance = nearestDistance->value();
 }
 
 void ProcessingSettingsDialog::openEngineerSettings()

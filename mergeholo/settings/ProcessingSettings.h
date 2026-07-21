@@ -45,6 +45,13 @@ struct PointCloudUiSettings {
     double disp = 1.0;
     double step = 0.02;
     bool outlierFilterEnabled = false;
+    int label = 150;
+    double fdis = 0.5;
+    int greenRgb = 10;
+    int meanK = 50;
+    double stddevMulThreshold = 1.0;
+    double radiusSearch = 0.05;
+    int minNeighborsInRadius = 5;
 };
 
 struct MeshUiSettings {
@@ -52,6 +59,18 @@ struct MeshUiSettings {
     int kSearch = 20;
     double searchRadius = 0.01;
     double leafSize = 0.001;
+    double mu = 2.5;
+    int maximumNearestNeighbors = 100;
+    double maximumSurfaceAngle = 45.0;
+    double minimumAngle = 10.0;
+    double maximumAngle = 120.0;
+    double holeSize = 0.005;
+    double textureFocus = 2000.0;
+    double mlsSearchRadius = 0.01;
+    int normalsFitIterations1 = 1;
+    int normalsFitIterations2 = 1;
+    int neighborCount = 20;
+    double nearestDistance = 0.01;
 };
 
 struct ProcessingSettings {

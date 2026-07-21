@@ -5,6 +5,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
+#include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -45,6 +46,22 @@ QSpinBox* integerSpin(QWidget* parent, const char* name, int minimum, int maximu
     return spin;
 }
 
+QDoubleSpinBox* decimalSpin(
+    QWidget* parent,
+    const char* name,
+    double minimum,
+    double maximum,
+    int decimals,
+    double step)
+{
+    auto* spin = new QDoubleSpinBox(parent);
+    spin->setObjectName(name);
+    spin->setRange(minimum, maximum);
+    spin->setDecimals(decimals);
+    spin->setSingleStep(step);
+    return spin;
+}
+
 QString displayPath(const std::filesystem::path& path)
 {
 #ifdef _WIN32
@@ -72,6 +89,8 @@ ProcessingSettingsDialog::ProcessingSettingsDialog(QWidget* parent)
     ui_->setupUi(this);
     setWindowModality(Qt::ApplicationModal);
     buildCommonPage();
+    buildImagingPage();
+    buildAdvancedPage();
     buildPlaceholderPages();
     ui_->settingsNavigation->setCurrentRow(0);
 
@@ -100,12 +119,16 @@ void ProcessingSettingsDialog::setSettings(const ProcessingSettings& settings)
 {
     draft_ = settings;
     populateCommonPage();
+    populateImagingPage();
+    populateAdvancedPage();
 }
 
 ProcessingSettings ProcessingSettingsDialog::settings() const
 {
     ProcessingSettings result = draft_;
     collectCommonPage(&result);
+    collectImagingPage(&result);
+    collectAdvancedPage(&result);
     return result;
 }
 
@@ -219,15 +242,214 @@ void ProcessingSettingsDialog::buildCommonPage()
 
 void ProcessingSettingsDialog::buildPlaceholderPages()
 {
-    ui_->imagingPageLayout->addWidget(new QLabel(
-        QString::fromUtf8("成像参数将在此页设置。"), ui_->imagingPage));
-    ui_->imagingPageLayout->addStretch();
-    ui_->advancedPageLayout->addWidget(new QLabel(
-        QString::fromUtf8("点云、网格和性能参数将在此页设置。"), ui_->advancedPage));
-    ui_->advancedPageLayout->addStretch();
     ui_->devicePageLayout->addWidget(new QLabel(
         QString::fromUtf8("相机连接和采集参数将在此页设置。"), ui_->devicePage));
     ui_->devicePageLayout->addStretch();
+}
+
+void ProcessingSettingsDialog::buildImagingPage()
+{
+    auto* framingGroup = new QGroupBox(QString::fromUtf8("人物构图"), ui_->imagingPage);
+    auto* framingLayout = new QFormLayout(framingGroup);
+    framingLayout->addRow(QString::fromUtf8("人物大小"),
+        decimalSpin(framingGroup, "subjectSizeSpin", 0.5, 5.0, 2, 0.1));
+    framingLayout->addRow(QString::fromUtf8("左右位置"),
+        decimalSpin(framingGroup, "centerXSpin", -1.0, 1.0, 2, 0.05));
+    framingLayout->addRow(QString::fromUtf8("上下位置"),
+        decimalSpin(framingGroup, "centerYSpin", -1.0, 1.0, 2, 0.05));
+    framingLayout->addRow(QString::fromUtf8("远近位置"),
+        decimalSpin(framingGroup, "centerZSpin", -1.0, 1.0, 2, 0.05));
+    auto* centerButton = new QPushButton(QString::fromUtf8("居中"), framingGroup);
+    centerButton->setObjectName("centerSubjectButton");
+    framingLayout->addRow(QString(), centerButton);
+    ui_->imagingPageLayout->addWidget(framingGroup);
+
+    auto* poseGroup = new QGroupBox(QString::fromUtf8("姿态校正"), ui_->imagingPage);
+    auto* poseLayout = new QFormLayout(poseGroup);
+    auto* horizontal = decimalSpin(poseGroup, "rotateZSpin", -180.0, 180.0, 1, 1.0);
+    horizontal->setSuffix(QString::fromUtf8(" °"));
+    poseLayout->addRow(QString::fromUtf8("水平旋转"), horizontal);
+    auto* pitch = decimalSpin(poseGroup, "rotateXSpin", -180.0, 180.0, 1, 1.0);
+    pitch->setSuffix(QString::fromUtf8(" °"));
+    poseLayout->addRow(QString::fromUtf8("俯仰旋转"), pitch);
+    auto* resetPose = new QPushButton(QString::fromUtf8("重置姿态"), poseGroup);
+    resetPose->setObjectName("resetPoseButton");
+    poseLayout->addRow(QString(), resetPose);
+    ui_->imagingPageLayout->addWidget(poseGroup);
+
+    auto* qualityGroup = new QGroupBox(QString::fromUtf8("图像质量与方向"), ui_->imagingPage);
+    auto* qualityLayout = new QFormLayout(qualityGroup);
+    auto* quality = integerSpin(qualityGroup, "jpgQualitySpin", 1, 100);
+    quality->setSuffix(QString::fromUtf8(" %"));
+    qualityLayout->addRow(QString::fromUtf8("JPEG 质量"), quality);
+    auto* captureFlip = new QCheckBox(QString::fromUtf8("垂直翻转采集图像"), qualityGroup);
+    captureFlip->setObjectName("captureFlipCheck");
+    qualityLayout->addRow(QString(), captureFlip);
+    auto* direction = new QComboBox(qualityGroup);
+    direction->setObjectName("elementalDirectionCombo");
+    direction->addItems({ QString::fromUtf8("标准方向"),
+        QString::fromUtf8("源图垂直翻转"), QString::fromUtf8("视点行翻转"),
+        QString::fromUtf8("双向翻转") });
+    qualityLayout->addRow(QString::fromUtf8("Elemental 输出方向"), direction);
+    ui_->imagingPageLayout->addWidget(qualityGroup);
+
+    auto* hint = new QLabel(
+        QString::fromUtf8("这些参数直接影响人物在多视图图像中的大小、位置和方向"),
+        ui_->imagingPage);
+    hint->setFrameShape(QFrame::StyledPanel);
+    hint->setAlignment(Qt::AlignCenter);
+    hint->setMinimumHeight(34);
+    ui_->imagingPageLayout->addWidget(hint);
+    ui_->imagingPageLayout->addStretch();
+
+    connect(centerButton, &QPushButton::clicked, this, [this] {
+        findChild<QDoubleSpinBox*>("centerXSpin")->setValue(0.0);
+        findChild<QDoubleSpinBox*>("centerYSpin")->setValue(0.0);
+        findChild<QDoubleSpinBox*>("centerZSpin")->setValue(0.0);
+    });
+    connect(resetPose, &QPushButton::clicked, this, [this] {
+        findChild<QDoubleSpinBox*>("rotateZSpin")->setValue(0.0);
+        findChild<QDoubleSpinBox*>("rotateXSpin")->setValue(0.0);
+    });
+}
+
+void ProcessingSettingsDialog::buildAdvancedPage()
+{
+    auto* warning = new QLabel(
+        QString::fromUtf8("高级参数会影响点云质量、网格质量和处理性能，请谨慎修改"),
+        ui_->advancedPage);
+    warning->setObjectName("advancedWarningLabel");
+    warning->setFrameShape(QFrame::StyledPanel);
+    warning->setMinimumHeight(34);
+    ui_->advancedPageLayout->addWidget(warning);
+
+    auto* pointGroup = new QGroupBox(QString::fromUtf8("点云生成"), ui_->advancedPage);
+    auto* pointLayout = new QFormLayout(pointGroup);
+    auto* preset = new QComboBox(pointGroup);
+    preset->setObjectName("calibrationPresetCombo");
+    preset->addItem(QString::fromUtf8("默认（084C）"));
+    pointLayout->addRow(QString::fromUtf8("标定方案"), preset);
+    pointLayout->addRow(QString::fromUtf8("焦距"),
+        decimalSpin(pointGroup, "pointCloudFocusSpin", 0.001, 100000.0, 3, 1.0));
+    pointLayout->addRow(QString::fromUtf8("视差基线"),
+        decimalSpin(pointGroup, "pointCloudDispSpin", 0.0001, 1000.0, 4, 0.1));
+    pointLayout->addRow(QString::fromUtf8("视差步长"),
+        decimalSpin(pointGroup, "pointCloudStepSpin", 0.0001, 1000.0, 4, 0.01));
+    auto* outlier = new QCheckBox(QString::fromUtf8("启用离群点过滤"), pointGroup);
+    outlier->setObjectName("outlierFilterCheck");
+    pointLayout->addRow(QString(), outlier);
+    auto* pointDetails = new QPushButton(QString::fromUtf8("详细参数..."), pointGroup);
+    pointDetails->setObjectName("pointCloudDetailsButton");
+    pointLayout->addRow(QString(), pointDetails);
+    ui_->advancedPageLayout->addWidget(pointGroup);
+
+    auto* meshGroup = new QGroupBox(QString::fromUtf8("网格重建"), ui_->advancedPage);
+    auto* meshLayout = new QFormLayout(meshGroup);
+    auto* reconstruct = new QComboBox(meshGroup);
+    reconstruct->setObjectName("reconstructCombo");
+    reconstruct->addItem(QString::fromUtf8("泊松重建"), 1);
+    reconstruct->addItem(QString::fromUtf8("贪婪三角化"), 2);
+    meshLayout->addRow(QString::fromUtf8("重建算法"), reconstruct);
+    meshLayout->addRow(QString::fromUtf8("搜索半径"),
+        decimalSpin(meshGroup, "meshSearchRadiusSpin", 0.000001, 1000.0, 6, 0.001));
+    meshLayout->addRow(QString::fromUtf8("邻居数量"),
+        integerSpin(meshGroup, "meshKSearchSpin", 1, 100000));
+    meshLayout->addRow(QString::fromUtf8("体素大小"),
+        decimalSpin(meshGroup, "meshLeafSizeSpin", 0.0, 1000.0, 6, 0.001));
+    auto* meshDetails = new QPushButton(QString::fromUtf8("详细参数..."), meshGroup);
+    meshDetails->setObjectName("meshDetailsButton");
+    meshLayout->addRow(QString(), meshDetails);
+    ui_->advancedPageLayout->addWidget(meshGroup);
+
+    auto* performanceGroup = new QGroupBox(QString::fromUtf8("多视图与性能"), ui_->advancedPage);
+    auto* performanceLayout = new QFormLayout(performanceGroup);
+    auto* atlas = integerSpin(performanceGroup, "atlasSizeSpin", 512, 32768);
+    atlas->setSingleStep(512);
+    performanceLayout->addRow(QString::fromUtf8("纹理图集大小"), atlas);
+    performanceLayout->addRow(QString::fromUtf8("处理线程数"),
+        integerSpin(performanceGroup, "writerThreadsSpin", 1, 256));
+    auto* adaptive = new QCheckBox(QString::fromUtf8("启用硬件自适应"), performanceGroup);
+    adaptive->setObjectName("hardwareAdaptiveCheck");
+    performanceLayout->addRow(QString(), adaptive);
+    ui_->advancedPageLayout->addWidget(performanceGroup);
+    ui_->advancedPageLayout->addStretch();
+
+    connect(adaptive, &QCheckBox::toggled,
+        this, &ProcessingSettingsDialog::updateHardwareAdaptiveState);
+}
+
+void ProcessingSettingsDialog::populateImagingPage()
+{
+    const PipelineUiSettings& p = draft_.pipeline;
+    findChild<QDoubleSpinBox*>("subjectSizeSpin")->setValue(p.subjectSize);
+    findChild<QDoubleSpinBox*>("centerXSpin")->setValue(p.centerX);
+    findChild<QDoubleSpinBox*>("centerYSpin")->setValue(p.centerY);
+    findChild<QDoubleSpinBox*>("centerZSpin")->setValue(p.centerZ);
+    findChild<QDoubleSpinBox*>("rotateZSpin")->setValue(p.rotateZDeg);
+    findChild<QDoubleSpinBox*>("rotateXSpin")->setValue(p.rotateXDeg);
+    findChild<QSpinBox*>("jpgQualitySpin")->setValue(p.jpgQuality);
+    findChild<QCheckBox*>("captureFlipCheck")->setChecked(p.captureFlipVertical);
+    const int direction = (p.elementalFlipSourceY ? 1 : 0)
+        + (p.elementalFlipViewRows ? 2 : 0);
+    findChild<QComboBox*>("elementalDirectionCombo")->setCurrentIndex(direction);
+}
+
+void ProcessingSettingsDialog::populateAdvancedPage()
+{
+    findChild<QDoubleSpinBox*>("pointCloudFocusSpin")->setValue(draft_.pointCloud.focus);
+    findChild<QDoubleSpinBox*>("pointCloudDispSpin")->setValue(draft_.pointCloud.disp);
+    findChild<QDoubleSpinBox*>("pointCloudStepSpin")->setValue(draft_.pointCloud.step);
+    findChild<QCheckBox*>("outlierFilterCheck")->setChecked(draft_.pointCloud.outlierFilterEnabled);
+    QComboBox* reconstruct = findChild<QComboBox*>("reconstructCombo");
+    reconstruct->setCurrentIndex(std::max(0, reconstruct->findData(draft_.mesh.reconstruct)));
+    findChild<QDoubleSpinBox*>("meshSearchRadiusSpin")->setValue(draft_.mesh.searchRadius);
+    findChild<QSpinBox*>("meshKSearchSpin")->setValue(draft_.mesh.kSearch);
+    findChild<QDoubleSpinBox*>("meshLeafSizeSpin")->setValue(draft_.mesh.leafSize);
+    const bool adaptive = draft_.pipeline.atlasSize == 0 && draft_.pipeline.writerThreads == 0;
+    findChild<QCheckBox*>("hardwareAdaptiveCheck")->setChecked(adaptive);
+    findChild<QSpinBox*>("atlasSizeSpin")->setValue(
+        adaptive ? 4096 : std::max(512, draft_.pipeline.atlasSize));
+    findChild<QSpinBox*>("writerThreadsSpin")->setValue(
+        adaptive ? 1 : std::max(1, draft_.pipeline.writerThreads));
+    updateHardwareAdaptiveState();
+}
+
+void ProcessingSettingsDialog::collectImagingPage(ProcessingSettings* settings) const
+{
+    PipelineUiSettings& p = settings->pipeline;
+    p.subjectSize = findChild<QDoubleSpinBox*>("subjectSizeSpin")->value();
+    p.centerX = findChild<QDoubleSpinBox*>("centerXSpin")->value();
+    p.centerY = findChild<QDoubleSpinBox*>("centerYSpin")->value();
+    p.centerZ = findChild<QDoubleSpinBox*>("centerZSpin")->value();
+    p.rotateZDeg = findChild<QDoubleSpinBox*>("rotateZSpin")->value();
+    p.rotateXDeg = findChild<QDoubleSpinBox*>("rotateXSpin")->value();
+    p.jpgQuality = findChild<QSpinBox*>("jpgQualitySpin")->value();
+    p.captureFlipVertical = findChild<QCheckBox*>("captureFlipCheck")->isChecked();
+    const int direction = findChild<QComboBox*>("elementalDirectionCombo")->currentIndex();
+    p.elementalFlipSourceY = (direction & 1) != 0;
+    p.elementalFlipViewRows = (direction & 2) != 0;
+}
+
+void ProcessingSettingsDialog::collectAdvancedPage(ProcessingSettings* settings) const
+{
+    settings->pointCloud.focus = findChild<QDoubleSpinBox*>("pointCloudFocusSpin")->value();
+    settings->pointCloud.disp = findChild<QDoubleSpinBox*>("pointCloudDispSpin")->value();
+    settings->pointCloud.step = findChild<QDoubleSpinBox*>("pointCloudStepSpin")->value();
+    settings->pointCloud.outlierFilterEnabled = findChild<QCheckBox*>("outlierFilterCheck")->isChecked();
+    settings->mesh.reconstruct = findChild<QComboBox*>("reconstructCombo")->currentData().toInt();
+    settings->mesh.searchRadius = findChild<QDoubleSpinBox*>("meshSearchRadiusSpin")->value();
+    settings->mesh.kSearch = findChild<QSpinBox*>("meshKSearchSpin")->value();
+    settings->mesh.leafSize = findChild<QDoubleSpinBox*>("meshLeafSizeSpin")->value();
+    const bool adaptive = findChild<QCheckBox*>("hardwareAdaptiveCheck")->isChecked();
+    settings->pipeline.atlasSize = adaptive ? 0 : findChild<QSpinBox*>("atlasSizeSpin")->value();
+    settings->pipeline.writerThreads = adaptive ? 0 : findChild<QSpinBox*>("writerThreadsSpin")->value();
+}
+
+void ProcessingSettingsDialog::updateHardwareAdaptiveState()
+{
+    const bool manual = !findChild<QCheckBox*>("hardwareAdaptiveCheck")->isChecked();
+    findChild<QSpinBox*>("atlasSizeSpin")->setEnabled(manual);
+    findChild<QSpinBox*>("writerThreadsSpin")->setEnabled(manual);
 }
 
 void ProcessingSettingsDialog::populateCommonPage()
@@ -316,15 +538,38 @@ void ProcessingSettingsDialog::browseOutputDirectory()
 
 void ProcessingSettingsDialog::restoreCurrentPageDefaults()
 {
-    if (selectedPage_ != 0) {
-        return;
-    }
     const QString outputRoot = draft_.pipeline.outputRoot;
     const QString cameraDirectory = draft_.camera.configDirectory;
     ProcessingSettings defaults = defaultProcessingSettings(QDir::currentPath(), cameraDirectory);
     defaults.pipeline.outputRoot = outputRoot;
-    draft_.input.clear();
-    draft_.saveResults = defaults.saveResults;
-    draft_.pipeline = defaults.pipeline;
-    populateCommonPage();
+    if (selectedPage_ == 0) {
+        draft_.input.clear();
+        draft_.saveResults = defaults.saveResults;
+        draft_.pipeline.multiviewAngle = defaults.pipeline.multiviewAngle;
+        draft_.pipeline.multiviewPer = defaults.pipeline.multiviewPer;
+        draft_.pipeline.multiviewResolution = defaults.pipeline.multiviewResolution;
+        draft_.pipeline.targetRows = defaults.pipeline.targetRows;
+        draft_.pipeline.targetCols = defaults.pipeline.targetCols;
+        populateCommonPage();
+    }
+    else if (selectedPage_ == 1) {
+        draft_.pipeline.subjectSize = defaults.pipeline.subjectSize;
+        draft_.pipeline.centerX = defaults.pipeline.centerX;
+        draft_.pipeline.centerY = defaults.pipeline.centerY;
+        draft_.pipeline.centerZ = defaults.pipeline.centerZ;
+        draft_.pipeline.rotateXDeg = defaults.pipeline.rotateXDeg;
+        draft_.pipeline.rotateZDeg = defaults.pipeline.rotateZDeg;
+        draft_.pipeline.jpgQuality = defaults.pipeline.jpgQuality;
+        draft_.pipeline.captureFlipVertical = defaults.pipeline.captureFlipVertical;
+        draft_.pipeline.elementalFlipSourceY = defaults.pipeline.elementalFlipSourceY;
+        draft_.pipeline.elementalFlipViewRows = defaults.pipeline.elementalFlipViewRows;
+        populateImagingPage();
+    }
+    else if (selectedPage_ == 2) {
+        draft_.pointCloud = defaults.pointCloud;
+        draft_.mesh = defaults.mesh;
+        draft_.pipeline.atlasSize = defaults.pipeline.atlasSize;
+        draft_.pipeline.writerThreads = defaults.pipeline.writerThreads;
+        populateAdvancedPage();
+    }
 }

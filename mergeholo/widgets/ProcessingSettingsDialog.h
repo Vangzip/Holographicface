@@ -31,11 +31,18 @@ signals:
 
 private:
     void buildCommonPage();
+    void buildImagingPage();
+    void buildAdvancedPage();
     void buildPlaceholderPages();
     void populateCommonPage();
+    void populateImagingPage();
+    void populateAdvancedPage();
     void collectCommonPage(ProcessingSettings* settings) const;
+    void collectImagingPage(ProcessingSettings* settings) const;
+    void collectAdvancedPage(ProcessingSettings* settings) const;
     void updateInputState();
     void updateDerivedSummary();
+    void updateHardwareAdaptiveState();
     void browseInputDirectory();
     void browseOutputDirectory();
     void restoreCurrentPageDefaults();

@@ -6,6 +6,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDoubleSpinBox>
 #include <QDir>
 #include <QFile>
 #include <QGroupBox>
@@ -288,6 +289,83 @@ void testCommonPageBindingsAndDerivedSummary()
         "P0 save-result binding must preserve the draft");
 }
 
+void testImagingPageBindings()
+{
+    QTemporaryDir preset;
+    ProcessingSettings settings = defaultProcessingSettings("C:/MergeHolo", createCameraPreset(preset));
+    settings.pipeline.subjectSize = 2.5;
+    settings.pipeline.centerX = 0.1;
+    settings.pipeline.centerY = -0.2;
+    settings.pipeline.centerZ = 0.3;
+    settings.pipeline.rotateZDeg = 12.0;
+    settings.pipeline.rotateXDeg = -8.0;
+    settings.pipeline.jpgQuality = 95;
+    settings.pipeline.elementalFlipSourceY = true;
+    settings.pipeline.elementalFlipViewRows = false;
+
+    ProcessingSettingsDialog dialog;
+    dialog.setSettings(settings);
+    QDoubleSpinBox* subjectSize = dialog.findChild<QDoubleSpinBox*>("subjectSizeSpin");
+    QComboBox* direction = dialog.findChild<QComboBox*>("elementalDirectionCombo");
+    expect(subjectSize && direction, "imaging controls must exist");
+    expect(std::abs(subjectSize->value() - 2.5) < 1e-9,
+        "subject size must populate");
+    expect(direction->currentIndex() == 1,
+        "elemental source flip must map to the second direction preset");
+
+    dialog.findChild<QDoubleSpinBox*>("centerXSpin")->setValue(0.4);
+    dialog.findChild<QDoubleSpinBox*>("rotateZSpin")->setValue(20.0);
+    dialog.findChild<QSpinBox*>("jpgQualitySpin")->setValue(88);
+    const ProcessingSettings changed = dialog.settings();
+    expect(std::abs(changed.pipeline.centerX - 0.4) < 1e-9,
+        "left-right position must collect");
+    expect(std::abs(changed.pipeline.rotateZDeg - 20.0) < 1e-9,
+        "horizontal rotation must collect");
+    expect(changed.pipeline.jpgQuality == 88, "JPEG quality must collect");
+}
+
+void testAdvancedPageBindingsAndHardwareAdaptiveState()
+{
+    QTemporaryDir preset;
+    ProcessingSettings settings = defaultProcessingSettings("C:/MergeHolo", createCameraPreset(preset));
+    settings.pointCloud.focus = 110.0;
+    settings.pointCloud.disp = 1.2;
+    settings.pointCloud.step = 0.03;
+    settings.mesh.reconstruct = 2;
+    settings.mesh.kSearch = 30;
+    settings.mesh.searchRadius = 0.02;
+    settings.mesh.leafSize = 0.002;
+    settings.pipeline.atlasSize = 0;
+    settings.pipeline.writerThreads = 0;
+
+    ProcessingSettingsDialog dialog;
+    dialog.setSettings(settings);
+    QDoubleSpinBox* focus = dialog.findChild<QDoubleSpinBox*>("pointCloudFocusSpin");
+    QComboBox* reconstruct = dialog.findChild<QComboBox*>("reconstructCombo");
+    expect(focus && reconstruct, "advanced controls must exist");
+    expect(std::abs(focus->value() - 110.0) < 1e-9,
+        "point-cloud focus must populate");
+    expect(reconstruct->currentData().toInt() == 2,
+        "mesh algorithm must populate");
+    QCheckBox* adaptive = dialog.findChild<QCheckBox*>("hardwareAdaptiveCheck");
+    expect(adaptive && adaptive->isChecked(), "zero atlas and threads must select hardware adaptation");
+    expect(!dialog.findChild<QSpinBox*>("atlasSizeSpin")->isEnabled()
+            && !dialog.findChild<QSpinBox*>("writerThreadsSpin")->isEnabled(),
+        "hardware adaptation must disable manual performance controls");
+    expect(dialog.findChild<QPushButton*>("pointCloudDetailsButton") != nullptr
+            && dialog.findChild<QPushButton*>("meshDetailsButton") != nullptr,
+        "advanced groups must expose detailed parameter dialogs");
+
+    adaptive->setChecked(false);
+    dialog.findChild<QSpinBox*>("atlasSizeSpin")->setValue(4096);
+    dialog.findChild<QSpinBox*>("writerThreadsSpin")->setValue(4);
+    dialog.findChild<QSpinBox*>("meshKSearchSpin")->setValue(26);
+    const ProcessingSettings changed = dialog.settings();
+    expect(changed.pipeline.atlasSize == 4096 && changed.pipeline.writerThreads == 4,
+        "manual performance values must collect when adaptation is disabled");
+    expect(changed.mesh.kSearch == 26, "mesh neighbor count must collect");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -304,6 +382,8 @@ int main(int argc, char* argv[])
     testDialogNavigationAndNativeShell();
     testPrintNavigationEmitsWithoutChangingPage();
     testCommonPageBindingsAndDerivedSummary();
+    testImagingPageBindings();
+    testAdvancedPageBindingsAndHardwareAdaptiveState();
     std::cout << "processing settings tests passed" << std::endl;
     return 0;
 }

@@ -12,5 +12,8 @@ enum class CaptureRotation {
 const char* captureRotationName(CaptureRotation rotation);
 bool parseCaptureRotation(const std::string& text, CaptureRotation* rotation);
 
+cv::Mat rotateCaptureImage(const cv::Mat& source, CaptureRotation rotation);
+cv::Mat rotateCaptureSpatialDepth(const cv::Mat& source, CaptureRotation rotation);
+
 cv::Mat rotateCaptureCounterClockwise90(const cv::Mat& source);
 cv::Mat rotateCaptureDepthCounterClockwise90(const cv::Mat& source);

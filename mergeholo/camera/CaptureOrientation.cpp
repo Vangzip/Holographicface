@@ -34,33 +34,52 @@ bool parseCaptureRotation(const std::string& text, CaptureRotation* rotation)
     return false;
 }
 
-cv::Mat rotateCaptureCounterClockwise90(const cv::Mat& source)
+cv::Mat rotateCaptureImage(const cv::Mat& source, CaptureRotation rotation)
 {
     if (source.empty()) {
         return {};
     }
 
     cv::Mat rotated;
-    cv::rotate(source, rotated, cv::ROTATE_90_COUNTERCLOCKWISE);
+    const int rotateCode = rotation == CaptureRotation::Clockwise90
+        ? cv::ROTATE_90_CLOCKWISE
+        : cv::ROTATE_90_COUNTERCLOCKWISE;
+    cv::rotate(source, rotated, rotateCode);
     return rotated;
 }
 
-cv::Mat rotateCaptureDepthCounterClockwise90(const cv::Mat& source)
+cv::Mat rotateCaptureSpatialDepth(const cv::Mat& source, CaptureRotation rotation)
 {
     if (source.empty()) {
         return {};
     }
 
     CV_Assert(source.type() == CV_32FC3);
-    cv::Mat rotated = rotateCaptureCounterClockwise90(source);
+    cv::Mat rotated = rotateCaptureImage(source, rotation);
     for (int row = 0; row < rotated.rows; ++row) {
         cv::Vec3f* points = rotated.ptr<cv::Vec3f>(row);
         for (int column = 0; column < rotated.cols; ++column) {
             const float x = points[column][0];
             const float y = points[column][1];
-            points[column][0] = y;
-            points[column][1] = -x;
+            if (rotation == CaptureRotation::Clockwise90) {
+                points[column][0] = -y;
+                points[column][1] = x;
+            }
+            else {
+                points[column][0] = y;
+                points[column][1] = -x;
+            }
         }
     }
     return rotated;
+}
+
+cv::Mat rotateCaptureCounterClockwise90(const cv::Mat& source)
+{
+    return rotateCaptureImage(source, CaptureRotation::CounterClockwise90);
+}
+
+cv::Mat rotateCaptureDepthCounterClockwise90(const cv::Mat& source)
+{
+    return rotateCaptureSpatialDepth(source, CaptureRotation::CounterClockwise90);
 }

@@ -408,6 +408,7 @@ void testDevicePageBindingsAndBusyState()
     settings.camera.frameRate = 7.5;
     settings.camera.cameraInterface = "571";
     settings.camera.cameraType = "Indigo";
+    settings.camera.rotation = CaptureRotation::CounterClockwise90;
 
     ProcessingSettingsDialog dialog;
     dialog.setSettings(settings);
@@ -415,18 +416,26 @@ void testDevicePageBindingsAndBusyState()
     QSpinBox* exposure = dialog.findChild<QSpinBox*>("cameraExposureValueSpin");
     QDoubleSpinBox* frameRate = dialog.findChild<QDoubleSpinBox*>("cameraFrameRateSpin");
     QLineEdit* cameraInterface = dialog.findChild<QLineEdit*>("cameraInterfaceEdit");
-    expect(directory && exposure && frameRate && cameraInterface,
+    QComboBox* rotation = dialog.findChild<QComboBox*>("cameraRotationCombo");
+    expect(directory && exposure && frameRate && cameraInterface && rotation,
         "device controls must exist");
     expect(directory->isReadOnly() && cameraInterface->isReadOnly(),
         "camera path and identity summary must be read-only");
     expect(exposure->value() == 14000, "camera exposure must populate");
     expect(std::abs(frameRate->value() - 7.5) < 1e-9, "camera frame rate must populate");
+    expect(rotation->currentData().toInt()
+            == static_cast<int>(CaptureRotation::CounterClockwise90),
+        "camera rotation must populate");
     expect(dialog.findChild<QPushButton*>("engineerSettingsButton") != nullptr,
         "device page must expose engineer settings");
 
     exposure->setValue(13500);
+    rotation->setCurrentIndex(rotation->findData(
+        static_cast<int>(CaptureRotation::Clockwise90)));
     const ProcessingSettings changed = dialog.settings();
     expect(changed.camera.exposureValue == 13500, "camera exposure must collect");
+    expect(changed.camera.rotation == CaptureRotation::Clockwise90,
+        "camera rotation must collect");
     dialog.setBusy(true);
     expect(!dialog.findChild<QWidget*>("devicePage")->isEnabled(),
         "busy state must disable device changes");

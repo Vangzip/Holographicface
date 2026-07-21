@@ -439,6 +439,13 @@ void ProcessingSettingsDialog::buildDevicePage()
     auto* frameRate = decimalSpin(captureGroup, "cameraFrameRateSpin", 0.1, 1000.0, 1, 0.5);
     frameRate->setSuffix(QString::fromUtf8(" fps"));
     captureLayout->addRow(QString::fromUtf8("帧率"), frameRate);
+    auto* rotation = new QComboBox(captureGroup);
+    rotation->setObjectName("cameraRotationCombo");
+    rotation->addItem(QString::fromUtf8("顺时针 90°（当前倒装）"),
+        static_cast<int>(CaptureRotation::Clockwise90));
+    rotation->addItem(QString::fromUtf8("逆时针 90°（原安装）"),
+        static_cast<int>(CaptureRotation::CounterClockwise90));
+    captureLayout->addRow(QString::fromUtf8("画面方向"), rotation);
     captureLayout->addRow(QString(),
         new QLabel(QString::fromUtf8("修改后需要重新初始化相机"), captureGroup));
     ui_->devicePageLayout->addWidget(captureGroup);
@@ -531,6 +538,9 @@ void ProcessingSettingsDialog::populateDevicePage()
     exposureMode->setCurrentIndex(std::max(0, exposureMode->findData(camera.exposureMode)));
     findChild<QSpinBox*>("cameraExposureValueSpin")->setValue(camera.exposureValue);
     findChild<QDoubleSpinBox*>("cameraFrameRateSpin")->setValue(camera.frameRate);
+    QComboBox* rotation = findChild<QComboBox*>("cameraRotationCombo");
+    rotation->setCurrentIndex(std::max(0,
+        rotation->findData(static_cast<int>(camera.rotation))));
     findChild<QLineEdit*>("cameraInterfaceEdit")->setText(camera.cameraInterface);
     findChild<QLineEdit*>("cameraTypeEdit")->setText(camera.cameraType);
     findChild<QLineEdit*>("cameraIdEdit")->setText(QString::number(camera.cameraId));
@@ -576,6 +586,8 @@ void ProcessingSettingsDialog::collectDevicePage(ProcessingSettings* settings) c
     camera.exposureMode = findChild<QComboBox*>("cameraExposureModeCombo")->currentData().toInt();
     camera.exposureValue = findChild<QSpinBox*>("cameraExposureValueSpin")->value();
     camera.frameRate = findChild<QDoubleSpinBox*>("cameraFrameRateSpin")->value();
+    camera.rotation = static_cast<CaptureRotation>(
+        findChild<QComboBox*>("cameraRotationCombo")->currentData().toInt());
     camera.cameraInterface = findChild<QLineEdit*>("cameraInterfaceEdit")->text();
     camera.cameraType = findChild<QLineEdit*>("cameraTypeEdit")->text();
     camera.cameraId = findChild<QLineEdit*>("cameraIdEdit")->text().toInt();

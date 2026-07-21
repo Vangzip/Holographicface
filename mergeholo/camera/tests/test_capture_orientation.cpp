@@ -255,17 +255,24 @@ void testCaptureConsumersUseSharedOrientation()
         "vendor/multiview/ModelMoveCameraConfig.h",
         "ModelMoveCameraConfig.h could not be read");
 
-    expect(captureWindow.contains("rotateCaptureCounterClockwise90(frame.img2d)"),
+    expect(captureWindow.contains(
+            "rotateCaptureImage(frame.img2d, settings_.camera.rotation)"),
         "main-window RGB capture is not rotated");
-    expect(captureWindow.contains("rotateCaptureDepthCounterClockwise90(frame.img3d)"),
+    expect(captureWindow.contains(
+            "rotateCaptureSpatialDepth(frame.img3d, settings_.camera.rotation)"),
         "main-window pipeline depth is not spatially rotated");
     expect(captureWindow.contains("frame.depthMap.empty() ? frame.img3d : frame.depthMap"),
         "main-window display depth does not select the SDK depth map");
-    expect(captureWindow.contains("rotateCaptureCounterClockwise90(depthDisplaySource)"),
+    expect(captureWindow.contains(
+            "rotateCaptureImage(depthDisplaySource, settings_.camera.rotation)"),
         "main-window display depth is not rotated");
-    expect(captureSession.contains("rotateCaptureCounterClockwise90(data.img2d)"),
+    expect(captureWindow.contains("&& left.rotation == right.rotation"),
+        "camera orientation changes must use the safe restart path");
+    expect(captureSession.contains(
+            "rotateCaptureImage(data.img2d, options.cameraSettings.rotation)"),
         "standalone RGB capture is not rotated");
-    expect(captureSession.contains("rotateCaptureDepthCounterClockwise90(data.img3d)"),
+    expect(captureSession.contains(
+            "rotateCaptureSpatialDepth(data.img3d, options.cameraSettings.rotation)"),
         "standalone depth capture is not spatially rotated");
     expect(depthIo.contains("p.x = X;")
             && depthIo.contains("p.y = -Y;")
@@ -303,28 +310,40 @@ void testCaptureConsumersUseSharedOrientation()
             && cameraConfig.contains(
                 "upDirection = osg::Vec3d(0.0, 1.0, 0.0)"),
         "multiview camera fallback must match the rotated capture coordinate system");
-    expect(captureWindow.contains("rotateCaptureDepthCounterClockwise90(frame.img3d)"),
+    expect(captureWindow.contains(
+            "rotateCaptureSpatialDepth(frame.img3d, settings_.camera.rotation)"),
         "spatial capture rotation must remain enabled for downstream geometry");
 
-    expect(captureWindow.count("rotateCaptureCounterClockwise90(frame.img2d)") == 1,
+    expect(captureWindow.count(
+            "rotateCaptureImage(frame.img2d, settings_.camera.rotation)") == 1,
         "main-window RGB capture must be rotated exactly once");
-    expect(captureWindow.count("rotateCaptureDepthCounterClockwise90(frame.img3d)") == 1,
+    expect(captureWindow.count(
+            "rotateCaptureSpatialDepth(frame.img3d, settings_.camera.rotation)") == 1,
         "main-window pipeline depth must be spatially rotated exactly once");
-    expect(captureSession.count("rotateCaptureCounterClockwise90(data.img2d)") == 1,
+    expect(captureWindow.count(
+            "rotateCaptureImage(depthDisplaySource, settings_.camera.rotation)") == 1,
+        "main-window display depth must be rotated exactly once");
+    expect(captureSession.count(
+            "rotateCaptureImage(data.img2d, options.cameraSettings.rotation)") == 1,
         "standalone RGB capture must be rotated exactly once");
-    expect(captureSession.count("rotateCaptureDepthCounterClockwise90(data.img3d)") == 1,
+    expect(captureSession.count(
+            "rotateCaptureSpatialDepth(data.img3d, options.cameraSettings.rotation)") == 1,
         "standalone depth capture must be spatially rotated exactly once");
 
-    expect(captureWindow.indexOf("rotateCaptureCounterClockwise90(frame.img2d)")
+    expect(captureWindow.indexOf(
+            "rotateCaptureImage(frame.img2d, settings_.camera.rotation)")
             < captureWindow.indexOf("latestRgb_ ="),
         "main-window RGB must be rotated before publishing the frame");
-    expect(captureWindow.indexOf("rotateCaptureDepthCounterClockwise90(frame.img3d)")
+    expect(captureWindow.indexOf(
+            "rotateCaptureSpatialDepth(frame.img3d, settings_.camera.rotation)")
             < captureWindow.indexOf("latestDepthForPipeline_ ="),
         "main-window depth must be spatially rotated before publishing the frame");
-    expect(captureSession.indexOf("rotateCaptureCounterClockwise90(data.img2d)")
+    expect(captureSession.indexOf(
+            "rotateCaptureImage(data.img2d, options.cameraSettings.rotation)")
             < captureSession.indexOf("if (options.showPreview)"),
         "standalone RGB must be rotated before preview and saving");
-    expect(captureSession.indexOf("rotateCaptureDepthCounterClockwise90(data.img3d)")
+    expect(captureSession.indexOf(
+            "rotateCaptureSpatialDepth(data.img3d, options.cameraSettings.rotation)")
             < captureSession.indexOf("if (options.showPreview)"),
         "standalone depth must be spatially rotated before preview and saving");
 }

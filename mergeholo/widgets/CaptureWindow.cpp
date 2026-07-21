@@ -274,9 +274,15 @@ void CaptureWindow::pollCameraFrame()
         return;
     }
 
-    latestRgb_ = frame.img2d.clone();
-    latestDepthForPipeline_ = frame.img3d.clone();
-    latestDepthDisplay_ = frame.depthMap.empty() ? frame.img3d.clone() : frame.depthMap.clone();
+    const cv::Mat& depthDisplaySource =
+        frame.depthMap.empty() ? frame.img3d : frame.depthMap;
+    cv::Mat orientedRgb = rotateCaptureImage(frame.img2d, settings_.camera.rotation);
+    cv::Mat orientedDepth = rotateCaptureSpatialDepth(frame.img3d, settings_.camera.rotation);
+    cv::Mat orientedDepthDisplay = rotateCaptureImage(depthDisplaySource, settings_.camera.rotation);
+
+    latestRgb_ = std::move(orientedRgb);
+    latestDepthForPipeline_ = std::move(orientedDepth);
+    latestDepthDisplay_ = std::move(orientedDepthDisplay);
     hasLiveFrame_ = true;
     setPreviewImages(latestRgb_, latestDepthDisplay_);
 

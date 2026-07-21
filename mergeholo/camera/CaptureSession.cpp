@@ -1,5 +1,6 @@
 #include "CaptureSession.h"
 
+#include "CaptureOrientation.h"
 #include "FrameChangeDetector.hpp"
 #include "LightFieldCapture.h"
 
@@ -191,8 +192,8 @@ int runCaptureSession(const CaptureSessionOptions& options)
             continue;
         }
 
-        cv::Mat image2d = data.img2d.clone();
-        cv::Mat image3d = data.img3d.clone();
+        cv::Mat image2d = rotateCaptureImage(data.img2d, options.cameraSettings.rotation);
+        cv::Mat image3d = rotateCaptureSpatialDepth(data.img3d, options.cameraSettings.rotation);
         if (image2d.empty() || image3d.empty()) {
             continue;
         }

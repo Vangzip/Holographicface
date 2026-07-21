@@ -1,9 +1,19 @@
 #include "ProcessingSettings.h"
+#include "ProcessingSettingsDialog.h"
 #include "ProcessingSettingsStore.h"
 
-#include <QCoreApplication>
+#include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QGroupBox>
+#include <QLabel>
+#include <QListWidget>
+#include <QPushButton>
+#include <QSpinBox>
+#include <QStackedWidget>
 #include <QTemporaryDir>
 
 #include <cmath>
@@ -217,11 +227,72 @@ void testSettingsStorePreservesCommentsAndUnknownKeys()
         "new camera exposure key must be appended");
 }
 
+void testDialogNavigationAndNativeShell()
+{
+    ProcessingSettingsDialog dialog;
+    expect(!dialog.windowFlags().testFlag(Qt::FramelessWindowHint),
+        "processing settings must use native window chrome");
+    expect(dialog.styleSheet().isEmpty(),
+        "processing settings must not install a dialog stylesheet");
+
+    QListWidget* navigation = dialog.findChild<QListWidget*>("settingsNavigation");
+    QStackedWidget* pages = dialog.findChild<QStackedWidget*>("settingsPages");
+    expect(navigation && navigation->count() == 5,
+        "processing settings must expose five priority entries");
+    expect(pages && pages->count() == 4,
+        "processing settings must contain four editable pages");
+    expect(navigation->item(0)->text().contains("P0")
+            && navigation->item(0)->text().contains(QString::fromUtf8("常用")),
+        "first navigation item must be P0 common settings");
+    expect(navigation->item(4)->text().contains("P3")
+            && navigation->item(4)->text().contains(QString::fromUtf8("打印")),
+        "last navigation item must be P3 printing");
+    QWidget* devicePage = dialog.findChild<QWidget*>("devicePage");
+    expect(devicePage != nullptr, "device page must exist");
+    expect(devicePage->findChild<QGroupBox*>("printGroup") == nullptr,
+        "device page must not embed printing controls");
+}
+
+void testPrintNavigationEmitsWithoutChangingPage()
+{
+    ProcessingSettingsDialog dialog;
+    bool requested = false;
+    QObject::connect(&dialog, &ProcessingSettingsDialog::printRequested,
+        [&requested] { requested = true; });
+    dialog.selectPage(1);
+    dialog.findChild<QListWidget*>("settingsNavigation")->setCurrentRow(4);
+    QApplication::processEvents();
+    expect(requested, "P3 navigation must request the existing print dialog");
+    expect(dialog.findChild<QStackedWidget*>("settingsPages")->currentIndex() == 1,
+        "P3 navigation must leave the editable page selection unchanged");
+}
+
+void testCommonPageBindingsAndDerivedSummary()
+{
+    QTemporaryDir preset;
+    ProcessingSettings settings = defaultProcessingSettings("C:/MergeHolo", createCameraPreset(preset));
+    settings.saveResults.mesh = true;
+    ProcessingSettingsDialog dialog;
+    dialog.setSettings(settings);
+
+    QSpinBox* angle = dialog.findChild<QSpinBox*>("multiviewAngleSpin");
+    QSpinBox* per = dialog.findChild<QSpinBox*>("multiviewPerSpin");
+    QLabel* summary = dialog.findChild<QLabel*>("derivedSummaryLabel");
+    expect(angle && per && summary, "P0 output controls must exist");
+    angle->setValue(60);
+    per->setValue(4);
+    QApplication::processEvents();
+    expect(summary->text().contains("240") && summary->text().contains("22500"),
+        "P0 summary must update derived view and elemental counts");
+    expect(dialog.findChild<QCheckBox*>("saveMeshCheck")->isChecked(),
+        "P0 save-result binding must preserve the draft");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
 {
-    QCoreApplication application(argc, argv);
+    QApplication application(argc, argv);
     testProcessingSettingsDefaults();
     testSubjectSizeConversion();
     testValidationAcceptsCurrentDefaultsWithCompletePreset();
@@ -230,6 +301,9 @@ int main(int argc, char* argv[])
     testValidationRejectsIncompleteCameraPreset();
     testSettingsStoreLoadsKnownValuesAndCameraFallbacks();
     testSettingsStorePreservesCommentsAndUnknownKeys();
+    testDialogNavigationAndNativeShell();
+    testPrintNavigationEmitsWithoutChangingPage();
+    testCommonPageBindingsAndDerivedSummary();
     std::cout << "processing settings tests passed" << std::endl;
     return 0;
 }

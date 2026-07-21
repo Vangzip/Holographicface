@@ -2,6 +2,7 @@
 
 #include "PipelineInput.h"
 #include "ResultSaveSettings.h"
+#include "LightFieldCapture.h"
 
 #include <QString>
 #include <QtGlobal>
@@ -71,3 +72,4 @@ double distanceScaleFromSubjectSize(double subjectSize);
 int viewCountPerAxis(const ProcessingSettings& settings);
 qint64 elementalImageCount(const ProcessingSettings& settings);
 QString validateProcessingSettings(const ProcessingSettings& settings);
+LightFieldCapture::HoloInData makeCameraInput(const CameraCaptureSettings& settings);

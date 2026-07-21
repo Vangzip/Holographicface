@@ -1,6 +1,7 @@
 #include "ProcessingSettings.h"
 #include "ProcessingSettingsDialog.h"
 #include "ProcessingSettingsStore.h"
+#include "LightFieldCapture.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -11,6 +12,7 @@
 #include <QFile>
 #include <QGroupBox>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
 #include <QSpinBox>
@@ -366,6 +368,64 @@ void testAdvancedPageBindingsAndHardwareAdaptiveState()
     expect(changed.mesh.kSearch == 26, "mesh neighbor count must collect");
 }
 
+void testDevicePageBindingsAndBusyState()
+{
+    QTemporaryDir preset;
+    ProcessingSettings settings = defaultProcessingSettings("C:/MergeHolo", createCameraPreset(preset));
+    settings.camera.exposureValue = 14000;
+    settings.camera.frameRate = 7.5;
+    settings.camera.cameraInterface = "571";
+    settings.camera.cameraType = "Indigo";
+
+    ProcessingSettingsDialog dialog;
+    dialog.setSettings(settings);
+    QLineEdit* directory = dialog.findChild<QLineEdit*>("cameraConfigDirectoryEdit");
+    QSpinBox* exposure = dialog.findChild<QSpinBox*>("cameraExposureValueSpin");
+    QDoubleSpinBox* frameRate = dialog.findChild<QDoubleSpinBox*>("cameraFrameRateSpin");
+    QLineEdit* cameraInterface = dialog.findChild<QLineEdit*>("cameraInterfaceEdit");
+    expect(directory && exposure && frameRate && cameraInterface,
+        "device controls must exist");
+    expect(directory->isReadOnly() && cameraInterface->isReadOnly(),
+        "camera path and identity summary must be read-only");
+    expect(exposure->value() == 14000, "camera exposure must populate");
+    expect(std::abs(frameRate->value() - 7.5) < 1e-9, "camera frame rate must populate");
+    expect(dialog.findChild<QPushButton*>("engineerSettingsButton") != nullptr,
+        "device page must expose engineer settings");
+
+    exposure->setValue(13500);
+    const ProcessingSettings changed = dialog.settings();
+    expect(changed.camera.exposureValue == 13500, "camera exposure must collect");
+    dialog.setBusy(true);
+    expect(!dialog.findChild<QWidget*>("devicePage")->isEnabled(),
+        "busy state must disable device changes");
+}
+
+void testCameraInputUsesTypedSettings()
+{
+    CameraCaptureSettings settings;
+    settings.configDirectory = "C:/MergeHolo/config/084C";
+    settings.exposureMode = 1;
+    settings.exposureValue = 12345;
+    settings.frameRate = 7.0;
+    settings.cameraInterface = "571";
+    settings.cameraType = "Indigo";
+    settings.cameraId = 2;
+    settings.gpuId = 1;
+    settings.missedFrameThreshold = 77;
+
+    const LightFieldCapture::HoloInData input = makeCameraInput(settings);
+    expect(input.iHoloExposeMode == 1 && input.iHoloExposeVal == 12345,
+        "camera input must use typed exposure settings");
+    expect(std::abs(input.dHoloFrameRate - 7.0) < 1e-9,
+        "camera input must use typed frame rate");
+    expect(input.strCamSeri == "571" && input.strCamType == "Indigo",
+        "camera input must use typed camera identity");
+    expect(input.iHoloId == 2 && input.iGpuId == 1 && input.iHoloMissThreshold == 77,
+        "camera input must use typed engineer settings");
+    expect(!input.bIsReadTeamptureBySerial && input.strSerialPort.empty(),
+        "disabled temperature serial settings must retain safe defaults");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -384,6 +444,8 @@ int main(int argc, char* argv[])
     testCommonPageBindingsAndDerivedSummary();
     testImagingPageBindings();
     testAdvancedPageBindingsAndHardwareAdaptiveState();
+    testDevicePageBindingsAndBusyState();
+    testCameraInputUsesTypedSettings();
     std::cout << "processing settings tests passed" << std::endl;
     return 0;
 }

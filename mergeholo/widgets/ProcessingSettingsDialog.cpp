@@ -4,9 +4,11 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -91,6 +93,7 @@ ProcessingSettingsDialog::ProcessingSettingsDialog(QWidget* parent)
     buildCommonPage();
     buildImagingPage();
     buildAdvancedPage();
+    buildDevicePage();
     buildPlaceholderPages();
     ui_->settingsNavigation->setCurrentRow(0);
 
@@ -121,6 +124,7 @@ void ProcessingSettingsDialog::setSettings(const ProcessingSettings& settings)
     populateCommonPage();
     populateImagingPage();
     populateAdvancedPage();
+    populateDevicePage();
 }
 
 ProcessingSettings ProcessingSettingsDialog::settings() const
@@ -129,6 +133,7 @@ ProcessingSettings ProcessingSettingsDialog::settings() const
     collectCommonPage(&result);
     collectImagingPage(&result);
     collectAdvancedPage(&result);
+    collectDevicePage(&result);
     return result;
 }
 
@@ -242,9 +247,6 @@ void ProcessingSettingsDialog::buildCommonPage()
 
 void ProcessingSettingsDialog::buildPlaceholderPages()
 {
-    ui_->devicePageLayout->addWidget(new QLabel(
-        QString::fromUtf8("相机连接和采集参数将在此页设置。"), ui_->devicePage));
-    ui_->devicePageLayout->addStretch();
 }
 
 void ProcessingSettingsDialog::buildImagingPage()
@@ -378,6 +380,92 @@ void ProcessingSettingsDialog::buildAdvancedPage()
         this, &ProcessingSettingsDialog::updateHardwareAdaptiveState);
 }
 
+void ProcessingSettingsDialog::buildDevicePage()
+{
+    auto* connectionGroup = new QGroupBox(QString::fromUtf8("相机连接"), ui_->devicePage);
+    auto* connectionLayout = new QFormLayout(connectionGroup);
+    auto* preset = new QComboBox(connectionGroup);
+    preset->setObjectName("cameraPresetCombo");
+    preset->addItem(QString::fromUtf8("084C 默认方案"));
+    connectionLayout->addRow(QString::fromUtf8("配置方案"), preset);
+
+    auto* directoryRow = new QWidget(connectionGroup);
+    auto* directoryLayout = new QHBoxLayout(directoryRow);
+    directoryLayout->setContentsMargins(0, 0, 0, 0);
+    directoryLayout->addWidget(pathEdit(directoryRow, "cameraConfigDirectoryEdit"), 1);
+    directoryLayout->addWidget(browseButton(directoryRow, "cameraConfigBrowseButton"));
+    connectionLayout->addRow(QString::fromUtf8("配置目录"), directoryRow);
+    auto* status = new QLabel(QString::fromUtf8("尚未检查相机配置"), connectionGroup);
+    status->setObjectName("cameraStatusLabel");
+    connectionLayout->addRow(QString(), status);
+
+    auto* connectionButtons = new QWidget(connectionGroup);
+    auto* connectionButtonsLayout = new QHBoxLayout(connectionButtons);
+    connectionButtonsLayout->setContentsMargins(0, 0, 0, 0);
+    auto* testButton = new QPushButton(QString::fromUtf8("测试连接"), connectionButtons);
+    testButton->setObjectName("testCameraButton");
+    auto* reinitializeButton = new QPushButton(QString::fromUtf8("重新初始化"), connectionButtons);
+    reinitializeButton->setObjectName("reinitializeCameraButton");
+    connectionButtonsLayout->addWidget(testButton);
+    connectionButtonsLayout->addWidget(reinitializeButton);
+    connectionButtonsLayout->addStretch();
+    connectionLayout->addRow(QString(), connectionButtons);
+    ui_->devicePageLayout->addWidget(connectionGroup);
+
+    auto* captureGroup = new QGroupBox(QString::fromUtf8("采集参数"), ui_->devicePage);
+    auto* captureLayout = new QFormLayout(captureGroup);
+    auto* exposureMode = new QComboBox(captureGroup);
+    exposureMode->setObjectName("cameraExposureModeCombo");
+    exposureMode->addItem(QString::fromUtf8("手动"), 1);
+    captureLayout->addRow(QString::fromUtf8("曝光模式"), exposureMode);
+    captureLayout->addRow(QString::fromUtf8("曝光值"),
+        integerSpin(captureGroup, "cameraExposureValueSpin", 0, 2147483647));
+    auto* frameRate = decimalSpin(captureGroup, "cameraFrameRateSpin", 0.1, 1000.0, 1, 0.5);
+    frameRate->setSuffix(QString::fromUtf8(" fps"));
+    captureLayout->addRow(QString::fromUtf8("帧率"), frameRate);
+    captureLayout->addRow(QString(),
+        new QLabel(QString::fromUtf8("修改后需要重新初始化相机"), captureGroup));
+    ui_->devicePageLayout->addWidget(captureGroup);
+
+    auto* infoGroup = new QGroupBox(QString::fromUtf8("相机信息"), ui_->devicePage);
+    auto* infoLayout = new QFormLayout(infoGroup);
+    auto addInfoRow = [infoGroup, infoLayout](const QString& label, const char* name) {
+        QLineEdit* edit = pathEdit(infoGroup, name);
+        infoLayout->addRow(label, edit);
+    };
+    addInfoRow(QString::fromUtf8("相机接口"), "cameraInterfaceEdit");
+    addInfoRow(QString::fromUtf8("相机类型"), "cameraTypeEdit");
+    addInfoRow(QString::fromUtf8("相机编号"), "cameraIdEdit");
+    addInfoRow(QString::fromUtf8("GPU"), "cameraGpuEdit");
+    auto* engineer = new QPushButton(QString::fromUtf8("工程师设置..."), infoGroup);
+    engineer->setObjectName("engineerSettingsButton");
+    infoLayout->addRow(QString(), engineer);
+    ui_->devicePageLayout->addWidget(infoGroup);
+    auto* idleHint = new QLabel(
+        QString::fromUtf8("设备设置仅在空闲状态下可以修改"), ui_->devicePage);
+    idleHint->setAlignment(Qt::AlignRight);
+    ui_->devicePageLayout->addWidget(idleHint);
+    ui_->devicePageLayout->addStretch();
+
+    connect(findChild<QPushButton*>("cameraConfigBrowseButton"), &QPushButton::clicked,
+        this, &ProcessingSettingsDialog::browseCameraDirectory);
+    connect(engineer, &QPushButton::clicked,
+        this, &ProcessingSettingsDialog::openEngineerSettings);
+    connect(testButton, &QPushButton::clicked, this, [this] {
+        const QDir directory(findChild<QLineEdit*>("cameraConfigDirectoryEdit")->text());
+        const bool valid = directory.exists()
+            && QFileInfo(directory.filePath("jp.xml")).isFile()
+            && QFileInfo(directory.filePath("param.txt")).isFile()
+            && !directory.entryList({ "*.cen" }, QDir::Files).isEmpty();
+        findChild<QLabel*>("cameraStatusLabel")->setText(valid
+            ? QString::fromUtf8("配置目录有效，可以重新初始化相机")
+            : QString::fromUtf8("配置目录无效，请检查标定文件"));
+    });
+    connect(reinitializeButton, &QPushButton::clicked, this, [this] {
+        emit cameraReinitializeRequested(settings().camera);
+    });
+}
+
 void ProcessingSettingsDialog::populateImagingPage()
 {
     const PipelineUiSettings& p = draft_.pipeline;
@@ -414,6 +502,22 @@ void ProcessingSettingsDialog::populateAdvancedPage()
     updateHardwareAdaptiveState();
 }
 
+void ProcessingSettingsDialog::populateDevicePage()
+{
+    const CameraCaptureSettings& camera = draft_.camera;
+    findChild<QLineEdit*>("cameraConfigDirectoryEdit")->setText(
+        QDir::toNativeSeparators(camera.configDirectory));
+    QComboBox* exposureMode = findChild<QComboBox*>("cameraExposureModeCombo");
+    exposureMode->setCurrentIndex(std::max(0, exposureMode->findData(camera.exposureMode)));
+    findChild<QSpinBox*>("cameraExposureValueSpin")->setValue(camera.exposureValue);
+    findChild<QDoubleSpinBox*>("cameraFrameRateSpin")->setValue(camera.frameRate);
+    findChild<QLineEdit*>("cameraInterfaceEdit")->setText(camera.cameraInterface);
+    findChild<QLineEdit*>("cameraTypeEdit")->setText(camera.cameraType);
+    findChild<QLineEdit*>("cameraIdEdit")->setText(QString::number(camera.cameraId));
+    findChild<QLineEdit*>("cameraGpuEdit")->setText(QString::number(camera.gpuId));
+    findChild<QLabel*>("cameraStatusLabel")->setText(QString::fromUtf8("配置目录待应用"));
+}
+
 void ProcessingSettingsDialog::collectImagingPage(ProcessingSettings* settings) const
 {
     PipelineUiSettings& p = settings->pipeline;
@@ -443,6 +547,19 @@ void ProcessingSettingsDialog::collectAdvancedPage(ProcessingSettings* settings)
     const bool adaptive = findChild<QCheckBox*>("hardwareAdaptiveCheck")->isChecked();
     settings->pipeline.atlasSize = adaptive ? 0 : findChild<QSpinBox*>("atlasSizeSpin")->value();
     settings->pipeline.writerThreads = adaptive ? 0 : findChild<QSpinBox*>("writerThreadsSpin")->value();
+}
+
+void ProcessingSettingsDialog::collectDevicePage(ProcessingSettings* settings) const
+{
+    CameraCaptureSettings& camera = settings->camera;
+    camera.configDirectory = findChild<QLineEdit*>("cameraConfigDirectoryEdit")->text();
+    camera.exposureMode = findChild<QComboBox*>("cameraExposureModeCombo")->currentData().toInt();
+    camera.exposureValue = findChild<QSpinBox*>("cameraExposureValueSpin")->value();
+    camera.frameRate = findChild<QDoubleSpinBox*>("cameraFrameRateSpin")->value();
+    camera.cameraInterface = findChild<QLineEdit*>("cameraInterfaceEdit")->text();
+    camera.cameraType = findChild<QLineEdit*>("cameraTypeEdit")->text();
+    camera.cameraId = findChild<QLineEdit*>("cameraIdEdit")->text().toInt();
+    camera.gpuId = findChild<QLineEdit*>("cameraGpuEdit")->text().toInt();
 }
 
 void ProcessingSettingsDialog::updateHardwareAdaptiveState()
@@ -536,6 +653,63 @@ void ProcessingSettingsDialog::browseOutputDirectory()
     }
 }
 
+void ProcessingSettingsDialog::browseCameraDirectory()
+{
+    const QString directory = QFileDialog::getExistingDirectory(
+        this, QString::fromUtf8("选择相机配置目录"),
+        findChild<QLineEdit*>("cameraConfigDirectoryEdit")->text());
+    if (!directory.isEmpty()) {
+        findChild<QLineEdit*>("cameraConfigDirectoryEdit")->setText(
+            QDir::toNativeSeparators(directory));
+        findChild<QLabel*>("cameraStatusLabel")->setText(
+            QString::fromUtf8("配置目录已更改，尚未检查"));
+    }
+}
+
+void ProcessingSettingsDialog::openEngineerSettings()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(QString::fromUtf8("相机工程师设置"));
+    auto* root = new QVBoxLayout(&dialog);
+    auto* warning = new QLabel(
+        QString::fromUtf8("这些参数直接影响相机驱动和数据解析，请确认设备资料后修改。"),
+        &dialog);
+    warning->setWordWrap(true);
+    root->addWidget(warning);
+    auto* form = new QFormLayout;
+    auto* cameraInterface = new QLineEdit(
+        findChild<QLineEdit*>("cameraInterfaceEdit")->text(), &dialog);
+    auto* cameraType = new QLineEdit(
+        findChild<QLineEdit*>("cameraTypeEdit")->text(), &dialog);
+    auto* cameraId = integerSpin(&dialog, "engineerCameraIdSpin", 0, 1024);
+    cameraId->setValue(findChild<QLineEdit*>("cameraIdEdit")->text().toInt());
+    auto* gpuId = integerSpin(&dialog, "engineerGpuIdSpin", 0, 64);
+    gpuId->setValue(findChild<QLineEdit*>("cameraGpuEdit")->text().toInt());
+    auto* missed = integerSpin(&dialog, "engineerMissedFrameSpin", 0, 1000000);
+    missed->setValue(draft_.camera.missedFrameThreshold);
+    form->addRow(QString::fromUtf8("相机接口"), cameraInterface);
+    form->addRow(QString::fromUtf8("相机类型"), cameraType);
+    form->addRow(QString::fromUtf8("相机编号"), cameraId);
+    form->addRow(QString::fromUtf8("GPU"), gpuId);
+    form->addRow(QString::fromUtf8("丢帧阈值"), missed);
+    root->addLayout(form);
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QString::fromUtf8("确定"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QString::fromUtf8("取消"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    root->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    findChild<QLineEdit*>("cameraInterfaceEdit")->setText(cameraInterface->text().trimmed());
+    findChild<QLineEdit*>("cameraTypeEdit")->setText(cameraType->text().trimmed());
+    findChild<QLineEdit*>("cameraIdEdit")->setText(QString::number(cameraId->value()));
+    findChild<QLineEdit*>("cameraGpuEdit")->setText(QString::number(gpuId->value()));
+    draft_.camera.missedFrameThreshold = missed->value();
+}
+
 void ProcessingSettingsDialog::restoreCurrentPageDefaults()
 {
     const QString outputRoot = draft_.pipeline.outputRoot;
@@ -571,5 +745,9 @@ void ProcessingSettingsDialog::restoreCurrentPageDefaults()
         draft_.pipeline.atlasSize = defaults.pipeline.atlasSize;
         draft_.pipeline.writerThreads = defaults.pipeline.writerThreads;
         populateAdvancedPage();
+    }
+    else if (selectedPage_ == 3) {
+        draft_.camera = defaults.camera;
+        populateDevicePage();
     }
 }

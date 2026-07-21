@@ -111,3 +111,24 @@ QString validateProcessingSettings(const ProcessingSettings& settings)
 
     return {};
 }
+
+LightFieldCapture::HoloInData makeCameraInput(const CameraCaptureSettings& settings)
+{
+    LightFieldCapture::HoloInData input;
+    input.iHoloExposeMode = settings.exposureMode;
+    input.iHoloExposeVal = settings.exposureValue;
+    input.iHoloId = settings.cameraId;
+    input.dHoloFrameRate = settings.frameRate;
+    input.iHoloMissThreshold = settings.missedFrameThreshold;
+    input.bIsReadTeamptureBySerial = false;
+    input.strSerialPort.clear();
+    input.iSerialBaudRate = 9600;
+    input.iSerialDataBits = 8;
+    input.iSerialStopBits = 1;
+    input.iSerialParity = 0;
+    input.strParseCfgPath = QDir::fromNativeSeparators(settings.configDirectory).toStdString();
+    input.iGpuId = settings.gpuId;
+    input.strCamSeri = settings.cameraInterface.toStdString();
+    input.strCamType = settings.cameraType.toStdString();
+    return input;
+}

@@ -9,6 +9,8 @@ win32:QMAKE_CXXFLAGS += /source-charset:utf-8 /execution-charset:utf-8
 
 INCLUDEPATH += \
     .. \
+    ../../camera \
+    ../../camera/CommonFiles \
     ../../settings \
     ../../pipeline \
     ../../vendor/multiview

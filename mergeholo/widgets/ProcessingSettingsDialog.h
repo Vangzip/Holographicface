@@ -28,23 +28,29 @@ public slots:
 
 signals:
     void printRequested();
+    void cameraReinitializeRequested(const CameraCaptureSettings& settings);
 
 private:
     void buildCommonPage();
     void buildImagingPage();
     void buildAdvancedPage();
+    void buildDevicePage();
     void buildPlaceholderPages();
     void populateCommonPage();
     void populateImagingPage();
     void populateAdvancedPage();
+    void populateDevicePage();
     void collectCommonPage(ProcessingSettings* settings) const;
     void collectImagingPage(ProcessingSettings* settings) const;
     void collectAdvancedPage(ProcessingSettings* settings) const;
+    void collectDevicePage(ProcessingSettings* settings) const;
     void updateInputState();
     void updateDerivedSummary();
     void updateHardwareAdaptiveState();
     void browseInputDirectory();
     void browseOutputDirectory();
+    void browseCameraDirectory();
+    void openEngineerSettings();
     void restoreCurrentPageDefaults();
 
     std::unique_ptr<Ui::ProcessingSettingsDialog> ui_;

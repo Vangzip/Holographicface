@@ -5,6 +5,7 @@
 #include <pcl/common/point_tests.h>
 #include <pcl/surface/simplification_remove_unused_vertices.h>
 #include <memory>
+#include <utility>
 
 
 ConverPointCloud::ConverPointCloud(){
@@ -45,6 +46,68 @@ string ConverPointCloud::buildMeshOutputPath(const string &srcfile, const string
     }
 
     return FileLibrary::getInstance()->combineFilePath(m_strMeshOutputDir, baseName + suffix);
+}
+
+bool ConverPointCloud::loadPointCloud(
+    const string &path,
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud) const
+{
+    cloud.reset(new pcl::PointCloud<pcl::PointXYZRGB>);
+    if (pcl::io::loadPLYFile(path, *cloud) != 0)
+    {
+        cout << COUT_PREFIX << "load ply false. file = " << path << endl;
+        return false;
+    }
+    if (cloud->empty())
+    {
+        cout << COUT_PREFIX << "point cloud file is empty. file = " << path << endl;
+        return false;
+    }
+
+    cout << COUT_PREFIX << "read ply file ok . point size = " << cloud->size() << endl;
+    return true;
+}
+
+bool ConverPointCloud::saveMesh(const pcl::PolygonMesh &mesh, const string &path) const
+{
+    if (mesh.cloud.data.empty() || mesh.polygons.empty())
+    {
+        cout << COUT_PREFIX << "refusing to save an empty mesh. file = " << path << endl;
+        return false;
+    }
+    if (pcl::io::savePLYFile(path, mesh) != 0)
+    {
+        cout << COUT_PREFIX << "save mesh ply file false. file = " << path << endl;
+        return false;
+    }
+    return true;
+}
+
+bool ConverPointCloud::reconstructMeshFromCloud(
+    const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,
+    pcl::PolygonMesh &meshOut)
+{
+    meshOut = pcl::PolygonMesh();
+    if (!cloud || cloud->empty())
+    {
+        cout << COUT_PREFIX << "Error: Point cloud memory is empty." << endl;
+        return false;
+    }
+
+    if (m_type == 1)
+    {
+        cout << COUT_PREFIX << "Reconstruction type: Poisson" << endl;
+        return createPoissonMeshFromCloud(cloud, meshOut);
+    }
+    if (m_type == 2)
+    {
+        cout << COUT_PREFIX << "Reconstruction type: GreedyProjectionTriangulation" << endl;
+        return createGreedMeshFromCloud(cloud, meshOut);
+    }
+
+    cout << COUT_PREFIX << "Error: Unknown reconstruction type: " << m_type << endl;
+    cout << COUT_PREFIX << "Valid values: 1=Poisson, 2=GreedyProjectionTriangulation" << endl;
+    return false;
 }
 
 
@@ -295,6 +358,7 @@ bool ConverPointCloud::createPoissonMeshFromCloud(
 }
 
 //娉婃澗绠楁硶鐢熸垚mesh
+#if 0
 bool ConverPointCloud::createPoissonMesh(const string &filepath){
     std::string srcfile = filepath;
 
@@ -615,6 +679,8 @@ bool ConverPointCloud::createPoissonMesh(const string &filepath){
 
 #endif
 
+#endif
+
 int mysaveOBJFile(const std::string &file_name, const pcl::PolygonMesh &mesh, unsigned precision)
 {
     if (mesh.cloud.data.empty())
@@ -777,10 +843,9 @@ int mysaveOBJFile(const std::string &file_name, const pcl::PolygonMesh &mesh, un
 
 bool ConverPointCloud::createGreedMeshFromCloud(
     const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &inputCloud,
-    const string &srcfile,
-    pcl::PolygonMesh *meshOut,
-    bool writeMeshFile)
+    pcl::PolygonMesh &meshOut)
 {
+    meshOut = pcl::PolygonMesh();
     if (!inputCloud || inputCloud->points.empty())
     {
         cout << COUT_PREFIX << "input point cloud is empty." << endl;
@@ -880,24 +945,17 @@ bool ConverPointCloud::createGreedMeshFromCloud(
 
     cout << COUT_PREFIX << "mesh reconstruct ok . point size:" << triangles->cloud.height * triangles->cloud.width << "\tpolygons:" << triangles->polygons.size() << endl;
 
-    std::unique_ptr<pcl::PolygonMesh> meshPoly(new pcl::PolygonMesh);
-    fillHole(*triangles, *meshPoly);
-
-    m_strOutModelPath = buildMeshOutputPath(srcfile, "_mesh.ply");
-    if (writeMeshFile && pcl::io::savePLYFile(m_strOutModelPath, *meshPoly) != 0)
+    pcl::PolygonMesh postProcessed;
+    fillHole(*triangles, postProcessed);
+    if (postProcessed.cloud.data.empty() || postProcessed.polygons.empty())
     {
-        cout << "save mesh ply file false. file= " << FileLibrary::getInstance()->getFileNameFromPath(m_strOutModelPath) << endl;
+        cout << COUT_PREFIX << "Greedy post-processing produced an empty mesh." << endl;
         releaseGreedyProjection();
         ne.reset();
         return false;
     }
+    meshOut = std::move(postProcessed);
 
-    if (meshOut)
-    {
-        *meshOut = *meshPoly;
-    }
-
-    meshPoly.reset();
     triangles.reset();
     releaseGreedyProjection();
     ne.reset();
@@ -906,6 +964,7 @@ bool ConverPointCloud::createGreedMeshFromCloud(
 }
 
 //璐┆绠楁硶鐢熸垚mesh
+#if 0
 bool ConverPointCloud::createGreedMesh(const string &filepath){
     std::string srcfile = filepath;
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_rgb(new pcl::PointCloud<pcl::PointXYZRGB>);
@@ -1119,6 +1178,7 @@ bool ConverPointCloud::createGreedMesh(const string &filepath){
 
     return true;
 }
+#endif
 
 
 #if 0
@@ -1300,28 +1360,18 @@ bool ConverPointCloud::meshAPI(const string &flypath, const string &config, cons
     }
     m_strMeshOutputDir = outputDir;
 
-    cout << COUT_PREFIX << "Reconstruction type: " << (m_type == 1 ? "Poisson" : "GreedyProjectionTriangulation") << endl;
-
-    bool result = false;
-    if (m_type == 1) {
-        result = createPoissonMesh(flypath);
-        if (!result) {
-            cout << COUT_PREFIX << "Poisson reconstruction failed. You may want to try GreedyProjectionTriangulation (set reconstruct=2 in config)." << endl;
-        }
-    }
-    else if (m_type == 2) {
-        result = createGreedMesh(flypath);
-        if (!result) {
-            cout << COUT_PREFIX << "GreedyProjectionTriangulation failed." << endl;
-        }
-    }
-    else {
-        cout << COUT_PREFIX << "Error: Unknown reconstruction type: " << m_type << endl;
-        cout << COUT_PREFIX << "Valid values: 1=Poisson, 2=GreedyProjectionTriangulation" << endl;
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
+    if (!loadPointCloud(flypath, cloud)) {
         return false;
     }
 
-    return result;
+    pcl::PolygonMesh reconstructed;
+    if (!reconstructMeshFromCloud(cloud, reconstructed)) {
+        return false;
+    }
+
+    m_strOutModelPath = buildMeshOutputPath(flypath, "_mesh.ply");
+    return saveMesh(reconstructed, m_strOutModelPath);
 }
 
 bool ConverPointCloud::meshAPIFromCloud(
@@ -1344,28 +1394,14 @@ bool ConverPointCloud::meshAPIFromCloud(
     }
     m_strMeshOutputDir = outputDir;
 
-    cout << COUT_PREFIX << "Reconstruction type: " << (m_type == 1 ? "Poisson" : "GreedyProjectionTriangulation") << endl;
-
     pcl::PolygonMesh reconstructed;
-    bool result = false;
-    if (m_type == 1) {
-        result = createPoissonMeshFromCloud(cloud, reconstructed);
-    }
-    else if (m_type == 2) {
-        result = createGreedMeshFromCloud(cloud, logicalFlypath, &reconstructed, false);
-    }
-    else {
-        cout << COUT_PREFIX << "Error: Unknown reconstruction type: " << m_type << endl;
+    if (!reconstructMeshFromCloud(cloud, reconstructed)) {
         return false;
     }
 
-    if (!result) {
-        return false;
-    }
+    m_strOutModelPath = buildMeshOutputPath(logicalFlypath, "_mesh.ply");
     if (writeMeshFile) {
-        m_strOutModelPath = buildMeshOutputPath(logicalFlypath, "_mesh.ply");
-        if (pcl::io::savePLYFile(m_strOutModelPath, reconstructed) != 0) {
-            cout << COUT_PREFIX << "Mesh output failed: " << m_strOutModelPath << endl;
+        if (!saveMesh(reconstructed, m_strOutModelPath)) {
             return false;
         }
     }

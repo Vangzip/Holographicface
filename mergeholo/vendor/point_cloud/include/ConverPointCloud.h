@@ -31,12 +31,17 @@ private:
 
 	bool parseArguments(const string &);
 
-	bool createGreedMesh(const string &);
+    bool loadPointCloud(
+        const string &path,
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud) const;
+    bool reconstructMeshFromCloud(
+        const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,
+        pcl::PolygonMesh &meshOut);
+    bool saveMesh(const pcl::PolygonMesh &mesh, const string &path) const;
+
     bool createGreedMeshFromCloud(
         const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,
-        const string &srcfile,
-        pcl::PolygonMesh *meshOut,
-        bool writeMeshFile);
+        pcl::PolygonMesh &meshOut);
 
 	bool createModel(const string &);
     bool createModelFromMesh(const pcl::PolygonMesh &mesh, const string &logicalMeshPath);
@@ -49,7 +54,6 @@ private:
 
     bool nearestKSearchNormal(pcl::PointCloud<PointXYZRGBNormal> &);
 
-    bool createPoissonMesh(const string &filepath);
     bool createPoissonMeshFromCloud(
         const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,
         pcl::PolygonMesh &meshOut);

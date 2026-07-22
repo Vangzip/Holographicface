@@ -1,5 +1,7 @@
 #include "ConverPointCloud.h"
 
+#include <pcl/io/ply_io.h>
+
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -111,6 +113,30 @@ pcl::PointCloud<pcl::PointXYZRGB>::Ptr makeSphereCloud()
     return cloud;
 }
 
+std::string readProjectFile(const fs::path& relativePath)
+{
+    const fs::path candidates[] = {
+        fs::current_path() / relativePath,
+        fs::current_path() / ".." / ".." / ".." / relativePath
+    };
+    for (const fs::path& candidate : candidates) {
+        std::ifstream input(candidate, std::ios::binary);
+        if (input) {
+            return std::string(
+                std::istreambuf_iterator<char>(input),
+                std::istreambuf_iterator<char>());
+        }
+    }
+    expect(false, "project source fixture could not be located");
+    return {};
+}
+
+std::size_t meshVertexCount(const pcl::PolygonMesh& mesh)
+{
+    return static_cast<std::size_t>(mesh.cloud.width)
+        * static_cast<std::size_t>(mesh.cloud.height);
+}
+
 void expectNoMeshFile(const fs::path& directory)
 {
     for (const fs::directory_entry& entry : fs::directory_iterator(directory)) {
@@ -155,6 +181,75 @@ void testUnknownMethodIsRejected()
         "unknown reconstruction method must fail");
 }
 
+void testReconstructionAlgorithmSignaturesHaveNoFileIo()
+{
+    const std::string header = readProjectFile(
+        "vendor/point_cloud/include/ConverPointCloud.h");
+    expect(header.find(
+        "bool createGreedMeshFromCloud(\n"
+        "        const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,\n"
+        "        pcl::PolygonMesh &meshOut);") != std::string::npos,
+        "Greedy reconstruction must accept only cloud input and mesh output");
+    expect(header.find("bool createGreedMesh(const string &);") == std::string::npos,
+        "Greedy file-oriented reconstruction duplicate must be removed");
+    expect(header.find("bool createPoissonMesh(const string &filepath);") == std::string::npos,
+        "Poisson file-oriented reconstruction duplicate must be removed");
+}
+
+void testGreedyFileAndMemoryAdaptersAreEquivalent()
+{
+    const TempDirectory temp;
+    const fs::path config = temp.writeConfig(2);
+    const auto cloud = makeSphereCloud();
+    const fs::path input = temp.path() / "sample_rgb.ply";
+    expect(pcl::io::savePLYFileBinary(input.string(), *cloud) == 0,
+        "test input PLY must be saved");
+
+    pcl::PolygonMesh memoryMesh;
+    ConverPointCloud memoryConverter;
+    expect(memoryConverter.meshAPIFromCloud(
+        cloud,
+        input.string(),
+        config.string(),
+        temp.path().string(),
+        &memoryMesh,
+        false),
+        "Greedy memory adapter must succeed");
+
+    ConverPointCloud fileConverter;
+    expect(fileConverter.meshAPI(
+        input.string(), config.string(), temp.path().string()),
+        "Greedy file adapter must succeed");
+
+    pcl::PolygonMesh fileMesh;
+    const fs::path output = temp.path() / "sample_mesh.ply";
+    expect(fs::exists(output), "file adapter must save sample_mesh.ply");
+    expect(pcl::io::loadPLYFile(output.string(), fileMesh) == 0,
+        "saved mesh must be readable");
+    expect(meshVertexCount(fileMesh) == meshVertexCount(memoryMesh),
+        "file and memory adapters must return the same vertex count");
+    expect(fileMesh.polygons.size() == memoryMesh.polygons.size(),
+        "file and memory adapters must return the same polygon count");
+}
+
+void testMemoryAdapterCanPersistReturnedMesh()
+{
+    const TempDirectory temp;
+    pcl::PolygonMesh mesh;
+    ConverPointCloud converter;
+    expect(converter.meshAPIFromCloud(
+        makeSphereCloud(),
+        (temp.path() / "persist_rgb.ply").string(),
+        temp.writeConfig(1).string(),
+        temp.path().string(),
+        &mesh,
+        true),
+        "Poisson memory adapter with persistence must succeed");
+    expect(fs::exists(temp.path() / "persist_mesh.ply"),
+        "memory adapter must save the already returned mesh when requested");
+    expect(!mesh.polygons.empty(), "persisted memory mesh must still be returned");
+}
+
 } // namespace
 
 int main()
@@ -162,6 +257,9 @@ int main()
     testMemoryReconstruction(2);
     testMemoryReconstruction(1);
     testUnknownMethodIsRejected();
+    testReconstructionAlgorithmSignaturesHaveNoFileIo();
+    testGreedyFileAndMemoryAdaptersAreEquivalent();
+    testMemoryAdapterCanPersistReturnedMesh();
     std::cout << "mesh reconstruction tests passed\n";
     return 0;
 }

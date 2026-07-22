@@ -48,6 +48,11 @@
 using namespace cv;
 using namespace std;
 
+bool cropPoissonMeshToPointCloudHull(
+    const pcl::PolygonMesh& inputMesh,
+    const pcl::PointCloud<pcl::PointXYZRGBNormal>::ConstPtr& sourceCloud,
+    pcl::PolygonMesh& outputMesh);
+
 
 /*!
  * \brief   The Logger class is used to store program messages in a log file.

@@ -50,6 +50,9 @@ private:
     bool nearestKSearchNormal(pcl::PointCloud<PointXYZRGBNormal> &);
 
     bool createPoissonMesh(const string &filepath);
+    bool createPoissonMeshFromCloud(
+        const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,
+        pcl::PolygonMesh &meshOut);
 
     bool normalsMovingLeastSquares(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, pcl::PointCloud<PointXYZRGBNormal> &);
 

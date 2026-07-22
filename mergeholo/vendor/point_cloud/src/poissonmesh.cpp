@@ -2,6 +2,104 @@
 
 #include <pcl/surface/simplification_remove_unused_vertices.h>
 #include <pcl\filters\crop_box.h>
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+bool cropPoissonMeshToPointCloudHull(
+    const pcl::PolygonMesh& inputMesh,
+    const pcl::PointCloud<pcl::PointXYZRGBNormal>::ConstPtr& sourceCloud,
+    pcl::PolygonMesh& outputMesh)
+{
+    outputMesh = pcl::PolygonMesh();
+    if (!sourceCloud || sourceCloud->empty()
+        || inputMesh.cloud.data.empty() || inputMesh.polygons.empty())
+    {
+        return false;
+    }
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr meshPoints(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::fromPCLPointCloud2(inputMesh.cloud, *meshPoints);
+    if (meshPoints->empty())
+    {
+        return false;
+    }
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr sourcePoints(new pcl::PointCloud<pcl::PointXYZ>);
+    sourcePoints->resize(sourceCloud->size());
+    sourcePoints->width = sourceCloud->width;
+    sourcePoints->height = sourceCloud->height;
+    sourcePoints->is_dense = sourceCloud->is_dense;
+    for (size_t i = 0; i < sourceCloud->size(); ++i)
+    {
+        (*sourcePoints)[i].x = (*sourceCloud)[i].x;
+        (*sourcePoints)[i].y = (*sourceCloud)[i].y;
+        (*sourcePoints)[i].z = (*sourceCloud)[i].z;
+    }
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr hullPoints(new pcl::PointCloud<pcl::PointXYZ>);
+    std::vector<pcl::Vertices> hullPolygons;
+    std::unique_ptr<pcl::ConvexHull<pcl::PointXYZ>> hull(
+        new pcl::ConvexHull<pcl::PointXYZ>);
+    hull->setDimension(3);
+    hull->setInputCloud(sourcePoints);
+    hull->reconstruct(*hullPoints, hullPolygons);
+    if (hullPoints->empty() || hullPolygons.empty())
+    {
+        hull.reset();
+        return false;
+    }
+
+    std::vector<int> insideIndices;
+    std::unique_ptr<pcl::CropHull<pcl::PointXYZ>> crop(
+        new pcl::CropHull<pcl::PointXYZ>);
+    crop->setCropOutside(true);
+    crop->setDim(3);
+    crop->setInputCloud(meshPoints);
+    crop->setHullIndices(hullPolygons);
+    crop->setHullCloud(hullPoints);
+    crop->filter(insideIndices);
+
+    std::vector<unsigned char> inside(meshPoints->size(), 0);
+    for (int index : insideIndices)
+    {
+        if (index >= 0 && static_cast<size_t>(index) < inside.size())
+        {
+            inside[static_cast<size_t>(index)] = 1;
+        }
+    }
+
+    pcl::PolygonMesh visible = inputMesh;
+    visible.polygons.clear();
+    visible.polygons.reserve(inputMesh.polygons.size());
+    for (const pcl::Vertices& face : inputMesh.polygons)
+    {
+        bool keep = face.vertices.size() >= 3;
+        for (std::uint32_t index : face.vertices)
+        {
+            if (index >= inside.size() || inside[index] == 0)
+            {
+                keep = false;
+                break;
+            }
+        }
+        if (keep)
+        {
+            visible.polygons.push_back(face);
+        }
+    }
+
+    crop.reset();
+    hull.reset();
+    if (visible.polygons.empty())
+    {
+        return false;
+    }
+
+    pcl::surface::SimplificationRemoveUnusedVertices cleaner;
+    cleaner.simplify(visible, outputMesh);
+    return !outputMesh.cloud.data.empty() && !outputMesh.polygons.empty();
+}
 
 texturemeshPoisson::texturemeshPoisson(const std::string &point_ply,const std::string &mesh_ply)
 {

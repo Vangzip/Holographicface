@@ -2,6 +2,7 @@
 
 #include "ConverPointCloud.h"
 #include "poissonmesh.hpp"
+#include <pcl/common/point_tests.h>
 #include <pcl/surface/simplification_remove_unused_vertices.h>
 #include <memory>
 
@@ -189,6 +190,110 @@ bool ConverPointCloud::parseArguments(const string &config){
 
 
 #if 1
+bool ConverPointCloud::createPoissonMeshFromCloud(
+    const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &inputCloud,
+    pcl::PolygonMesh &meshOut)
+{
+    meshOut = pcl::PolygonMesh();
+    if (!inputCloud || inputCloud->empty())
+    {
+        cout << COUT_PREFIX << "Poisson input is empty." << endl;
+        return false;
+    }
+
+    pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr filteredCloud = inputCloud;
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr voxelCloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+    if (m_leafsize != 0.0f)
+    {
+        pcl::VoxelGrid<pcl::PointXYZRGB> voxel;
+        voxel.setInputCloud(filteredCloud);
+        voxel.setLeafSize(m_leafsize, m_leafsize, m_leafsize);
+        voxel.filter(*voxelCloud);
+        if (voxelCloud->empty())
+        {
+            cout << COUT_PREFIX << "Poisson voxel filtering produced no points." << endl;
+            return false;
+        }
+        filteredCloud = voxelCloud;
+    }
+
+    pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
+    pcl::search::KdTree<pcl::PointXYZRGB>::Ptr normalTree(
+        new pcl::search::KdTree<pcl::PointXYZRGB>);
+    normalTree->setInputCloud(filteredCloud);
+    pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal> estimator;
+    estimator.setInputCloud(filteredCloud);
+    estimator.setSearchMethod(normalTree);
+    estimator.setRadiusSearch(0.01);
+    estimator.compute(*normals);
+    if (normals->size() != filteredCloud->size())
+    {
+        cout << COUT_PREFIX << "Poisson normal estimation size mismatch." << endl;
+        return false;
+    }
+
+    pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr cloudWithNormals(
+        new pcl::PointCloud<pcl::PointXYZRGBNormal>);
+    cloudWithNormals->resize(filteredCloud->size());
+    cloudWithNormals->width = filteredCloud->width;
+    cloudWithNormals->height = filteredCloud->height;
+    cloudWithNormals->is_dense = filteredCloud->is_dense;
+    for (size_t i = 0; i < filteredCloud->size(); ++i)
+    {
+        const pcl::PointXYZRGB& point = (*filteredCloud)[i];
+        const pcl::Normal& normal = (*normals)[i];
+        if (!pcl::isFinite(normal))
+        {
+            cout << COUT_PREFIX
+                 << "Poisson normal estimation produced a non-finite normal." << endl;
+            return false;
+        }
+
+        pcl::PointXYZRGBNormal& combined = (*cloudWithNormals)[i];
+        combined.x = point.x;
+        combined.y = point.y;
+        combined.z = point.z;
+        combined.r = point.r;
+        combined.g = point.g;
+        combined.b = point.b;
+        combined.normal_x = normal.normal_x;
+        combined.normal_y = normal.normal_y;
+        combined.normal_z = normal.normal_z;
+    }
+
+    pcl::search::KdTree<pcl::PointXYZRGBNormal>::Ptr tree(
+        new pcl::search::KdTree<pcl::PointXYZRGBNormal>);
+    tree->setInputCloud(cloudWithNormals);
+
+    pcl::PolygonMesh poissonMesh;
+    pcl::Poisson<pcl::PointXYZRGBNormal> poisson;
+    poisson.setConfidence(true);
+    poisson.setDegree(2);
+    poisson.setDepth(8);
+    poisson.setIsoDivide(8);
+    poisson.setManifold(true);
+    poisson.setOutputPolygons(false);
+    poisson.setSamplesPerNode(3);
+    poisson.setScale(1.1);
+    poisson.setSolverDivide(8);
+    poisson.setPointWeight(4.0);
+    poisson.setSearchMethod(tree);
+    poisson.setInputCloud(cloudWithNormals);
+    poisson.reconstruct(poissonMesh);
+    if (poissonMesh.cloud.data.empty() || poissonMesh.polygons.empty())
+    {
+        cout << COUT_PREFIX << "Poisson reconstruction produced an empty mesh." << endl;
+        return false;
+    }
+
+    if (!cropPoissonMeshToPointCloudHull(poissonMesh, cloudWithNormals, meshOut))
+    {
+        cout << COUT_PREFIX << "Poisson crop-hull post-processing failed." << endl;
+        return false;
+    }
+    return true;
+}
+
 //娉婃澗绠楁硶鐢熸垚mesh
 bool ConverPointCloud::createPoissonMesh(const string &filepath){
     std::string srcfile = filepath;
@@ -1241,16 +1346,33 @@ bool ConverPointCloud::meshAPIFromCloud(
 
     cout << COUT_PREFIX << "Reconstruction type: " << (m_type == 1 ? "Poisson" : "GreedyProjectionTriangulation") << endl;
 
-    if (m_type != 2) {
-        cout << COUT_PREFIX << "Error: Memory mesh path currently supports GreedyProjectionTriangulation only." << endl;
+    pcl::PolygonMesh reconstructed;
+    bool result = false;
+    if (m_type == 1) {
+        result = createPoissonMeshFromCloud(cloud, reconstructed);
+    }
+    else if (m_type == 2) {
+        result = createGreedMeshFromCloud(cloud, logicalFlypath, &reconstructed, false);
+    }
+    else {
+        cout << COUT_PREFIX << "Error: Unknown reconstruction type: " << m_type << endl;
         return false;
     }
 
-    const bool result = createGreedMeshFromCloud(cloud, logicalFlypath, meshOut, writeMeshFile);
     if (!result) {
-        cout << COUT_PREFIX << "GreedyProjectionTriangulation failed." << endl;
+        return false;
     }
-    return result;
+    if (writeMeshFile) {
+        m_strOutModelPath = buildMeshOutputPath(logicalFlypath, "_mesh.ply");
+        if (pcl::io::savePLYFile(m_strOutModelPath, reconstructed) != 0) {
+            cout << COUT_PREFIX << "Mesh output failed: " << m_strOutModelPath << endl;
+            return false;
+        }
+    }
+    if (meshOut) {
+        *meshOut = reconstructed;
+    }
+    return true;
 }
 
 //************************************

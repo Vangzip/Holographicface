@@ -53,6 +53,11 @@ bool cropPoissonMeshToPointCloudHull(
     const pcl::PointCloud<pcl::PointXYZRGBNormal>::ConstPtr& sourceCloud,
     pcl::PolygonMesh& outputMesh);
 
+bool transferPoissonMeshColors(
+    const pcl::PolygonMesh& inputMesh,
+    const pcl::PointCloud<pcl::PointXYZRGBNormal>::ConstPtr& sourceCloud,
+    pcl::PolygonMesh& outputMesh);
+
 
 /*!
  * \brief   The Logger class is used to store program messages in a log file.

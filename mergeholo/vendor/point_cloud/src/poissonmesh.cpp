@@ -2,9 +2,110 @@
 
 #include <pcl/surface/simplification_remove_unused_vertices.h>
 #include <pcl\filters\crop_box.h>
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <vector>
+
+bool transferPoissonMeshColors(
+    const pcl::PolygonMesh& inputMesh,
+    const pcl::PointCloud<pcl::PointXYZRGBNormal>::ConstPtr& sourceCloud,
+    pcl::PolygonMesh& outputMesh)
+{
+    outputMesh = pcl::PolygonMesh();
+    if (!sourceCloud || sourceCloud->empty()
+        || inputMesh.cloud.data.empty() || inputMesh.polygons.empty())
+    {
+        return false;
+    }
+
+    pcl::PointCloud<pcl::PointXYZ> meshPoints;
+    pcl::fromPCLPointCloud2(inputMesh.cloud, meshPoints);
+    if (meshPoints.empty())
+    {
+        return false;
+    }
+
+    pcl::KdTreeFLANN<pcl::PointXYZRGBNormal> tree;
+    tree.setInputCloud(sourceCloud);
+    const int neighborCount = static_cast<int>(
+        std::min<std::size_t>(3, sourceCloud->size()));
+    constexpr float exactMatchSquaredDistance = 1.0e-12f;
+
+    pcl::PointCloud<pcl::PointXYZRGB> coloredPoints;
+    coloredPoints.reserve(meshPoints.size());
+    coloredPoints.header = meshPoints.header;
+    coloredPoints.is_dense = meshPoints.is_dense;
+
+    std::vector<int> neighborIndices(neighborCount);
+    std::vector<float> squaredDistances(neighborCount);
+    for (const pcl::PointXYZ& meshPoint : meshPoints)
+    {
+        pcl::PointXYZRGBNormal query;
+        query.x = meshPoint.x;
+        query.y = meshPoint.y;
+        query.z = meshPoint.z;
+        const int found = tree.nearestKSearch(
+            query, neighborCount, neighborIndices, squaredDistances);
+        if (found <= 0)
+        {
+            return false;
+        }
+
+        pcl::PointXYZRGB colored;
+        colored.x = meshPoint.x;
+        colored.y = meshPoint.y;
+        colored.z = meshPoint.z;
+        colored.a = 255;
+        if (squaredDistances[0] <= exactMatchSquaredDistance)
+        {
+            const pcl::PointXYZRGBNormal& source =
+                (*sourceCloud)[neighborIndices[0]];
+            colored.r = source.r;
+            colored.g = source.g;
+            colored.b = source.b;
+        }
+        else
+        {
+            double weightSum = 0.0;
+            double red = 0.0;
+            double green = 0.0;
+            double blue = 0.0;
+            for (int i = 0; i < found; ++i)
+            {
+                const double weight =
+                    1.0 / std::sqrt(static_cast<double>(squaredDistances[i]));
+                const pcl::PointXYZRGBNormal& source =
+                    (*sourceCloud)[neighborIndices[i]];
+                weightSum += weight;
+                red += weight * source.r;
+                green += weight * source.g;
+                blue += weight * source.b;
+            }
+            if (!(weightSum > 0.0))
+            {
+                return false;
+            }
+            colored.r = static_cast<unsigned char>(std::clamp(
+                std::lround(red / weightSum), 0L, 255L));
+            colored.g = static_cast<unsigned char>(std::clamp(
+                std::lround(green / weightSum), 0L, 255L));
+            colored.b = static_cast<unsigned char>(std::clamp(
+                std::lround(blue / weightSum), 0L, 255L));
+        }
+        coloredPoints.push_back(colored);
+    }
+
+    coloredPoints.width = static_cast<std::uint32_t>(coloredPoints.size());
+    coloredPoints.height = 1;
+    outputMesh.header = inputMesh.header;
+    outputMesh.polygons = inputMesh.polygons;
+    pcl::toPCLPointCloud2(coloredPoints, outputMesh.cloud);
+    outputMesh.cloud.header = inputMesh.cloud.header;
+    return !outputMesh.cloud.data.empty()
+        && coloredPoints.size() == meshPoints.size();
+}
 
 bool cropPoissonMeshToPointCloudHull(
     const pcl::PolygonMesh& inputMesh,

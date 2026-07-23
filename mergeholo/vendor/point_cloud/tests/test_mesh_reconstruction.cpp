@@ -1,4 +1,5 @@
 #include "ConverPointCloud.h"
+#include "poissonmesh.hpp"
 
 #include <pcl/io/ply_io.h>
 
@@ -135,6 +136,105 @@ std::size_t meshVertexCount(const pcl::PolygonMesh& mesh)
 {
     return static_cast<std::size_t>(mesh.cloud.width)
         * static_cast<std::size_t>(mesh.cloud.height);
+}
+
+bool hasMeshField(const pcl::PolygonMesh& mesh, const std::string& name)
+{
+    for (const pcl::PCLPointField& field : mesh.cloud.fields) {
+        if (field.name == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr makeColorTransferSource()
+{
+    pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr source(
+        new pcl::PointCloud<pcl::PointXYZRGBNormal>);
+    const struct {
+        float x;
+        float y;
+        unsigned char r;
+        unsigned char g;
+        unsigned char b;
+    } values[] = {
+        {0.0f, 0.0f, 255, 0, 0},
+        {2.0f, 0.0f, 0, 255, 0},
+        {0.0f, 2.0f, 0, 0, 255}
+    };
+    for (const auto& value : values) {
+        pcl::PointXYZRGBNormal point;
+        point.x = value.x;
+        point.y = value.y;
+        point.z = 0.0f;
+        point.r = value.r;
+        point.g = value.g;
+        point.b = value.b;
+        point.normal_x = 0.0f;
+        point.normal_y = 0.0f;
+        point.normal_z = 1.0f;
+        source->push_back(point);
+    }
+    source->width = static_cast<std::uint32_t>(source->size());
+    source->height = 1;
+    source->is_dense = true;
+    return source;
+}
+
+pcl::PolygonMesh makeColorTransferMesh()
+{
+    pcl::PointCloud<pcl::PointXYZ> vertices;
+    vertices.push_back(pcl::PointXYZ(0.0f, 0.0f, 0.0f));
+    vertices.push_back(pcl::PointXYZ(1.0f, 1.0f, 0.0f));
+    vertices.push_back(pcl::PointXYZ(1.0f, 0.0f, 0.0f));
+    vertices.width = static_cast<std::uint32_t>(vertices.size());
+    vertices.height = 1;
+
+    pcl::PolygonMesh mesh;
+    pcl::toPCLPointCloud2(vertices, mesh.cloud);
+    pcl::Vertices triangle;
+    triangle.vertices = {0, 1, 2};
+    mesh.polygons.push_back(triangle);
+    return mesh;
+}
+
+void testPoissonColorTransferUsesSpatialNeighbors()
+{
+    const pcl::PolygonMesh geometry = makeColorTransferMesh();
+    pcl::PolygonMesh colored;
+    expect(transferPoissonMeshColors(
+        geometry, makeColorTransferSource(), colored),
+        "Poisson color transfer must succeed for a valid mesh and source cloud");
+    expect(hasMeshField(colored, "rgb"),
+        "Poisson color transfer must add the packed RGB field");
+    expect(meshVertexCount(colored) == meshVertexCount(geometry),
+        "Poisson color transfer must preserve vertex count");
+    expect(colored.polygons.size() == geometry.polygons.size()
+            && colored.polygons[0].vertices
+                == geometry.polygons[0].vertices,
+        "Poisson color transfer must preserve polygon indices");
+
+    pcl::PointCloud<pcl::PointXYZRGB> points;
+    pcl::fromPCLPointCloud2(colored.cloud, points);
+    expect(points[0].r == 255 && points[0].g == 0 && points[0].b == 0,
+        "an exact coordinate match must copy the exact source color");
+    expect(std::abs(static_cast<int>(points[1].r) - 85) <= 1
+            && std::abs(static_cast<int>(points[1].g) - 85) <= 1
+            && std::abs(static_cast<int>(points[1].b) - 85) <= 1,
+        "three equidistant neighbors must produce their average color");
+}
+
+void testPoissonColorTransferRejectsEmptySource()
+{
+    pcl::PolygonMesh colored;
+    pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr empty(
+        new pcl::PointCloud<pcl::PointXYZRGBNormal>);
+    expect(!transferPoissonMeshColors(
+        makeColorTransferMesh(), empty, colored),
+        "Poisson color transfer must reject an empty source cloud");
+    expect(colored.cloud.data.empty() && colored.polygons.empty(),
+        "failed Poisson color transfer must not return a partial mesh");
 }
 
 void expectNoMeshFile(const fs::path& directory)
@@ -282,6 +382,8 @@ void testMemoryAdapterCanPersistReturnedMesh()
 
 int main()
 {
+    testPoissonColorTransferUsesSpatialNeighbors();
+    testPoissonColorTransferRejectsEmptySource();
     testMemoryReconstruction(2);
     testMemoryReconstruction(1);
     testPoissonIgnoresIsolatedPointsWithInvalidNormals();

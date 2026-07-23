@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 
 #ifdef _WIN32
@@ -216,14 +217,30 @@ void testPoissonColorTransferUsesSpatialNeighbors()
                 == geometry.polygons[0].vertices,
         "Poisson color transfer must preserve polygon indices");
 
+    pcl::PointCloud<pcl::PointXYZ> geometryPoints;
+    pcl::fromPCLPointCloud2(geometry.cloud, geometryPoints);
     pcl::PointCloud<pcl::PointXYZRGB> points;
     pcl::fromPCLPointCloud2(colored.cloud, points);
+    expect(points.size() == geometryPoints.size(),
+        "Poisson color transfer must preserve the ordered vertex list");
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        expect(std::abs(points[i].x - geometryPoints[i].x) < 1.0e-6f
+                && std::abs(points[i].y - geometryPoints[i].y) < 1.0e-6f
+                && std::abs(points[i].z - geometryPoints[i].z) < 1.0e-6f,
+            "Poisson color transfer must preserve ordered XYZ coordinates");
+        expect(points[i].a == 255,
+            "Poisson color transfer must write an opaque alpha channel");
+    }
     expect(points[0].r == 255 && points[0].g == 0 && points[0].b == 0,
         "an exact coordinate match must copy the exact source color");
     expect(std::abs(static_cast<int>(points[1].r) - 85) <= 1
             && std::abs(static_cast<int>(points[1].g) - 85) <= 1
             && std::abs(static_cast<int>(points[1].b) - 85) <= 1,
         "three equidistant neighbors must produce their average color");
+    expect(std::abs(static_cast<int>(points[2].r) - 104) <= 1
+            && std::abs(static_cast<int>(points[2].g) - 104) <= 1
+            && std::abs(static_cast<int>(points[2].b) - 47) <= 1,
+        "non-equidistant neighbors must use inverse Euclidean distance weights");
 }
 
 void testPoissonColorTransferRejectsEmptySource()
@@ -236,6 +253,43 @@ void testPoissonColorTransferRejectsEmptySource()
         "Poisson color transfer must reject an empty source cloud");
     expect(colored.cloud.data.empty() && colored.polygons.empty(),
         "failed Poisson color transfer must not return a partial mesh");
+}
+
+void testPoissonColorTransferRejectsMalformedMeshSchema()
+{
+    pcl::PointCloud<pcl::Normal> normals;
+    normals.resize(3);
+    normals.width = 3;
+    normals.height = 1;
+
+    pcl::PolygonMesh malformed = makeColorTransferMesh();
+    pcl::toPCLPointCloud2(normals, malformed.cloud);
+    pcl::PolygonMesh colored;
+    expect(!transferPoissonMeshColors(
+        malformed, makeColorTransferSource(), colored),
+        "Poisson color transfer must reject a mesh without XYZ fields");
+    expect(colored.cloud.data.empty() && colored.polygons.empty(),
+        "malformed Poisson mesh input must fail without partial output");
+}
+
+void testPoissonColorTransferRejectsNonFiniteCoordinates()
+{
+    pcl::PointCloud<pcl::PointXYZ> vertices;
+    vertices.push_back(pcl::PointXYZ(
+        std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f));
+    vertices.push_back(pcl::PointXYZ(1.0f, 1.0f, 0.0f));
+    vertices.push_back(pcl::PointXYZ(1.0f, 0.0f, 0.0f));
+    vertices.width = 3;
+    vertices.height = 1;
+
+    pcl::PolygonMesh malformed = makeColorTransferMesh();
+    pcl::toPCLPointCloud2(vertices, malformed.cloud);
+    pcl::PolygonMesh colored;
+    expect(!transferPoissonMeshColors(
+        malformed, makeColorTransferSource(), colored),
+        "Poisson color transfer must reject non-finite vertex coordinates");
+    expect(colored.cloud.data.empty() && colored.polygons.empty(),
+        "non-finite Poisson mesh input must fail without partial output");
 }
 
 void testPoissonReconstructionReturnsAndPersistsRgb()
@@ -254,6 +308,20 @@ void testPoissonReconstructionReturnsAndPersistsRgb()
         "Poisson RGB integration reconstruction must succeed");
     expect(hasMeshField(mesh, "rgb"),
         "successful Poisson reconstruction must return RGB vertices");
+    pcl::PointCloud<pcl::PointXYZRGB> coloredPoints;
+    pcl::fromPCLPointCloud2(mesh.cloud, coloredPoints);
+    bool foundMeaningfulColor = false;
+    bool foundColorVariation = false;
+    for (const pcl::PointXYZRGB& point : coloredPoints) {
+        foundMeaningfulColor = foundMeaningfulColor
+            || point.r != 0 || point.g != 0 || point.b != 0;
+        foundColorVariation = foundColorVariation
+            || point.r != coloredPoints.front().r
+            || point.g != coloredPoints.front().g
+            || point.b != coloredPoints.front().b;
+    }
+    expect(foundMeaningfulColor && foundColorVariation,
+        "successful Poisson reconstruction must transfer meaningful RGB values");
     expect(pcl::io::savePLYFile(output.string(), mesh) == 0,
         "colored Poisson mesh must persist as PLY");
     const std::string ply = readProjectFile(output);
@@ -410,6 +478,8 @@ int main()
 {
     testPoissonColorTransferUsesSpatialNeighbors();
     testPoissonColorTransferRejectsEmptySource();
+    testPoissonColorTransferRejectsMalformedMeshSchema();
+    testPoissonColorTransferRejectsNonFiniteCoordinates();
     testPoissonReconstructionReturnsAndPersistsRgb();
     testMemoryReconstruction(2);
     testMemoryReconstruction(1);

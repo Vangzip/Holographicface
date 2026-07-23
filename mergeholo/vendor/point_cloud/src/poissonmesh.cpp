@@ -1,5 +1,6 @@
 ﻿#include "poissonmesh.hpp"
 
+#include <pcl/common/point_tests.h>
 #include <pcl/surface/simplification_remove_unused_vertices.h>
 #include <pcl\filters\crop_box.h>
 #include <algorithm>
@@ -7,6 +8,48 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+
+namespace {
+
+bool hasFloatCoordinateField(
+    const pcl::PCLPointCloud2& cloud,
+    const char* fieldName)
+{
+    for (const pcl::PCLPointField& field : cloud.fields)
+    {
+        if (field.name == fieldName)
+        {
+            return field.count == 1
+                && field.datatype == pcl::PCLPointField::FLOAT32
+                && field.offset + sizeof(float) <= cloud.point_step;
+        }
+    }
+    return false;
+}
+
+bool hasValidPointCloudLayout(const pcl::PCLPointCloud2& cloud)
+{
+    if (cloud.width == 0 || cloud.height == 0 || cloud.point_step == 0
+        || !hasFloatCoordinateField(cloud, "x")
+        || !hasFloatCoordinateField(cloud, "y")
+        || !hasFloatCoordinateField(cloud, "z"))
+    {
+        return false;
+    }
+
+    const std::uint64_t minimumRowBytes =
+        static_cast<std::uint64_t>(cloud.width) * cloud.point_step;
+    if (cloud.row_step < minimumRowBytes)
+    {
+        return false;
+    }
+    const std::uint64_t requiredBytes =
+        static_cast<std::uint64_t>(cloud.height - 1) * cloud.row_step
+        + minimumRowBytes;
+    return requiredBytes <= cloud.data.size();
+}
+
+} // namespace
 
 bool transferPoissonMeshColors(
     const pcl::PolygonMesh& inputMesh,
@@ -19,12 +62,33 @@ bool transferPoissonMeshColors(
     {
         return false;
     }
+    if (!hasValidPointCloudLayout(inputMesh.cloud))
+    {
+        return false;
+    }
 
     pcl::PointCloud<pcl::PointXYZ> meshPoints;
     pcl::fromPCLPointCloud2(inputMesh.cloud, meshPoints);
-    if (meshPoints.empty())
+    const std::size_t expectedPointCount =
+        static_cast<std::size_t>(inputMesh.cloud.width)
+        * static_cast<std::size_t>(inputMesh.cloud.height);
+    if (meshPoints.size() != expectedPointCount)
     {
         return false;
+    }
+    for (const pcl::PointXYZ& point : meshPoints)
+    {
+        if (!pcl::isFinite(point))
+        {
+            return false;
+        }
+    }
+    for (const pcl::PointXYZRGBNormal& point : *sourceCloud)
+    {
+        if (!pcl::isFinite(point))
+        {
+            return false;
+        }
     }
 
     pcl::KdTreeFLANN<pcl::PointXYZRGBNormal> tree;

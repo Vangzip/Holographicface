@@ -360,9 +360,17 @@ bool ConverPointCloud::createPoissonMeshFromCloud(
         return false;
     }
 
-    if (!cropPoissonMeshToPointCloudHull(poissonMesh, cloudWithNormals, meshOut))
+    pcl::PolygonMesh croppedMesh;
+    if (!cropPoissonMeshToPointCloudHull(
+            poissonMesh, cloudWithNormals, croppedMesh))
     {
         cout << COUT_PREFIX << "Poisson crop-hull post-processing failed." << endl;
+        return false;
+    }
+    if (!transferPoissonMeshColors(croppedMesh, cloudWithNormals, meshOut))
+    {
+        meshOut = pcl::PolygonMesh();
+        cout << COUT_PREFIX << "Poisson color transfer failed." << endl;
         return false;
     }
     return true;

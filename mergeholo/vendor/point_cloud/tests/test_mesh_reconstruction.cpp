@@ -117,6 +117,7 @@ pcl::PointCloud<pcl::PointXYZRGB>::Ptr makeSphereCloud()
 std::string readProjectFile(const fs::path& relativePath)
 {
     const fs::path candidates[] = {
+        relativePath,
         fs::current_path() / relativePath,
         fs::current_path() / ".." / ".." / ".." / relativePath
     };
@@ -235,6 +236,31 @@ void testPoissonColorTransferRejectsEmptySource()
         "Poisson color transfer must reject an empty source cloud");
     expect(colored.cloud.data.empty() && colored.polygons.empty(),
         "failed Poisson color transfer must not return a partial mesh");
+}
+
+void testPoissonReconstructionReturnsAndPersistsRgb()
+{
+    const TempDirectory temp;
+    const fs::path output = temp.path() / "colored_mesh.ply";
+    pcl::PolygonMesh mesh;
+    ConverPointCloud converter;
+    expect(converter.meshAPIFromCloud(
+        makeSphereCloud(),
+        (temp.path() / "colored_rgb.ply").string(),
+        temp.writeConfig(1).string(),
+        temp.path().string(),
+        &mesh,
+        false),
+        "Poisson RGB integration reconstruction must succeed");
+    expect(hasMeshField(mesh, "rgb"),
+        "successful Poisson reconstruction must return RGB vertices");
+    expect(pcl::io::savePLYFile(output.string(), mesh) == 0,
+        "colored Poisson mesh must persist as PLY");
+    const std::string ply = readProjectFile(output);
+    expect(ply.find("property uchar red") != std::string::npos
+            && ply.find("property uchar green") != std::string::npos
+            && ply.find("property uchar blue") != std::string::npos,
+        "persisted Poisson PLY must expose red, green, and blue properties");
 }
 
 void expectNoMeshFile(const fs::path& directory)
@@ -384,6 +410,7 @@ int main()
 {
     testPoissonColorTransferUsesSpatialNeighbors();
     testPoissonColorTransferRejectsEmptySource();
+    testPoissonReconstructionReturnsAndPersistsRgb();
     testMemoryReconstruction(2);
     testMemoryReconstruction(1);
     testPoissonIgnoresIsolatedPointsWithInvalidNormals();

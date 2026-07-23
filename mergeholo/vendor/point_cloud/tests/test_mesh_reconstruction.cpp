@@ -166,6 +166,34 @@ void testMemoryReconstruction(int method)
     expectNoMeshFile(temp.path());
 }
 
+void testPoissonIgnoresIsolatedPointsWithInvalidNormals()
+{
+    const TempDirectory temp;
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud = makeSphereCloud();
+    pcl::PointXYZRGB isolated;
+    isolated.x = 1.0f;
+    isolated.y = 1.0f;
+    isolated.z = 1.0f;
+    isolated.r = 255;
+    isolated.g = 0;
+    isolated.b = 0;
+    cloud->push_back(isolated);
+    cloud->width = static_cast<std::uint32_t>(cloud->size());
+
+    pcl::PolygonMesh mesh;
+    ConverPointCloud converter;
+    expect(converter.meshAPIFromCloud(
+        cloud,
+        (temp.path() / "isolated_rgb.ply").string(),
+        temp.writeConfig(1).string(),
+        temp.path().string(),
+        &mesh,
+        false),
+        "Poisson reconstruction must ignore isolated points with invalid normals");
+    expect(!mesh.polygons.empty(),
+        "Poisson reconstruction must retain the valid connected surface");
+}
+
 void testUnknownMethodIsRejected()
 {
     const TempDirectory temp;
@@ -256,6 +284,7 @@ int main()
 {
     testMemoryReconstruction(2);
     testMemoryReconstruction(1);
+    testPoissonIgnoresIsolatedPointsWithInvalidNormals();
     testUnknownMethodIsRejected();
     testReconstructionAlgorithmSignaturesHaveNoFileIo();
     testGreedyFileAndMemoryAdaptersAreEquivalent();

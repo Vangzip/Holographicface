@@ -297,22 +297,19 @@ bool ConverPointCloud::createPoissonMeshFromCloud(
 
     pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr cloudWithNormals(
         new pcl::PointCloud<pcl::PointXYZRGBNormal>);
-    cloudWithNormals->resize(filteredCloud->size());
-    cloudWithNormals->width = filteredCloud->width;
-    cloudWithNormals->height = filteredCloud->height;
-    cloudWithNormals->is_dense = filteredCloud->is_dense;
+    cloudWithNormals->reserve(filteredCloud->size());
+    size_t rejectedNormalCount = 0;
     for (size_t i = 0; i < filteredCloud->size(); ++i)
     {
         const pcl::PointXYZRGB& point = (*filteredCloud)[i];
         const pcl::Normal& normal = (*normals)[i];
         if (!pcl::isFinite(normal))
         {
-            cout << COUT_PREFIX
-                 << "Poisson normal estimation produced a non-finite normal." << endl;
-            return false;
+            ++rejectedNormalCount;
+            continue;
         }
 
-        pcl::PointXYZRGBNormal& combined = (*cloudWithNormals)[i];
+        pcl::PointXYZRGBNormal combined;
         combined.x = point.x;
         combined.y = point.y;
         combined.z = point.z;
@@ -322,6 +319,20 @@ bool ConverPointCloud::createPoissonMeshFromCloud(
         combined.normal_x = normal.normal_x;
         combined.normal_y = normal.normal_y;
         combined.normal_z = normal.normal_z;
+        cloudWithNormals->push_back(combined);
+    }
+    cloudWithNormals->width = static_cast<std::uint32_t>(cloudWithNormals->size());
+    cloudWithNormals->height = 1;
+    cloudWithNormals->is_dense = true;
+    if (rejectedNormalCount != 0)
+    {
+        cout << COUT_PREFIX << "Poisson ignored " << rejectedNormalCount
+             << " points with non-finite normals." << endl;
+    }
+    if (cloudWithNormals->size() < 3)
+    {
+        cout << COUT_PREFIX << "Poisson has too few points with valid normals." << endl;
+        return false;
     }
 
     pcl::search::KdTree<pcl::PointXYZRGBNormal>::Ptr tree(

@@ -14,6 +14,7 @@ SOURCES += \
     printing/Imc60gApi.cpp \
     printing/Imc60gMotionController.cpp \
     printing/PrintHardwareProfile.cpp \
+    printing/Sv660nExposureController.cpp \
     vendor/base/FileLibrary.cpp \
     vendor/base/Logger.cpp \
     vendor/multiview/memoryAtlasPageSink.cpp \
@@ -42,6 +43,7 @@ HEADERS += \
     printing/IImc60gApi.h \
     printing/Imc60gApi.h \
     printing/Imc60gMotionController.h \
+    printing/Sv660nExposureController.h \
     vendor/base/base.h \
     vendor/base/FileLibrary.h \
     vendor/base/Logger.hpp \

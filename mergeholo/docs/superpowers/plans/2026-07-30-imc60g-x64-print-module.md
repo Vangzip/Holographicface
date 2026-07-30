@@ -727,8 +727,8 @@ c.main.gridRows = 2;
 c.main.gridColumns = 3;
 const V2PrintPlan p = buildV2PrintPlan(c, profile, 60.0, &error);
 expect(p.stepPulse == 1000, "IMC V2 step basis is 1000");
-expect(p.rows[0].logicalFrameOrder == QVector<int>({2,1,0}), "first row frame order matches V2");
-expect(p.rows[1].logicalFrameOrder == QVector<int>({0,1,2}), "reverse row frame order matches V2");
+expect(p.rows[0].logicalFrameOrder == QVector<int>({0,1,2}), "first forward row frame order matches V2");
+expect(p.rows[1].logicalFrameOrder == QVector<int>({2,1,0}), "second reverse row frame order matches V2");
 expect(p.rows[0].compareBegin == p.rows[0].exposureBegin,
     "active IMC60G forward compare uses the finite exposure window");
 expect(p.rows[1].compareEnd == p.rows[1].exposureBegin,

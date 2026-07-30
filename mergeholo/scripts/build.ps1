@@ -69,6 +69,8 @@ if (-not (Test-Path -LiteralPath $VsDevCmd)) {
 $Makefile = if ($Config -eq "debug") { "Makefile.Debug" } else { "Makefile.Release" }
 $QMakeConfig = "CONFIG+=$Config"
 $OutDir = Join-Path $ProjectRoot "00-bin"
+$repoRoot = $ProjectRoot
+$outputDir = $OutDir
 
 function Copy-RuntimeItem {
     param(
@@ -260,6 +262,13 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Build failed with exit code $LASTEXITCODE"
     }
+
+    $imcRuntime = Join-Path $repoRoot "vendor\imc60g\bin\x64\IMC_Library_x64.dll"
+    if (-not (Test-Path -LiteralPath $imcRuntime)) { throw "Missing IMC runtime: $imcRuntime" }
+    Copy-Item -LiteralPath $imcRuntime -Destination (Join-Path $outputDir "IMC_Library_x64.dll") -Force
+    & powershell -ExecutionPolicy Bypass -File (Join-Path $repoRoot "scripts\verify_imc60g_sdk.ps1") `
+        -RepoRoot $repoRoot -RuntimeDirectory $outputDir
+    if ($LASTEXITCODE -ne 0) { throw "IMC60G SDK verification failed" }
 
     if (-not $SkipDeploy.IsPresent) {
         Write-Host "Deploying runtime dependencies to $OutDir"

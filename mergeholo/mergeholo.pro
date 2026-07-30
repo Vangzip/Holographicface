@@ -67,6 +67,7 @@ INCLUDEPATH += \
     vendor/point_cloud/include
 
 include($$PWD/Pri/common.pri)
+include($$PWD/Pri/imc60g.pri)
 include($$PWD/Pri/opencv.pri)
 include($$PWD/Pri/cuda.pri)
 include($$PWD/Pri/holo_pipeline.pri)

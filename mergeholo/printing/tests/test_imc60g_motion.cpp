@@ -1,0 +1,422 @@
+#include "../IImc60gApi.h"
+#include "../Imc60gMotionController.h"
+#include "../PrintConfig.h"
+#include "../PrintHardwareProfile.h"
+
+#include <QCoreApplication>
+#include <QDebug>
+#include <QSet>
+#include <QStringList>
+
+#include <cmath>
+#include <cstdlib>
+
+namespace {
+
+constexpr unsigned int kBusy = 0x00000004;
+constexpr unsigned int kNegativeLimit = 0x00000020;
+
+void expect(bool condition, const QString& message)
+{
+    if (!condition) {
+        qCritical().noquote() << "FAIL:" << message;
+        std::exit(1);
+    }
+}
+
+class RecordingImc60gApi final : public IImc60gApi {
+public:
+    QStringList events;
+    QString failAt;
+    unsigned int cardCount = 1;
+    QSet<short> enabledAxes;
+    QSet<short> stoppedAxes;
+    QSet<short> servoOffAxes;
+    bool ethercatStarted = false;
+    bool ethercatStopped = false;
+    bool cardOpened = false;
+    bool cardClosed = false;
+    bool ptpStarted = false;
+    short lastPtpAxis = -1;
+    int lastPtpTarget = 0;
+    double lastProfileVelocity = 0;
+
+    int result(const QString& operation) const
+    {
+        return failAt == operation ? 0x0023 : 0;
+    }
+
+    int getCardsNum(unsigned int* count) override
+    {
+        events << "cards";
+        if (result("cards") != 0) {
+            return result("cards");
+        }
+        *count = cardCount;
+        return 0;
+    }
+
+    int openCard(unsigned int cardIndex) override
+    {
+        events << QString("open:%1").arg(cardIndex);
+        const int rc = result("open");
+        cardOpened = rc == 0;
+        return rc;
+    }
+
+    int closeCard(unsigned int cardIndex) override
+    {
+        Q_UNUSED(cardIndex);
+        cardClosed = true;
+        cardOpened = false;
+        return result("close");
+    }
+
+    int scanEthercat(unsigned int cardIndex, short waitSeconds) override
+    {
+        events << QString("scan:%1:%2").arg(cardIndex).arg(waitSeconds);
+        return result("scan");
+    }
+
+    int initEthercat(unsigned int cardIndex) override
+    {
+        events << QString("ecat_init:%1").arg(cardIndex);
+        return result("init");
+    }
+
+    int startEthercat(unsigned int cardIndex) override
+    {
+        events << QString("ecat_start:%1").arg(cardIndex);
+        const int rc = result("start");
+        ethercatStarted = rc == 0;
+        return rc;
+    }
+
+    int stopEthercat(unsigned int cardIndex) override
+    {
+        Q_UNUSED(cardIndex);
+        ethercatStopped = true;
+        ethercatStarted = false;
+        return result("stop_ecat");
+    }
+
+    int setEmergencyLevel(unsigned int cardIndex, short inverted) override
+    {
+        events << QString("emg_level:%1:%2").arg(cardIndex).arg(inverted);
+        return result("emg");
+    }
+
+    int clearAxisStatus(unsigned int cardIndex, short axis) override
+    {
+        Q_UNUSED(cardIndex);
+        if (events.size() < 8) {
+            events << QString("clear:%1").arg(axis);
+        }
+        return result(QString("clear%1").arg(axis));
+    }
+
+    int servoOn(unsigned int cardIndex, short axis) override
+    {
+        Q_UNUSED(cardIndex);
+        events << QString("servo_on:%1").arg(axis);
+        const int rc = result(QString("servo%1").arg(axis));
+        if (rc == 0) {
+            enabledAxes.insert(axis);
+        }
+        return rc;
+    }
+
+    int servoOff(unsigned int cardIndex, short axis) override
+    {
+        Q_UNUSED(cardIndex);
+        servoOffAxes.insert(axis);
+        enabledAxes.remove(axis);
+        return result("servo_off");
+    }
+
+    int setMotionProfile(unsigned int cardIndex, short axis, double velocity,
+        double acceleration, double deceleration, double startVelocity,
+        double endVelocity) override
+    {
+        Q_UNUSED(cardIndex);
+        Q_UNUSED(acceleration);
+        Q_UNUSED(deceleration);
+        Q_UNUSED(startVelocity);
+        Q_UNUSED(endVelocity);
+        lastProfileVelocity = velocity;
+        if (failAt == QString("home%1").arg(axis)) {
+            return 0x0023;
+        }
+        return result("profile");
+    }
+
+    int startPtp(unsigned int cardIndex, short axis, int target) override
+    {
+        Q_UNUSED(cardIndex);
+        ptpStarted = true;
+        lastPtpAxis = axis;
+        lastPtpTarget = target;
+        if (target == 92000 || target == 28000) {
+            events << QString("backoff:%1:%2").arg(axis).arg(target);
+            return result(QString("backoff%1").arg(axis));
+        }
+        return result("ptp");
+    }
+
+    int startJog(unsigned int cardIndex, short axis, int direction) override
+    {
+        Q_UNUSED(cardIndex);
+        events << QString("home:%1:%2").arg(axis).arg(direction);
+        homingAxes.insert(axis);
+        return result(QString("home%1").arg(axis));
+    }
+
+    int stop(unsigned int cardIndex, short axis, int mode) override
+    {
+        Q_UNUSED(cardIndex);
+        Q_UNUSED(mode);
+        stoppedAxes.insert(axis);
+        return result("stop");
+    }
+
+    int axisStatus(unsigned int cardIndex, short axis, unsigned int* status) override
+    {
+        Q_UNUSED(cardIndex);
+        if (result("axis_status") != 0) {
+            return result("axis_status");
+        }
+        *status = homingAxes.contains(axis) ? kNegativeLimit : 0;
+        return 0;
+    }
+
+    int stopReason(unsigned int cardIndex, short axis, unsigned int* reason) override
+    {
+        Q_UNUSED(cardIndex);
+        Q_UNUSED(axis);
+        *reason = 0;
+        return result("stop_reason");
+    }
+
+    int plannedPosition(unsigned int cardIndex, short axis, int* position) override
+    {
+        Q_UNUSED(cardIndex);
+        Q_UNUSED(axis);
+        *position = 0;
+        return result("planned");
+    }
+
+    int encoderPosition(unsigned int cardIndex, short axis, int* position) override
+    {
+        Q_UNUSED(cardIndex);
+        *position = homingAxes.contains(axis) ? 100 : 0;
+        return result("encoder");
+    }
+
+    int setCurrentPosition(unsigned int cardIndex, short axis, double position) override
+    {
+        Q_UNUSED(cardIndex);
+        Q_UNUSED(position);
+        if (!zeroedAxes.contains(axis)) {
+            events << QString("zero:%1").arg(axis);
+            zeroedAxes.insert(axis);
+        }
+        return result(QString("zero%1").arg(axis));
+    }
+
+    int syncPosition(unsigned int cardIndex, short axis) override
+    {
+        Q_UNUSED(cardIndex);
+        Q_UNUSED(axis);
+        return result("sync");
+    }
+
+    int setAxisSdo(unsigned int, short, unsigned short, unsigned short,
+        unsigned char*, unsigned int, unsigned int*) override
+    {
+        return result("set_sdo");
+    }
+
+    int getAxisSdo(unsigned int, short, unsigned short, unsigned short,
+        unsigned char*, unsigned int, unsigned int*, unsigned int*) override
+    {
+        return result("get_sdo");
+    }
+
+private:
+    QSet<short> homingAxes;
+    QSet<short> zeroedAxes;
+};
+
+void expectSafeShutdown(const RecordingImc60gApi& api)
+{
+    expect(api.stoppedAxes.contains(0) && api.stoppedAxes.contains(1),
+        "failure must stop both configured axes");
+    for (short axis : api.servoOffAxes) {
+        Q_UNUSED(axis);
+    }
+    expect(api.enabledAxes.isEmpty(), "failure must servo off every enabled axis");
+    expect(api.ethercatStopped, "failure must stop EtherCAT");
+    expect(api.cardClosed, "failure must close the card");
+}
+
+void testLifecycleAndHomingOrder()
+{
+    RecordingImc60gApi api;
+    Imc60gMotionController controller(&api, PrintHardwareProfile());
+    expect(controller.state() == Imc60gConnectionState::Disconnected, "starts disconnected");
+    expect(api.events.isEmpty(), "constructor must not touch hardware");
+
+    QString error;
+    expect(controller.connectAndHome(&error), "connect and home should pass with recording API: " + error);
+    expect(api.events == QStringList({
+        "cards", "open:0", "scan:0:40", "ecat_init:0", "ecat_start:0",
+        "emg_level:0:1", "clear:0", "clear:1", "servo_on:0", "servo_on:1",
+        "home:0:-1", "backoff:0:92000", "zero:0",
+        "home:1:-1", "backoff:1:28000", "zero:1"
+    }), "connection and Y/X homing order must match V2");
+    expect(controller.state() == Imc60gConnectionState::Ready, "successful homing is ready");
+    controller.disconnect();
+    expect(controller.state() == Imc60gConnectionState::Disconnected, "disconnect resets state");
+}
+
+void testLifecycleFailuresCloseSafely()
+{
+    const QStringList failurePoints = {
+        "scan", "init", "start", "emg", "servo0", "servo1",
+        "home0", "backoff0", "zero0", "home1", "backoff1", "zero1"
+    };
+    for (const QString& point : failurePoints) {
+        RecordingImc60gApi api;
+        api.failAt = point;
+        Imc60gMotionController controller(&api, PrintHardwareProfile());
+        QString error;
+        expect(!controller.connectAndHome(&error), point + " must fail");
+        expect(error.contains("card=0") && error.contains("code=35"),
+            point + " error must identify card and numeric vendor code: " + error);
+        expect(controller.state() == Imc60gConnectionState::Fault, point + " must leave fault state");
+        expectSafeShutdown(api);
+    }
+
+    {
+        RecordingImc60gApi api;
+        api.failAt = "cards";
+        Imc60gMotionController controller(&api, PrintHardwareProfile());
+        QString error;
+        expect(!controller.connectAndHome(&error), "card query error must fail closed");
+        expect(error.contains("IMC_GetCardsNum") && error.contains("code=35"),
+            "card query error must preserve its numeric return code");
+        expect(!api.cardOpened && !api.cardClosed, "card query error must not touch a card");
+    }
+    {
+        RecordingImc60gApi api;
+        api.cardCount = 0;
+        Imc60gMotionController controller(&api, PrintHardwareProfile());
+        QString error;
+        expect(!controller.connectAndHome(&error), "zero cards must fail closed");
+        expect(!api.cardOpened && !api.cardClosed, "zero cards must not open or close a card");
+    }
+    {
+        RecordingImc60gApi api;
+        api.failAt = "open";
+        Imc60gMotionController controller(&api, PrintHardwareProfile());
+        QString error;
+        expect(!controller.connectAndHome(&error), "open failure must fail closed");
+        expect(!api.cardClosed, "failed open must not close an unopened card");
+    }
+}
+
+void testManualMotionValidationAndMapping()
+{
+    RecordingImc60gApi api;
+    Imc60gMotionController controller(&api, PrintHardwareProfile());
+    QString error;
+    expect(controller.connectAndHome(&error), "setup connection");
+    api.ptpStarted = false;
+
+    PrintAxisConfig axisX;
+    axisX.subdivision = 40;
+    axisX.resolution = 50;
+    axisX.speedOfMovement = 5000;
+    axisX.acceleratedVelocity = 50000;
+    axisX.startSpeed = 500;
+    axisX.stopSpeed = 500;
+    axisX.maxDistance = 150.0;
+    expect(controller.moveRelative(PrintHardwareProfile::LogicalAxis::X, 10.0, axisX, &error),
+        "valid X move should start");
+    expect(api.lastPtpAxis == 1 && api.lastPtpTarget == 20000,
+        "logical X +10 mm must target physical 1 at 20000 units");
+
+    PrintAxisConfig axisY = axisX;
+    expect(controller.moveRelative(PrintHardwareProfile::LogicalAxis::Y, -2.0, axisY, &error),
+        "valid Y move should start");
+    expect(api.lastPtpAxis == 0 && api.lastPtpTarget == -4000,
+        "logical Y must map to physical axis 0");
+
+    const auto expectRejected = [&](PrintHardwareProfile::LogicalAxis logicalAxis,
+                                    double distance, const PrintAxisConfig& config,
+                                    const QString& label) {
+        api.ptpStarted = false;
+        expect(!controller.moveRelative(logicalAxis, distance, config, &error), label + " must fail");
+        expect(!api.ptpStarted, label + " must not call startPtp");
+    };
+
+    expectRejected(PrintHardwareProfile::LogicalAxis::X, 151.0, axisX, "maximum travel");
+    PrintAxisConfig invalidSpeed = axisX;
+    invalidSpeed.speedOfMovement = 0;
+    expectRejected(PrintHardwareProfile::LogicalAxis::X, 1.0, invalidSpeed, "invalid speed");
+    expectRejected(PrintHardwareProfile::LogicalAxis::Z, 1.0, axisX, "missing real axis");
+
+    controller.setPrintActive(true);
+    expectRejected(PrintHardwareProfile::LogicalAxis::X, 1.0, axisX, "active print");
+    controller.setPrintActive(false);
+    controller.disconnect();
+    expectRejected(PrintHardwareProfile::LogicalAxis::X, 1.0, axisX, "disconnected state");
+}
+
+void testSdkOwnershipIsExclusive()
+{
+    RecordingImc60gApi firstApi;
+    RecordingImc60gApi secondApi;
+    Imc60gMotionController first(&firstApi, PrintHardwareProfile());
+    Imc60gMotionController second(&secondApi, PrintHardwareProfile());
+    QString error;
+    expect(first.connectAndHome(&error), "first controller should own the SDK");
+    expect(!second.connectAndHome(&error), "second controller must not share the SDK card");
+    expect(error.contains("already owned"), "ownership failure must be actionable");
+    expect(secondApi.events.isEmpty(), "rejected owner must not call the SDK");
+    first.disconnect();
+    expect(second.connectAndHome(&error), "ownership must be released by disconnect");
+}
+
+void testSnapshotsAndExplicitStops()
+{
+    RecordingImc60gApi api;
+    Imc60gMotionController controller(&api, PrintHardwareProfile());
+    QString error;
+    expect(controller.connectAndHome(&error), "setup connection");
+    Imc60gAxisSnapshot snapshot;
+    expect(controller.readSnapshot(PrintHardwareProfile::LogicalAxis::X, &snapshot, &error),
+        "ready controller should read a snapshot");
+    expect(snapshot.physicalAxis == 1 && snapshot.encoderPosition == 100,
+        "snapshot must identify the mapped real axis");
+    expect(controller.stopAxis(PrintHardwareProfile::LogicalAxis::Y, &error),
+        "explicit stop should succeed");
+    expect(api.stoppedAxes.contains(0), "logical Y stop must use physical axis 0");
+    expect(controller.isReadyForPrint(), "ready idle controller can print");
+    controller.setPrintActive(true);
+    expect(!controller.isReadyForPrint(), "active print is not available for another print");
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    QCoreApplication app(argc, argv);
+    testLifecycleAndHomingOrder();
+    testLifecycleFailuresCloseSafely();
+    testManualMotionValidationAndMapping();
+    testSdkOwnershipIsExclusive();
+    testSnapshotsAndExplicitStops();
+    qInfo() << "All IMC60G motion tests passed.";
+    return 0;
+}

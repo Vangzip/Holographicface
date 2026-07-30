@@ -11,6 +11,8 @@ SOURCES += \
     apps/mergeholo_main.cpp \
     camera/CaptureSession.cpp \
     camera/LightFieldCapture.cpp \
+    printing/Imc60gApi.cpp \
+    printing/Imc60gMotionController.cpp \
     vendor/base/FileLibrary.cpp \
     vendor/base/Logger.cpp \
     vendor/multiview/memoryAtlasPageSink.cpp \
@@ -36,6 +38,9 @@ HEADERS += \
     camera/LightFieldCapture.h \
     camera/CommonFiles/JPDeviceInterface.h \
     camera/CommonFiles/threadsafe_queue.hpp \
+    printing/IImc60gApi.h \
+    printing/Imc60gApi.h \
+    printing/Imc60gMotionController.h \
     vendor/base/base.h \
     vendor/base/FileLibrary.h \
     vendor/base/Logger.hpp \

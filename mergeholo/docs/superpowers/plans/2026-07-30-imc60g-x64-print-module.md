@@ -729,14 +729,22 @@ const V2PrintPlan p = buildV2PrintPlan(c, profile, 60.0, &error);
 expect(p.stepPulse == 1000, "IMC V2 step basis is 1000");
 expect(p.rows[0].logicalFrameOrder == QVector<int>({2,1,0}), "first row frame order matches V2");
 expect(p.rows[1].logicalFrameOrder == QVector<int>({0,1,2}), "reverse row frame order matches V2");
-expect(p.rows[0].compareEnd == std::numeric_limits<qint32>::max(), "forward compare sentinel");
-expect(p.rows[1].compareBegin == std::numeric_limits<qint32>::min(), "reverse compare sentinel");
+expect(p.rows[0].compareBegin == p.rows[0].exposureBegin,
+    "active IMC60G forward compare uses the finite exposure window");
+expect(p.rows[1].compareEnd == p.rows[1].exposureBegin,
+    "active IMC60G reverse compare normalizes the finite exposure window");
 ```
 
 Add boundary tests for `addTempPulse=16000`, `leadPulse=1000`,
 `forwardDelayPulse=4000`, `reverseFixedPulse=2000`,
 `exposureOffsetPulse=2000`, integer VBlank fit, negative delay, qint32 overflow,
-zero acceleration, missing frames, and grid greater than the source count.
+zero acceleration, and invalid/pathological grid sizes. Source-frame count is
+not an input to this pure timing interface and is validated by Task 7 preflight.
+
+The `LONG_MIN/LONG_MAX` comparison windows in V2 `start_new` are guarded by
+`if (!Motion_IsImc60gMode())` and belong only to the rejected old-card path.
+The production IMC60G plan must preserve the finite
+`yExposeBeginPos/yExposeEndPos` window, including the exposure offset.
 
 - [ ] **Step 2: Run tests and verify failure**
 

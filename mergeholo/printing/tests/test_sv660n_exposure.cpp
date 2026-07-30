@@ -55,6 +55,8 @@ class RecordingImc60gApi final : public IImc60gApi {
 public:
     QStringList sdoEvents;
     QStringList readbackEvents;
+    QStringList timeline;
+    QVector<unsigned int> cards;
     QSet<int> failedWriteCalls;
     QSet<int> abortedWriteCalls;
     QSet<int> failedReadCalls;
@@ -98,6 +100,8 @@ public:
         ++plannedCalls;
         lastPlannedCard = cardIndex;
         lastPlannedAxis = axis;
+        cards << cardIndex;
+        timeline << QString("planned:card%1:axis%2").arg(cardIndex).arg(axis);
         if (plannedRc == 0 && position) {
             *position = planned;
         }
@@ -112,9 +116,11 @@ public:
         unsigned short subIndex, unsigned char* data, unsigned int size,
         unsigned int* abortCode) override
     {
-        Q_UNUSED(cardIndex);
         ++writeCalls;
-        sdoEvents << eventFor(data, size, axis, index, subIndex);
+        const QString event = eventFor(data, size, axis, index, subIndex);
+        cards << cardIndex;
+        sdoEvents << event;
+        timeline << "write:" + event;
         if (abortCode) {
             *abortCode = abortedWriteCalls.contains(writeCalls) ? 0x06090030U : 0U;
         }
@@ -125,8 +131,8 @@ public:
         unsigned short subIndex, unsigned char* data, unsigned int size,
         unsigned int* resultSize, unsigned int* abortCode) override
     {
-        Q_UNUSED(cardIndex);
         ++readCalls;
+        cards << cardIndex;
         if (abortCode) {
             *abortCode = abortedReadCalls.contains(readCalls) ? 0x06020000U : 0U;
         }
@@ -149,7 +155,9 @@ public:
         if (resultSize) {
             *resultSize = shortReadCalls.contains(readCalls) ? size - 1U : size;
         }
-        readbackEvents << eventFor(data, size, axis, index, subIndex);
+        const QString event = eventFor(data, size, axis, index, subIndex);
+        readbackEvents << event;
+        timeline << "read:" + event;
         return failedReadCalls.contains(readCalls) ? 0x0201 : 0;
     }
 
@@ -211,6 +219,7 @@ QStringList positiveReadbacks()
     return {
         "u16:axis0:2004:01:25",
         "u16:axis0:2018:13:256",
+        "s32:axis0:2018:0D:0",
         "u16:axis0:2018:04:0",
         "u16:axis0:2018:06:1000",
         "u16:axis0:2018:08:1",
@@ -245,6 +254,20 @@ void testPositiveSequenceAndWait()
         QString("positive crossing readbacks differ:\n%1")
             .arg(api.readbackEvents.join('\n')));
     expect(waits == QVector<int>({5}), "H18.04 edge must wait exactly 5 ms");
+    for (unsigned int card : api.cards) {
+        expect(card == 0, "every planned-position and SDO call must use card 0");
+    }
+
+    const QString finalEnable = "write:u16:axis0:2018:01:1";
+    const int finalEnableIndex = api.timeline.lastIndexOf(finalEnable);
+    expect(finalEnableIndex == api.timeline.size() - 1,
+        "final H18.00=1 must be the final SDK operation");
+    for (const QString& stableReadback : positiveReadbacks()) {
+        const int readIndex = api.timeline.indexOf("read:" + stableReadback);
+        expect(readIndex >= 0 && readIndex < finalEnableIndex,
+            QString("stable readback must precede final enable: %1")
+                .arg(stableReadback));
+    }
 }
 
 void testReverseSequence()
@@ -263,8 +286,8 @@ void testReverseSequence()
     expected[12] = "u16:axis0:2019:03:130";
     expect(api.sdoEvents == expected, "reverse target/attribute must match V2");
     QStringList expectedReads = positiveReadbacks();
-    expectedReads[6] = "s32:axis0:2019:01:-2000";
-    expectedReads[7] = "u16:axis0:2019:03:130";
+    expectedReads[7] = "s32:axis0:2019:01:-2000";
+    expectedReads[8] = "u16:axis0:2019:03:130";
     expect(api.readbackEvents == expectedReads,
         "reverse target/attribute readback must match V2");
 }
@@ -303,7 +326,7 @@ void testEveryWriteReturnAndAbortFailureDisarms()
 
 void testEveryReadReturnAndAbortFailureDisarms()
 {
-    constexpr int kReadCount = 8;
+    constexpr int kReadCount = 9;
     for (int call = 1; call <= kReadCount; ++call) {
         for (int abortFailure = 0; abortFailure <= 1; ++abortFailure) {
             RecordingImc60gApi api;
@@ -333,7 +356,7 @@ void testEveryReadReturnAndAbortFailureDisarms()
 
 void testShortAndMismatchedReadbacks()
 {
-    for (int readCall : {1, 7}) {
+    for (int readCall : {1, 3, 8}) {
         RecordingImc60gApi api;
         RecordingImc60gApi::currentTarget_ = 2000;
         api.shortReadCalls.insert(readCall);
@@ -348,7 +371,7 @@ void testShortAndMismatchedReadbacks()
             "short read must disarm");
     }
 
-    for (int readCall : {1, 7}) {
+    for (int readCall : {1, 3, 8}) {
         RecordingImc60gApi api;
         RecordingImc60gApi::currentTarget_ = 2000;
         api.mismatchedReadCalls.insert(readCall);
@@ -392,6 +415,8 @@ void testPlannedPositionFailureAndInvalidInputs()
             "invalid production profile must fail");
         expect(api.plannedCalls == 0 && api.writeCalls == 0 && api.readCalls == 0,
             "invalid profile must fail before every SDK call");
+        expect(exposure.isArmed(),
+            "invalid profile must not claim a confirmed safe hardware state");
         expect(error.contains("profile", Qt::CaseInsensitive),
             "invalid profile error must be actionable");
     }
@@ -409,6 +434,23 @@ void testPlannedPositionFailureAndInvalidInputs()
             "overflow must issue only the fail-closed disable");
         expect(error.contains("int32", Qt::CaseInsensitive),
             QString("overflow error must be actionable: %1").arg(error));
+        expect(!exposure.isArmed(),
+            "successful overflow cleanup must confirm the disabled state");
+    }
+
+    {
+        RecordingImc60gApi api;
+        api.planned = INT_MIN;
+        Sv660nExposureController exposure(
+            api, PrintHardwareProfile(), [](int) {});
+        QString error;
+        expect(!exposure.arm(LONG_MAX, LONG_MAX, &error),
+            "positive relative target beyond int32 must fail");
+        expect(api.readCalls == 0, "positive overflow must not read any SDO");
+        expect(api.sdoEvents == QStringList({"u16:axis0:2018:01:0"}),
+            "positive overflow must issue only the fail-closed disable");
+        expect(!exposure.isArmed(),
+            "successful positive-overflow cleanup must confirm disabled state");
     }
 }
 
@@ -422,10 +464,80 @@ void testCleanupFailureIsAggregated()
 
     expect(!exposure.arm(3000, LONG_MAX, &error),
         "arm and cleanup failures must fail");
-    expect(!exposure.isArmed(), "failed arm with failed cleanup must not report armed");
+    expect(exposure.isArmed(),
+        "failed arm with failed cleanup must remain conservatively unsafe");
     expect(error.contains("cleanup", Qt::CaseInsensitive)
             && error.count("return=0x", Qt::CaseInsensitive) >= 2,
         QString("cleanup failure must be aggregated: %1").arg(error));
+}
+
+void testCleanupAbortAndFinalEnableCleanupFailureRemainUnsafe()
+{
+    {
+        RecordingImc60gApi api;
+        api.failedWriteCalls.insert(1);
+        api.abortedWriteCalls.insert(2);
+        Sv660nExposureController exposure(
+            api, PrintHardwareProfile(), [](int) {});
+        QString error;
+        expect(!exposure.arm(3000, LONG_MAX, &error),
+            "cleanup abort must fail arm");
+        expect(exposure.isArmed(),
+            "cleanup abort must retain the conservative unsafe state");
+        expect(error.contains("cleanup", Qt::CaseInsensitive)
+                && error.contains("abort=0X06090030", Qt::CaseInsensitive),
+            QString("cleanup abort must be aggregated: %1").arg(error));
+    }
+
+    {
+        RecordingImc60gApi api;
+        api.failedWriteCalls = {14, 15};
+        RecordingImc60gApi::currentTarget_ = 2000;
+        Sv660nExposureController exposure(
+            api, PrintHardwareProfile(), [](int) {});
+        QString error;
+        expect(!exposure.arm(3000, LONG_MAX, &error),
+            "final enable plus cleanup failure must fail arm");
+        expect(exposure.isArmed(),
+            "unconfirmed cleanup after final enable attempt must remain unsafe");
+        expect(api.sdoEvents[13] == "u16:axis0:2018:01:1"
+                && api.sdoEvents[14] == "u16:axis0:2018:01:0",
+            "failed final enable must be followed by explicit disable");
+    }
+}
+
+void testNearestBoundaryNormalizationAndTieBreak()
+{
+    struct Case {
+        int current;
+        long begin;
+        long end;
+        int relativeTarget;
+        int attribute;
+    };
+    const QVector<Case> cases = {
+        {5000, 3000, 9000, -2000, 130},
+        {8000, 3000, 9000, 1000, 129},
+        {6000, 9000, 3000, -3000, 130},
+        {4000, 9000, 3000, -1000, 130}
+    };
+
+    for (const Case& item : cases) {
+        RecordingImc60gApi api;
+        api.planned = item.current;
+        RecordingImc60gApi::currentTarget_ = item.relativeTarget;
+        Sv660nExposureController exposure(
+            api, PrintHardwareProfile(), [](int) {});
+        QString error;
+        expect(exposure.arm(item.begin, item.end, &error),
+            QString("nearest-boundary case should arm: %1").arg(error));
+        expect(api.sdoEvents[11]
+                == QString("s32:axis0:2019:01:%1").arg(item.relativeTarget),
+            "nearest boundary must produce the expected relative target");
+        expect(api.sdoEvents[12]
+                == QString("u16:axis0:2019:03:%1").arg(item.attribute),
+            "nearest boundary must select the matching crossing attribute");
+    }
 }
 
 void testDisarmAndRepeatedDisarm()
@@ -473,6 +585,23 @@ void testDisarmFailureRemainsConservativelyUnsafe()
     expect(!exposure.isArmed(), "successful retry must restore safe state");
 }
 
+void testStandaloneDisarmAbortRemainsConservativelyUnsafe()
+{
+    RecordingImc60gApi api;
+    RecordingImc60gApi::currentTarget_ = 2000;
+    Sv660nExposureController exposure(
+        api, PrintHardwareProfile(), [](int) {});
+    QString error;
+    expect(exposure.arm(3000, LONG_MAX, &error), "setup arm should succeed");
+    api.abortedWriteCalls.insert(api.writeCalls + 1);
+
+    expect(!exposure.disarm(&error), "disarm abort must be observable");
+    expect(exposure.isArmed(),
+        "disarm abort must retain conservative unsafe state");
+    expect(error.contains("abort=0X06090030", Qt::CaseInsensitive),
+        QString("disarm abort must be actionable: %1").arg(error));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -485,8 +614,11 @@ int main(int argc, char** argv)
     testShortAndMismatchedReadbacks();
     testPlannedPositionFailureAndInvalidInputs();
     testCleanupFailureIsAggregated();
+    testCleanupAbortAndFinalEnableCleanupFailureRemainUnsafe();
+    testNearestBoundaryNormalizationAndTieBreak();
     testDisarmAndRepeatedDisarm();
     testDisarmFailureRemainsConservativelyUnsafe();
+    testStandaloneDisarmAbortRemainsConservativelyUnsafe();
     qInfo() << "SV660N exposure tests passed";
     return 0;
 }

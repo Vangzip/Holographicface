@@ -43,7 +43,9 @@ bool Sv660nExposureController::arm(long begin, long end, QString* errorMessage)
     if (errorMessage) {
         errorMessage->clear();
     }
-    armed_ = false;
+    // An arm attempt crosses the hardware safety boundary. Until H18.00=0
+    // has been explicitly acknowledged, retain the conservative unsafe state.
+    armed_ = true;
 
     QString error;
     if (!validateProfile(&error)) {
@@ -128,6 +130,7 @@ bool Sv660nExposureController::arm(long begin, long end, QString* errorMessage)
             0x2018, 0x01, 0, "H18.00 compare enable off", &error))) {
         return false;
     }
+    armed_ = false;
     if (!requireWrite(writeU16(0x2018, 0x13,
             profile_.sv660nUserUnits ? 256 : 0,
             "H18.18 H19 user-unit target", &error))) {
@@ -194,6 +197,10 @@ bool Sv660nExposureController::arm(long begin, long end, QString* errorMessage)
             "H18.18 H19 user-unit target", &error))) {
         return false;
     }
+    if (!requireVerification(verifyS32(
+            0x2018, 0x0D, 0, "H18.12 compare zero offset", &error))) {
+        return false;
+    }
     if (!requireVerification(verifyU16(0x2018, 0x04,
             static_cast<unsigned short>(profile_.sv660nMode),
             "H18.03 compare mode", &error))) {
@@ -221,6 +228,9 @@ bool Sv660nExposureController::arm(long begin, long end, QString* errorMessage)
         return false;
     }
 
+    // A failed enable call may still have reached the drive. Mark unsafe
+    // before issuing it; failArm() will clear this only after disable succeeds.
+    armed_ = true;
     if (!requireWrite(writeU16(
             0x2018, 0x01, 1, "H18.00 compare enable on", &error))) {
         return false;
@@ -433,13 +443,14 @@ bool Sv660nExposureController::verifyS32(unsigned short index,
 bool Sv660nExposureController::failArm(
     const QString& primaryError, QString* errorMessage)
 {
-    armed_ = false;
+    armed_ = true;
     QString cleanupError;
     if (!writeU16(0x2018, 0x01, 0,
             "H18.00 compare enable off cleanup", &cleanupError)) {
         setError(errorMessage,
             primaryError + "; cleanup also failed: " + cleanupError);
     } else {
+        armed_ = false;
         setError(errorMessage, primaryError);
     }
     return false;

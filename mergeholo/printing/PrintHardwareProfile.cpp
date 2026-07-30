@@ -3,6 +3,8 @@
 #include <QFileInfo>
 #include <QSettings>
 
+#include <limits>
+
 namespace {
 
 void setError(QString* errorMessage, const QString& message)
@@ -58,6 +60,11 @@ bool requireLong(QSettings& settings, const QString& key, long* value, QString* 
         setError(errorMessage, "IMC60G profile key must be an integer: " + key);
         return false;
     }
+    if (parsed < static_cast<qlonglong>(std::numeric_limits<long>::min())
+        || parsed > static_cast<qlonglong>(std::numeric_limits<long>::max())) {
+        setError(errorMessage, "IMC60G profile key is outside the long integer range: " + key);
+        return false;
+    }
     *value = static_cast<long>(parsed);
     return true;
 }
@@ -109,6 +116,19 @@ bool requirePrintDefaults(QSettings& settings, QString* errorMessage)
     return true;
 }
 
+bool checkSettingsStatus(const QSettings& settings, QString* errorMessage)
+{
+    if (settings.status() == QSettings::NoError) {
+        return true;
+    }
+    if (settings.status() == QSettings::FormatError) {
+        setError(errorMessage, "Malformed IMC60G profile INI.");
+    } else {
+        setError(errorMessage, "Cannot read IMC60G profile INI.");
+    }
+    return false;
+}
+
 } // namespace
 
 PrintHardwareProfile loadPrintHardwareProfile(const QString& path, QString* errorMessage)
@@ -125,6 +145,11 @@ PrintHardwareProfile loadPrintHardwareProfile(const QString& path, QString* erro
 
     QSettings settings(path, QSettings::IniFormat);
     settings.setIniCodec("UTF-8");
+    settings.allKeys();
+    if (!checkSettingsStatus(settings, errorMessage)) {
+        profile.version = 0;
+        return profile;
+    }
     settings.beginGroup("profile");
     if (!requireInt(settings, "version", &profile.version, errorMessage)
         || !requireInt(settings, "card_index", &profile.cardIndex, errorMessage)
@@ -182,6 +207,10 @@ PrintHardwareProfile loadPrintHardwareProfile(const QString& path, QString* erro
     }
     settings.endGroup();
 
+    if (!checkSettingsStatus(settings, errorMessage)) {
+        profile.version = 0;
+        return profile;
+    }
     if (!validatePrintHardwareProfile(profile, errorMessage)) {
         profile.version = 0;
         return profile;

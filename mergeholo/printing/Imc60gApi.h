@@ -20,10 +20,12 @@ public:
     int servoOn(unsigned int cardIndex, short axis) override;
     int servoOff(unsigned int cardIndex, short axis) override;
     int setMotionProfile(unsigned int cardIndex, short axis, double velocity,
-        double acceleration, double deceleration, double startVelocity,
+        double acceleration, double deceleration, double startVelocity) override;
+    int setAxisEndVelocity(unsigned int cardIndex, short axis,
         double endVelocity) override;
     int startPtp(unsigned int cardIndex, short axis, int target) override;
-    int startJog(unsigned int cardIndex, short axis, int direction) override;
+    int configureJog(unsigned int cardIndex, short axis) override;
+    int startJogMove(unsigned int cardIndex, short axis, int direction) override;
     int stop(unsigned int cardIndex, short axis, int mode) override;
     int axisStatus(unsigned int cardIndex, short axis, unsigned int* status) override;
     int stopReason(unsigned int cardIndex, short axis, unsigned int* reason) override;

@@ -2,10 +2,10 @@
 
 #include "IImc60gApi.h"
 
-#include <QElapsedTimer>
 #include <QMutexLocker>
 #include <QThread>
 
+#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -22,6 +22,26 @@ constexpr short kNoAxis = -1;
 
 QMutex gSdkOwnerMutex;
 Imc60gMotionController* gSdkOwner = nullptr;
+bool gSdkShutdownPoisoned = false;
+QString gSdkShutdownPoisonReason;
+
+class SystemImc60gClock final : public IImc60gClock {
+public:
+    qint64 nowMs() const override
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - origin_).count();
+    }
+
+    void sleepMs(unsigned long milliseconds) override
+    {
+        QThread::msleep(milliseconds);
+    }
+
+private:
+    const std::chrono::steady_clock::time_point origin_ =
+        std::chrono::steady_clock::now();
+};
 
 void setError(QString* destination, const QString& message)
 {
@@ -50,10 +70,24 @@ QString errorCodeText(int code)
     case 0x0101: return "ERR_ACC_OUTRANG: acceleration out of range";
     case 0x0102: return "ERR_DEC_OUTRANG: deceleration out of range";
     case 0x0103: return "ERR_TGTPOS_OUTRANG: target position out of range";
+    case 0x0161: return "ERR_ECAT_AX_CNT_OUTRANG: EtherCAT axis count out of range";
     case 0x0200: return "ERR_ECAT_MASTER_LINK: EtherCAT master link error";
     case 0x0201: return "ERR_ECAT_SLAVE_LINK: EtherCAT slave link error";
     default: return "unknown code from IMC errorcode.h";
     }
+}
+
+QString formatApiFailure(
+    const char* functionName, int card, short axis, int code)
+{
+    const QString axisText = axis >= 0 ? QString::number(axis) : "n/a";
+    return QString("%1 failed (card=%2, physical-axis=%3, code=%4 [0x%5], %6)")
+        .arg(functionName)
+        .arg(card)
+        .arg(axisText)
+        .arg(code)
+        .arg(static_cast<unsigned int>(code), 0, 16)
+        .arg(errorCodeText(code));
 }
 
 bool reachedLimit(unsigned int status, unsigned int reason, int direction)
@@ -69,18 +103,32 @@ qlonglong absolutePulseDifference(int lhs, int rhs)
     return std::abs(static_cast<qlonglong>(lhs) - static_cast<qlonglong>(rhs));
 }
 
+bool sdkIsPoisoned(QString* reason)
+{
+    QMutexLocker ownerLock(&gSdkOwnerMutex);
+    if (reason) {
+        *reason = gSdkShutdownPoisonReason;
+    }
+    return gSdkShutdownPoisoned;
+}
+
 } // namespace
 
 Imc60gMotionController::Imc60gMotionController(
-    IImc60gApi* api, const PrintHardwareProfile& profile)
+    IImc60gApi* api, const PrintHardwareProfile& profile, IImc60gClock* clock)
     : api_(api)
     , profile_(profile)
+    , clock_(clock)
 {
+    if (!clock_) {
+        ownedClock_ = std::make_unique<SystemImc60gClock>();
+        clock_ = ownedClock_.get();
+    }
 }
 
 Imc60gMotionController::~Imc60gMotionController()
 {
-    disconnect();
+    disconnect(nullptr);
 }
 
 Imc60gConnectionState Imc60gMotionController::state() const
@@ -92,6 +140,12 @@ Imc60gConnectionState Imc60gMotionController::state() const
 bool Imc60gMotionController::acquireOwnership(QString* errorMessage)
 {
     QMutexLocker ownerLock(&gSdkOwnerMutex);
+    if (gSdkShutdownPoisoned) {
+        setError(errorMessage,
+            "IMC60G SDK access is blocked after an unverified shutdown; restart the process. "
+            + gSdkShutdownPoisonReason);
+        return false;
+    }
     if (gSdkOwner && gSdkOwner != this) {
         setError(errorMessage,
             "IMC60G SDK card 0 is already owned by another motion controller.");
@@ -109,21 +163,24 @@ void Imc60gMotionController::releaseOwnership()
     }
 }
 
+void Imc60gMotionController::poisonOwnership(const QString& reason)
+{
+    QMutexLocker ownerLock(&gSdkOwnerMutex);
+    gSdkShutdownPoisoned = true;
+    gSdkShutdownPoisonReason = reason;
+    if (gSdkOwner == this) {
+        gSdkOwner = nullptr;
+    }
+}
+
 bool Imc60gMotionController::callSucceeded(
     int code, const char* functionName, short axis, QString* errorMessage) const
 {
     if (code == 0) {
         return true;
     }
-    const QString axisText = axis >= 0 ? QString::number(axis) : "n/a";
     setError(errorMessage,
-        QString("%1 failed (card=%2, physical-axis=%3, code=%4 [0x%5], %6)")
-            .arg(functionName)
-            .arg(profile_.cardIndex)
-            .arg(axisText)
-            .arg(code)
-            .arg(static_cast<unsigned int>(code), 0, 16)
-            .arg(errorCodeText(code)));
+        formatApiFailure(functionName, profile_.cardIndex, axis, code));
     return false;
 }
 
@@ -133,21 +190,20 @@ bool Imc60gMotionController::connectAndHome(QString* errorMessage)
     if (errorMessage) {
         errorMessage->clear();
     }
+    cancelRequested_.store(false);
+
+    QString validationError;
+    if (!validatePrintHardwareProfile(profile_, &validationError)) {
+        state_ = Imc60gConnectionState::Fault;
+        setError(errorMessage, validationError);
+        return false;
+    }
     if (state_ == Imc60gConnectionState::Ready) {
         return true;
     }
     if (!api_) {
         state_ = Imc60gConnectionState::Fault;
         setError(errorMessage, "IMC60G API is unavailable; no hardware call was made.");
-        return false;
-    }
-    if (profile_.cardIndex != 0 || profile_.axisX != 1 || profile_.axisY != 0
-        || profile_.homeOrder.size() != 2
-        || profile_.homeOrder[0] != PrintHardwareProfile::LogicalAxis::Y
-        || profile_.homeOrder[1] != PrintHardwareProfile::LogicalAxis::X) {
-        state_ = Imc60gConnectionState::Fault;
-        setError(errorMessage,
-            "IMC60G profile must use card 0, logical Y/physical 0 then logical X/physical 1.");
         return false;
     }
     if (!acquireOwnership(errorMessage)) {
@@ -177,14 +233,16 @@ bool Imc60gMotionController::connectAndHome(QString* errorMessage)
         || !callSucceeded(api_->clearAxisStatus(0, 1), "IMC_ClrAxSts", 1, errorMessage)) {
         goto fail;
     }
+    // Once Servo On is issued, shutdown must treat the axis as potentially
+    // enabled even when the return code is nonzero.
+    servoEnabled_[0] = true;
     if (!callSucceeded(api_->servoOn(0, 0), "IMC_ServoOn", 0, errorMessage)) {
         goto fail;
     }
-    servoEnabled_[0] = true;
+    servoEnabled_[1] = true;
     if (!callSucceeded(api_->servoOn(0, 1), "IMC_ServoOn", 1, errorMessage)) {
         goto fail;
     }
-    servoEnabled_[1] = true;
 
     state_ = Imc60gConnectionState::Homing;
     if (!homeAxis(PrintHardwareProfile::LogicalAxis::Y, errorMessage)
@@ -195,10 +253,39 @@ bool Imc60gMotionController::connectAndHome(QString* errorMessage)
     return true;
 
 fail:
-    cleanupHardware();
-    releaseOwnership();
-    state_ = Imc60gConnectionState::Fault;
-    return false;
+    {
+        const QString primaryError = errorMessage ? *errorMessage : QString();
+        QString cleanupError;
+        const bool cleanupVerified = cleanupHardware(&cleanupError);
+        if (!cleanupVerified) {
+            poisonOwnership(cleanupError);
+            setError(errorMessage,
+                primaryError + "; shutdown unverified: " + cleanupError);
+        } else {
+            releaseOwnership();
+        }
+        state_ = Imc60gConnectionState::Fault;
+        return false;
+    }
+}
+
+bool Imc60gMotionController::cancellationRequested(
+    short activeAxis, QString* errorMessage)
+{
+    if (!cancelRequested_.load()) {
+        return false;
+    }
+    const int stopCode = api_->stop(0, activeAxis, 1);
+    if (stopCode != 0) {
+        setError(errorMessage,
+            "IMC60G homing cancelled; "
+            + formatApiFailure("IMC_StopMove", profile_.cardIndex, activeAxis, stopCode));
+    } else {
+        setError(errorMessage,
+            QString("IMC60G homing cancelled (card=%1, physical-axis=%2).")
+                .arg(profile_.cardIndex).arg(activeAxis));
+    }
+    return true;
 }
 
 bool Imc60gMotionController::homeAxis(
@@ -207,6 +294,9 @@ bool Imc60gMotionController::homeAxis(
     const short axis = physicalAxis(logicalAxis);
     if (axis < 0) {
         setError(errorMessage, "IMC60G homing rejected: configured physical axis is missing.");
+        return false;
+    }
+    if (cancellationRequested(axis, errorMessage)) {
         return false;
     }
     const int direction = homeDirection(logicalAxis);
@@ -236,19 +326,22 @@ bool Imc60gMotionController::homeAxis(
     bool limitReached = reachedLimit(status, reason, direction);
     if (!limitReached) {
         if (!callSucceeded(api_->setMotionProfile(0, axis, profile_.homeSpeed,
-                profile_.homeAcceleration, profile_.homeDeceleration, 0, 0),
+                profile_.homeAcceleration, profile_.homeDeceleration, 0),
                 "IMC_SetAxMvPara", axis, errorMessage)
-            || !callSucceeded(api_->startJog(0, axis, direction),
+            || !callSucceeded(api_->configureJog(0, axis),
+                "IMC_JogPrf", axis, errorMessage)
+            || !callSucceeded(api_->startJogMove(0, axis, direction),
                 "IMC_StartJogMove", axis, errorMessage)) {
             return false;
         }
 
-        QElapsedTimer timeout;
-        QElapsedTimer encoderStable;
-        timeout.start();
-        encoderStable.start();
+        const qint64 timeoutStart = clock_->nowMs();
+        qint64 encoderStableSince = timeoutStart;
         int lastEncoder = startEncoder;
-        while (timeout.elapsed() <= profile_.homeTimeoutMs) {
+        while (clock_->nowMs() - timeoutStart <= profile_.homeTimeoutMs) {
+            if (cancellationRequested(axis, errorMessage)) {
+                return false;
+            }
             int planned = 0;
             int encoder = 0;
             if (!callSucceeded(api_->axisStatus(0, axis, &status), "IMC_GetAxSts", axis, errorMessage)
@@ -259,7 +352,7 @@ bool Imc60gMotionController::homeAxis(
             }
             if (absolutePulseDifference(encoder, lastEncoder) > 3) {
                 lastEncoder = encoder;
-                encoderStable.restart();
+                encoderStableSince = clock_->nowMs();
             }
             if (reachedLimit(status, reason, direction) || reason == kDiStopReason) {
                 limitReached = true;
@@ -267,8 +360,8 @@ bool Imc60gMotionController::homeAxis(
             }
             const bool movedEnough =
                 absolutePulseDifference(encoder, startEncoder) >= profile_.homeMinimumMove;
-            const bool stoppedAndStable =
-                (status & kAxisBusy) == 0 && encoderStable.elapsed() >= profile_.homeStableMs;
+            const bool stoppedAndStable = (status & kAxisBusy) == 0
+                && clock_->nowMs() - encoderStableSince >= profile_.homeStableMs;
             if (movedEnough && stoppedAndStable) {
                 limitReached = true;
                 break;
@@ -279,7 +372,7 @@ bool Imc60gMotionController::homeAxis(
                         .arg(axis).arg(status, 0, 16).arg(reason));
                 return false;
             }
-            QThread::msleep(1);
+            clock_->sleepMs(1);
         }
         if (!limitReached) {
             setError(errorMessage,
@@ -289,6 +382,9 @@ bool Imc60gMotionController::homeAxis(
         }
     }
 
+    if (cancellationRequested(axis, errorMessage)) {
+        return false;
+    }
     if (!callSucceeded(api_->stop(0, axis, 0), "IMC_StopMove", axis, errorMessage)) {
         return false;
     }
@@ -299,7 +395,7 @@ bool Imc60gMotionController::homeAxis(
         || !callSucceeded(api_->clearAxisStatus(0, axis),
             "IMC_ClrAxSts", axis, errorMessage)
         || !callSucceeded(api_->setMotionProfile(0, axis, profile_.homeBackoffSpeed,
-            profile_.homeAcceleration, profile_.homeDeceleration, 0, 0),
+            profile_.homeAcceleration, profile_.homeDeceleration, 0),
             "IMC_SetAxMvPara", axis, errorMessage)) {
         return false;
     }
@@ -309,10 +405,12 @@ bool Imc60gMotionController::homeAxis(
         return false;
     }
 
-    QElapsedTimer backoffTimeout;
-    backoffTimeout.start();
+    const qint64 backoffStart = clock_->nowMs();
     bool backoffComplete = false;
-    while (backoffTimeout.elapsed() <= profile_.homeBackoffTimeoutMs) {
+    while (clock_->nowMs() - backoffStart <= profile_.homeBackoffTimeoutMs) {
+        if (cancellationRequested(axis, errorMessage)) {
+            return false;
+        }
         if (!callSucceeded(api_->axisStatus(0, axis, &status),
                 "IMC_GetAxSts", axis, errorMessage)) {
             return false;
@@ -321,12 +419,15 @@ bool Imc60gMotionController::homeAxis(
             backoffComplete = true;
             break;
         }
-        QThread::msleep(1);
+        clock_->sleepMs(1);
     }
     if (!backoffComplete) {
         setError(errorMessage,
             QString("IMC60G backoff timed out (card=0, physical-axis=%1, timeout-ms=%2).")
                 .arg(axis).arg(profile_.homeBackoffTimeoutMs));
+        return false;
+    }
+    if (cancellationRequested(axis, errorMessage)) {
         return false;
     }
     if (!callSucceeded(api_->stop(0, axis, 0), "IMC_StopMove", axis, errorMessage)
@@ -335,7 +436,7 @@ bool Imc60gMotionController::homeAxis(
             "IMC_SetAxCurPos", axis, errorMessage)) {
         return false;
     }
-    QThread::msleep(20);
+    clock_->sleepMs(20);
     if (!callSucceeded(api_->syncPosition(0, axis), "IMC_SyncAxPos", axis, errorMessage)
         || !callSucceeded(api_->setCurrentPosition(0, axis, 0.0),
             "IMC_SetAxCurPos", axis, errorMessage)
@@ -346,36 +447,84 @@ bool Imc60gMotionController::homeAxis(
     return true;
 }
 
-void Imc60gMotionController::cleanupHardware()
+bool Imc60gMotionController::cleanupHardware(QString* errorMessage)
 {
-    if (!api_ || !cardOpened_) {
-        return;
+    if (errorMessage) {
+        errorMessage->clear();
     }
-    api_->stop(0, 0, 1);
-    api_->stop(0, 1, 1);
+    if (!api_ || !cardOpened_) {
+        return true;
+    }
+
+    QStringList failures;
+    const auto recordFailure = [&](int code, const char* operation, short axis) {
+        if (code != 0) {
+            failures << formatApiFailure(operation, profile_.cardIndex, axis, code);
+        }
+    };
+
+    recordFailure(api_->stop(0, 0, 1), "IMC_StopMove", 0);
+    recordFailure(api_->stop(0, 1, 1), "IMC_StopMove", 1);
     if (servoEnabled_[0]) {
-        api_->servoOff(0, 0);
+        recordFailure(api_->servoOff(0, 0), "IMC_ServoOff", 0);
     }
     if (servoEnabled_[1]) {
-        api_->servoOff(0, 1);
+        recordFailure(api_->servoOff(0, 1), "IMC_ServoOff", 1);
     }
+    if (ethercatTouched_) {
+        recordFailure(api_->stopEthercat(0), "IMC_DelEcatComm", kNoAxis);
+    }
+    recordFailure(api_->closeCard(0), "IMC_CloseCard", kNoAxis);
+
     servoEnabled_[0] = false;
     servoEnabled_[1] = false;
-    if (ethercatTouched_) {
-        api_->stopEthercat(0);
-    }
     ethercatTouched_ = false;
-    api_->closeCard(0);
     cardOpened_ = false;
+
+    if (!failures.isEmpty()) {
+        setError(errorMessage, failures.join("; "));
+        return false;
+    }
+    return true;
 }
 
-void Imc60gMotionController::disconnect()
+void Imc60gMotionController::requestCancellation()
 {
+    cancelRequested_.store(true);
+}
+
+bool Imc60gMotionController::disconnect(QString* errorMessage)
+{
+    requestCancellation();
     QMutexLocker locker(&mutex_);
-    cleanupHardware();
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+
+    QString poisonReason;
+    if (sdkIsPoisoned(&poisonReason)) {
+        state_ = Imc60gConnectionState::Fault;
+        setError(errorMessage,
+            "IMC60G remains in Fault after an unverified shutdown; restart the process. "
+            + poisonReason);
+        releaseOwnership();
+        return false;
+    }
+
+    QString cleanupError;
+    if (!cleanupHardware(&cleanupError)) {
+        poisonOwnership(cleanupError);
+        state_ = Imc60gConnectionState::Fault;
+        printActive_ = false;
+        setError(errorMessage,
+            "IMC60G shutdown is unverified; restart the process. " + cleanupError);
+        return false;
+    }
+
     releaseOwnership();
     printActive_ = false;
     state_ = Imc60gConnectionState::Disconnected;
+    return true;
 }
 
 short Imc60gMotionController::physicalAxis(
@@ -438,7 +587,7 @@ bool Imc60gMotionController::moveRelative(
         return false;
     }
 
-    double signedDistance = axisConfig.changeDirection ? -millimeters : millimeters;
+    const double signedDistance = axisConfig.changeDirection ? -millimeters : millimeters;
     const double pulseValue =
         signedDistance * axisConfig.subdivision * axisConfig.resolution;
     if (!std::isfinite(pulseValue)
@@ -459,15 +608,21 @@ bool Imc60gMotionController::moveRelative(
         setError(errorMessage, "Manual IMC60G target overflows the native 32-bit position.");
         return false;
     }
-    return callSucceeded(api_->setMotionProfile(0, axis,
-                             axisConfig.speedOfMovement,
-                             axisConfig.acceleratedVelocity,
-                             axisConfig.acceleratedVelocity,
-                             axisConfig.startSpeed,
-                             axisConfig.stopSpeed),
-               "IMC_SetAxMvPara", axis, errorMessage)
-        && callSucceeded(api_->startPtp(0, axis, static_cast<int>(target)),
-            "IMC_StartPtpMove", axis, errorMessage);
+    if (!callSucceeded(api_->setMotionProfile(0, axis,
+            axisConfig.speedOfMovement,
+            axisConfig.acceleratedVelocity,
+            axisConfig.acceleratedVelocity,
+            axisConfig.startSpeed),
+            "IMC_SetAxMvPara", axis, errorMessage)) {
+        return false;
+    }
+    if (axisConfig.stopSpeed > 0
+        && !callSucceeded(api_->setAxisEndVelocity(0, axis, axisConfig.stopSpeed),
+            "IMC_SetAxEndVel", axis, errorMessage)) {
+        return false;
+    }
+    return callSucceeded(api_->startPtp(0, axis, static_cast<int>(target)),
+        "IMC_StartPtpMove", axis, errorMessage);
 }
 
 bool Imc60gMotionController::stopAxis(

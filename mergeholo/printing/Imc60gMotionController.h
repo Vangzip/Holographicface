@@ -5,8 +5,19 @@
 
 #include <QMutex>
 #include <QString>
+#include <QtGlobal>
+
+#include <atomic>
+#include <memory>
 
 class IImc60gApi;
+
+class IImc60gClock {
+public:
+    virtual ~IImc60gClock() = default;
+    virtual qint64 nowMs() const = 0;
+    virtual void sleepMs(unsigned long milliseconds) = 0;
+};
 
 enum class Imc60gConnectionState {
     Disconnected,
@@ -27,12 +38,14 @@ struct Imc60gAxisSnapshot {
 
 class Imc60gMotionController {
 public:
-    Imc60gMotionController(IImc60gApi* api, const PrintHardwareProfile& profile);
+    Imc60gMotionController(IImc60gApi* api, const PrintHardwareProfile& profile,
+        IImc60gClock* clock = nullptr);
     ~Imc60gMotionController();
 
     Imc60gConnectionState state() const;
     bool connectAndHome(QString* errorMessage = nullptr);
-    void disconnect();
+    bool disconnect(QString* errorMessage = nullptr);
+    void requestCancellation();
 
     bool moveRelative(PrintHardwareProfile::LogicalAxis logicalAxis, double millimeters,
         const PrintAxisConfig& axisConfig, QString* errorMessage = nullptr);
@@ -47,16 +60,21 @@ private:
     bool homeAxis(PrintHardwareProfile::LogicalAxis logicalAxis, QString* errorMessage);
     bool callSucceeded(int code, const char* functionName, short axis,
         QString* errorMessage) const;
-    void cleanupHardware();
+    bool cleanupHardware(QString* errorMessage);
+    bool cancellationRequested(short activeAxis, QString* errorMessage);
     short physicalAxis(PrintHardwareProfile::LogicalAxis logicalAxis) const;
     int homeDirection(PrintHardwareProfile::LogicalAxis logicalAxis) const;
     int homeBackoff(PrintHardwareProfile::LogicalAxis logicalAxis) const;
     bool acquireOwnership(QString* errorMessage);
     void releaseOwnership();
+    void poisonOwnership(const QString& reason);
 
     IImc60gApi* api_;
     PrintHardwareProfile profile_;
+    std::unique_ptr<IImc60gClock> ownedClock_;
+    IImc60gClock* clock_;
     mutable QMutex mutex_;
+    std::atomic<bool> cancelRequested_ {false};
     Imc60gConnectionState state_ = Imc60gConnectionState::Disconnected;
     bool printActive_ = false;
     bool cardOpened_ = false;

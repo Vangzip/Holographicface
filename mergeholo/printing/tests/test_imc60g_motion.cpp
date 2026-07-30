@@ -2,6 +2,7 @@
 #include "../Imc60gMotionController.h"
 #include "../PrintConfig.h"
 #include "../PrintHardwareProfile.h"
+#include "imc60g_safety_tests.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -135,19 +136,23 @@ public:
     }
 
     int setMotionProfile(unsigned int cardIndex, short axis, double velocity,
-        double acceleration, double deceleration, double startVelocity,
-        double endVelocity) override
+        double acceleration, double deceleration, double startVelocity) override
     {
         Q_UNUSED(cardIndex);
+        Q_UNUSED(axis);
         Q_UNUSED(acceleration);
         Q_UNUSED(deceleration);
         Q_UNUSED(startVelocity);
-        Q_UNUSED(endVelocity);
         lastProfileVelocity = velocity;
-        if (failAt == QString("home%1").arg(axis)) {
-            return 0x0023;
-        }
         return result("profile");
+    }
+
+    int setAxisEndVelocity(unsigned int cardIndex, short axis, double endVelocity) override
+    {
+        Q_UNUSED(cardIndex);
+        Q_UNUSED(axis);
+        Q_UNUSED(endVelocity);
+        return result("end_velocity");
     }
 
     int startPtp(unsigned int cardIndex, short axis, int target) override
@@ -163,7 +168,14 @@ public:
         return result("ptp");
     }
 
-    int startJog(unsigned int cardIndex, short axis, int direction) override
+    int configureJog(unsigned int cardIndex, short axis) override
+    {
+        Q_UNUSED(cardIndex);
+        Q_UNUSED(axis);
+        return result("jog_profile");
+    }
+
+    int startJogMove(unsigned int cardIndex, short axis, int direction) override
     {
         Q_UNUSED(cardIndex);
         events << QString("home:%1:%2").arg(axis).arg(direction);
@@ -412,6 +424,9 @@ void testSnapshotsAndExplicitStops()
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
+    if (runImc60gSafetyTests(app.arguments())) {
+        return 0;
+    }
     testLifecycleAndHomingOrder();
     testLifecycleFailuresCloseSafely();
     testManualMotionValidationAndMapping();

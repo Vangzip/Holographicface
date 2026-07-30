@@ -16,10 +16,12 @@ public:
     virtual int servoOn(unsigned int cardIndex, short axis) = 0;
     virtual int servoOff(unsigned int cardIndex, short axis) = 0;
     virtual int setMotionProfile(unsigned int cardIndex, short axis, double velocity,
-        double acceleration, double deceleration, double startVelocity,
+        double acceleration, double deceleration, double startVelocity) = 0;
+    virtual int setAxisEndVelocity(unsigned int cardIndex, short axis,
         double endVelocity) = 0;
     virtual int startPtp(unsigned int cardIndex, short axis, int target) = 0;
-    virtual int startJog(unsigned int cardIndex, short axis, int direction) = 0;
+    virtual int configureJog(unsigned int cardIndex, short axis) = 0;
+    virtual int startJogMove(unsigned int cardIndex, short axis, int direction) = 0;
     virtual int stop(unsigned int cardIndex, short axis, int mode) = 0;
     virtual int axisStatus(unsigned int cardIndex, short axis, unsigned int* status) = 0;
     virtual int stopReason(unsigned int cardIndex, short axis, unsigned int* reason) = 0;

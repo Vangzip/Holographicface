@@ -79,14 +79,10 @@ int Imc60gApi::servoOff(unsigned int cardIndex, short axis)
 }
 
 int Imc60gApi::setMotionProfile(unsigned int cardIndex, short axis, double velocity,
-    double acceleration, double deceleration, double startVelocity,
-    double endVelocity)
+    double acceleration, double deceleration, double startVelocity)
 {
-    // The approved V2 controller uses IMC_SetAxMvPara. This SDK revision has no
-    // start/end velocity parameters on that call, so they remain part of the
-    // stable test seam but are not translated into invented jerk values.
+    // V2 caches start velocity but does not send it to this SDK call.
     (void)startVelocity;
-    (void)endVelocity;
     const int rc = IMC_SetAxMvPara(
         cardNumber(cardIndex), axis, velocity, acceleration, deceleration);
     if (rc == 0 && axis >= 0 && static_cast<size_t>(axis) < profileVelocities_.size()) {
@@ -95,19 +91,26 @@ int Imc60gApi::setMotionProfile(unsigned int cardIndex, short axis, double veloc
     return rc;
 }
 
+int Imc60gApi::setAxisEndVelocity(
+    unsigned int cardIndex, short axis, double endVelocity)
+{
+    return IMC_SetAxEndVel(cardNumber(cardIndex), axis, endVelocity);
+}
+
 int Imc60gApi::startPtp(unsigned int cardIndex, short axis, int target)
 {
     return IMC_StartPtpMove(cardNumber(cardIndex), axis, static_cast<double>(target), 0);
 }
 
-int Imc60gApi::startJog(unsigned int cardIndex, short axis, int direction)
+int Imc60gApi::configureJog(unsigned int cardIndex, short axis)
+{
+    return IMC_JogPrf(cardNumber(cardIndex), axis);
+}
+
+int Imc60gApi::startJogMove(unsigned int cardIndex, short axis, int direction)
 {
     if (axis < 0 || static_cast<size_t>(axis) >= profileVelocities_.size()) {
         return ERR_AX_INDEX_OUTRANG;
-    }
-    const int profileRc = IMC_JogPrf(cardNumber(cardIndex), axis);
-    if (profileRc != 0) {
-        return profileRc;
     }
     const double signedVelocity =
         (direction < 0 ? -1.0 : 1.0) * profileVelocities_[static_cast<size_t>(axis)];

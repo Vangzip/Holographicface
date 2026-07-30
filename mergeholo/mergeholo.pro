@@ -13,6 +13,7 @@ SOURCES += \
     camera/LightFieldCapture.cpp \
     printing/Imc60gApi.cpp \
     printing/Imc60gMotionController.cpp \
+    printing/PrintHardwareProfile.cpp \
     vendor/base/FileLibrary.cpp \
     vendor/base/Logger.cpp \
     vendor/multiview/memoryAtlasPageSink.cpp \

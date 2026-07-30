@@ -72,6 +72,8 @@ public:
     QStringList cleanupEvents;
     QString failAt;
     QString pollFailAt;
+    int failureCode = kFailureCode;
+    unsigned int forcedStopReason = 0;
     HomeBehavior behavior = HomeBehavior::Limit;
     unsigned int cardCount = 1;
     QSet<short> homingAxes;
@@ -90,7 +92,7 @@ public:
     int result(const QString& operation) const
     {
         return failAt == operation || (failAt == "all_cleanup" && shutdownMode)
-            ? kFailureCode : 0;
+            ? failureCode : 0;
     }
 
     void record(const QString& event)
@@ -256,7 +258,7 @@ public:
         record(QString("status:%1").arg(axis));
         if (result("axis_status") != 0
             || (pollFailAt == "axis_status" && homingAxes.contains(axis))) {
-            return kFailureCode;
+            return failureCode;
         }
         if (!homingAxes.contains(axis)) {
             *status = 0;
@@ -297,9 +299,11 @@ public:
         record("stop_reason");
         if (result("stop_reason") != 0
             || (pollFailAt == "stop_reason" && homingAxes.contains(axis))) {
-            return kFailureCode;
+            return failureCode;
         }
-        *reason = behavior == HomeBehavior::DiStop && homingAxes.contains(axis) ? 0x0b : 0;
+        *reason = homingAxes.contains(axis) && forcedStopReason != 0
+            ? forcedStopReason
+            : behavior == HomeBehavior::DiStop && homingAxes.contains(axis) ? 0x0b : 0;
         return 0;
     }
 
@@ -310,7 +314,7 @@ public:
         record("planned");
         if (result("planned") != 0
             || (pollFailAt == "planned" && homingAxes.contains(axis))) {
-            return kFailureCode;
+            return failureCode;
         }
         *position = 0;
         return 0;
@@ -322,7 +326,7 @@ public:
         record("encoder");
         if (result("encoder") != 0
             || (pollFailAt == "encoder" && homingAxes.contains(axis))) {
-            return kFailureCode;
+            return failureCode;
         }
         if (behavior == HomeBehavior::WrongLimit) {
             *position = 0;
@@ -589,6 +593,124 @@ void testFailedServoOnIsStillPoweredOff()
         "successful and unverified Servo On axes must both receive Servo Off");
 }
 
+void checkMappedError(
+    const QString& error, const QString& operation, const QString& symbol,
+    int code, const QString& label)
+{
+    check(error.contains(operation), label + " must name operation: " + error);
+    check(error.contains(symbol), label + " must name errorcode.h symbol: " + error);
+    check(error.contains(QString("code=%1").arg(code))
+            && error.contains(QString("[0x%1]").arg(static_cast<unsigned int>(code), 0, 16)),
+        label + " must show decimal and hexadecimal values: " + error);
+    check(error.contains(QStringLiteral("\u64CD\u4F5C"))
+            && error.contains("Action"),
+        label + " must include actionable Chinese/English guidance: " + error);
+}
+
+void testTaskErrorCodeDescriptions()
+{
+    {
+        SafetyApi api;
+        AdvancingClock clock;
+        Imc60gMotionController controller(&api, PrintHardwareProfile(), &clock);
+        QString error;
+        check(controller.connectAndHome(&error), "end velocity mapping setup");
+        PrintAxisConfig axis;
+        axis.subdivision = 40;
+        axis.resolution = 50;
+        axis.speedOfMovement = 5000;
+        axis.acceleratedVelocity = 50000;
+        axis.startSpeed = 500;
+        axis.stopSpeed = 500;
+        axis.maxDistance = 150.0;
+        api.failAt = "end_velocity";
+        api.failureCode = 0x0104;
+        check(!controller.moveRelative(
+            PrintHardwareProfile::LogicalAxis::X, 1.0, axis, &error),
+            "ERR_ENDVEL_OUTRANG must fail");
+        checkMappedError(error, "IMC_SetAxEndVel", "ERR_ENDVEL_OUTRANG",
+            0x0104, "end velocity");
+    }
+
+    const struct {
+        const char* point;
+        int code;
+        const char* operation;
+        const char* symbol;
+        const char* label;
+    } connectionErrors[] = {
+        {"emg", 0x0310, "IMC_SetEmgTrigLevelInv", "ERR_HW_ESTP_IS_TRIG", "emergency stop"},
+        {"backoff0", 0x033c, "IMC_StartPtpMove", "ERR_AX_BUSY", "axis busy"},
+        {"jog_profile0", 0x033a, "IMC_JogPrf", "ERR_AX_SVOFF", "servo off"},
+        {"jog_start0", 0x0161, "IMC_StartJogMove", "ERR_ECAT_AX_CNT_OUTRANG", "axis count"}
+    };
+    for (const auto& item : connectionErrors) {
+        SafetyApi api;
+        AdvancingClock clock;
+        api.failAt = item.point;
+        api.failureCode = item.code;
+        Imc60gMotionController controller(&api, PrintHardwareProfile(), &clock);
+        QString error;
+        check(!controller.connectAndHome(&error), QString(item.label) + " must fail");
+        checkMappedError(error, item.operation, item.symbol, item.code, item.label);
+        if (QString(item.point) == "emg") {
+            check(api.stopAttempts.contains(0) && api.stopAttempts.contains(1),
+                "pre-servo failure must still stop both axes");
+            check(api.servoOffAttempts.isEmpty(),
+                "pre-servo failure must not power off axes that were never enabled");
+            check(api.ethercatStopAttempted && api.closeAttempted,
+                "pre-servo failure must release EtherCAT and card resources");
+        } else {
+            expectCleanupAttempted(api);
+        }
+    }
+
+    {
+        SafetyApi api;
+        AdvancingClock clock;
+        api.failAt = "axis_status";
+        api.failureCode = 0x7abc;
+        Imc60gMotionController controller(&api, PrintHardwareProfile(), &clock);
+        QString error;
+        check(!controller.connectAndHome(&error), "unknown code must fail");
+        check(error.contains("code=31420") && error.contains("[0x7abc]")
+                && error.contains("UNRECOGNIZED_IMC_ERROR")
+                && error.contains(QStringLiteral("\u672A\u8BC6\u522B")),
+            "unknown code must preserve value and mark unrecognized: " + error);
+        expectCleanupAttempted(api);
+    }
+}
+
+void testDirectionalLimitStopReasons()
+{
+    {
+        SafetyApi api;
+        AdvancingClock clock;
+        api.behavior = HomeBehavior::SeekForever;
+        api.forcedStopReason = 0x05;
+        Imc60gMotionController controller(&api, PrintHardwareProfile(), &clock);
+        QString error;
+        check(controller.connectAndHome(&error),
+            "negative home must accept stop reason 0x05: " + error);
+        check(controller.disconnect(&error), "negative stop reason cleanup");
+    }
+
+    {
+        SafetyApi api;
+        AdvancingClock clock;
+        clock.stepMs = 200000;
+        api.behavior = HomeBehavior::SeekForever;
+        api.forcedStopReason = 0x04;
+        Imc60gMotionController controller(&api, PrintHardwareProfile(), &clock);
+        QString error;
+        check(!controller.connectAndHome(&error),
+            "negative home must reject positive-limit stop reason 0x04");
+        check(error.contains("timed out") && error.contains("stop-reason=4"),
+            "wrong stop reason must remain diagnostic: " + error);
+        expectCleanupAttempted(api);
+    }
+}
+
 void waitFor(const std::atomic<bool>& flag, const QString& label)
 {
     for (int i = 0; i < 5000 && !flag.load(); ++i) {
@@ -722,6 +844,8 @@ bool runImc60gSafetyTests(const QStringList& arguments)
     testAcceptedAndRejectedHomingStates();
     testPollingAndTimeoutFailures();
     testFailedServoOnIsStillPoweredOff();
+    testTaskErrorCodeDescriptions();
+    testDirectionalLimitStopReasons();
     testCancellationPaths();
     testSuccessfulCleanupOrder();
     testCleanupFailuresInChildren();

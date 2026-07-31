@@ -910,20 +910,20 @@ Recording fakes must produce:
 
 ```text
 preflight
-present:2
+present:0
 vblank
 arm:forward
 move_y:forward
-present:2,vblank,present:1,vblank,present:0,vblank
+present:0,vblank,present:1,vblank,present:2,vblank
 wait_y
 disarm
 move_x
 wait_x
-present:0
+present:2
 vblank
 arm:reverse
 move_y:reverse
-present:0,vblank,present:1,vblank,present:2,vblank
+present:2,vblank,present:1,vblank,present:0,vblank
 wait_y
 disarm
 cleanup_stop

@@ -14,9 +14,13 @@ SOURCES += \
     printing/Imc60gApi.cpp \
     printing/Imc60gMotionController.cpp \
     printing/PrintHardwareProfile.cpp \
+    printing/PrintHardwarePreflight.cpp \
     printing/PrintFrame.cpp \
     printing/Sv660nExposureController.cpp \
     printing/V2PrintTiming.cpp \
+    printing/PrintConfig.cpp \
+    printing/PrintImageSource.cpp \
+    printing/PrintJobRunner.cpp \
     printing/SecondScreenSelection.cpp \
     printing/V2D3DFramePresenter.cpp \
     vendor/base/FileLibrary.cpp \
@@ -47,11 +51,17 @@ HEADERS += \
     printing/IImc60gApi.h \
     printing/Imc60gApi.h \
     printing/Imc60gMotionController.h \
+    printing/IExposureController.h \
     printing/Sv660nExposureController.h \
     printing/V2PrintTiming.h \
     printing/IPrintFramePresenter.h \
+    printing/IMotionController.h \
     printing/IVBlankWaiter.h \
+    printing/PrintConfig.h \
+    printing/PrintHardwarePreflight.h \
     printing/PrintFrame.h \
+    printing/PrintImageSource.h \
+    printing/PrintJobRunner.h \
     printing/SecondScreenSelection.h \
     printing/V2D3DFramePresenter.h \
     vendor/base/base.h \

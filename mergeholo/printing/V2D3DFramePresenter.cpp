@@ -700,6 +700,23 @@ bool V2D3DFramePresenter::prepare(const PrintFrame& firstFrame, const QSize& tar
     return ok;
 }
 
+PrintPresenterReadiness V2D3DFramePresenter::printReadiness(QString* errorMessage) const
+{
+    PrintPresenterReadiness readiness;
+    readiness.secondScreenAttached = selectV2SecondScreenIndex(displays_).has_value();
+    readiness.presenterAvailable = backend_ && vblankWaiter_ && dispatcher_;
+    readiness.vblankReady = readiness.presenterAvailable;
+    readiness.generationCurrent = readiness.presenterAvailable;
+    if (errorMessage) {
+        errorMessage->clear();
+        if (!readiness.secondScreenAttached)
+            *errorMessage = QStringLiteral("No attached non-primary display is available.");
+        else if (!readiness.presenterAvailable)
+            *errorMessage = QStringLiteral("Presenter backend, dispatcher, or VBlank waiter is unavailable.");
+    }
+    return readiness;
+}
+
 bool V2D3DFramePresenter::present(const PrintFrame& frame, const QSize& targetSize,
     QString* errorMessage)
 {
@@ -749,6 +766,12 @@ bool V2D3DFramePresenter::present(const PrintFrame& frame, const QSize& targetSi
         failDispatcherCommand(expectedGeneration, QStringLiteral("Present"), errorMessage);
     }
     return presented;
+}
+
+bool V2D3DFramePresenter::presentRowAnchor(const PrintFrame& frame,
+    const QSize& targetSize, QString* errorMessage)
+{
+    return present(frame, targetSize, errorMessage);
 }
 
 bool V2D3DFramePresenter::waitForDisplayFrame(QString* errorMessage)

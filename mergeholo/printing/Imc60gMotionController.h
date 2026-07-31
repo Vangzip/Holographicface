@@ -2,6 +2,7 @@
 
 #include "PrintConfig.h"
 #include "PrintHardwareProfile.h"
+#include "IMotionController.h"
 
 #include <QMutex>
 #include <QString>
@@ -36,7 +37,7 @@ struct Imc60gAxisSnapshot {
     int encoderPosition = 0;
 };
 
-class Imc60gMotionController {
+class Imc60gMotionController final : public IMotionController {
 public:
     Imc60gMotionController(IImc60gApi* api, const PrintHardwareProfile& profile,
         IImc60gClock* clock = nullptr);
@@ -56,6 +57,24 @@ public:
     bool isReadyForPrint() const;
     void setPrintActive(bool active);
 
+    PrintMotionReadiness printReadiness(QString* errorMessage = nullptr) const override;
+    bool beginPrint(QString* errorMessage = nullptr) override;
+    void endPrint() override;
+    bool startYScan(qint32 absoluteTarget, const PrintAxisConfig& config,
+        QString* errorMessage = nullptr) override;
+    bool waitYStopped(int timeoutMs, const std::atomic_bool& cancelRequested,
+        QString* errorMessage = nullptr) override;
+    bool stepX(qint32 relativePulses, const PrintAxisConfig& config,
+        QString* errorMessage = nullptr) override;
+    bool waitXStopped(int timeoutMs, const std::atomic_bool& cancelRequested,
+        QString* errorMessage = nullptr) override;
+    bool stopMappedAxes(QString* errorMessage = nullptr) override;
+    bool waitMappedAxesStopped(int timeoutMs, QString* errorMessage = nullptr) override;
+    bool returnToLogicalZero(const PrintAxisConfig& xConfig,
+        const PrintAxisConfig& yConfig, int timeoutMs,
+        QString* errorMessage = nullptr) override;
+    bool verifyLogicalZero(QString* errorMessage = nullptr) override;
+
 private:
     bool homeAxis(PrintHardwareProfile::LogicalAxis logicalAxis, QString* errorMessage);
     bool callSucceeded(int code, const char* functionName, short axis,
@@ -68,6 +87,10 @@ private:
     bool acquireOwnership(QString* errorMessage);
     void releaseOwnership();
     void poisonOwnership(const QString& reason);
+    bool startPrintMove(short axis, qint32 absoluteTarget,
+        const PrintAxisConfig& config, QString* errorMessage);
+    bool waitPrintAxisStopped(short axis, int timeoutMs,
+        const std::atomic_bool* cancelRequested, QString* errorMessage);
 
     IImc60gApi* api_;
     PrintHardwareProfile profile_;

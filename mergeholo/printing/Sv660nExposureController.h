@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PrintHardwareProfile.h"
+#include "IExposureController.h"
 
 #include <QString>
 
@@ -8,7 +9,7 @@
 
 class IImc60gApi;
 
-class Sv660nExposureController {
+class Sv660nExposureController final : public IExposureController {
 public:
     using WaitFunction = std::function<void(int milliseconds)>;
 
@@ -16,9 +17,10 @@ public:
         const PrintHardwareProfile& profile,
         WaitFunction waitFunction = WaitFunction());
 
-    bool arm(long begin, long end, QString* errorMessage = nullptr);
-    bool disarm(QString* errorMessage = nullptr);
-    bool isArmed() const;
+    PrintExposureReadiness printReadiness(QString* errorMessage = nullptr) const override;
+    bool arm(qint32 begin, qint32 end, QString* errorMessage = nullptr) override;
+    bool disarm(QString* errorMessage = nullptr) override;
+    bool isArmed() const override;
 
 private:
     bool writeU16(unsigned short index, unsigned short subIndex,

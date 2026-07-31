@@ -50,6 +50,13 @@ void setError(QString* destination, const QString& message)
     }
 }
 
+void appendTaskError(QString* destination, const QString& message)
+{
+    if (message.isEmpty()) return;
+    if (!destination->isEmpty()) *destination += "; ";
+    *destination += message;
+}
+
 enum class ErrorAction {
     Transport,
     Parameter,
@@ -848,4 +855,280 @@ void Imc60gMotionController::setPrintActive(bool active)
 {
     QMutexLocker locker(&mutex_);
     printActive_ = active;
+}
+
+PrintMotionReadiness Imc60gMotionController::printReadiness(
+    QString* errorMessage) const
+{
+    QMutexLocker locker(&mutex_);
+    if (errorMessage) errorMessage->clear();
+    PrintMotionReadiness readiness;
+    readiness.sdkRuntimeReady = api_ != nullptr;
+    readiness.axisMappingLocked = profile_.cardIndex == 0
+        && profile_.axisX == 1 && profile_.axisY == 0;
+    readiness.cardReady = state_ == Imc60gConnectionState::Ready;
+    readiness.ethercatReady = readiness.cardReady;
+    readiness.emergencyClear = readiness.cardReady;
+    readiness.axesHomed = readiness.cardReady;
+    if (!readiness.cardReady || !api_) {
+        setError(errorMessage, "IMC60G requires an explicit successful connectAndHome().");
+        return readiness;
+    }
+
+    unsigned int xStatus = 0;
+    unsigned int yStatus = 0;
+    QString detail;
+    const bool xOk = callSucceeded(api_->axisStatus(profile_.cardIndex,
+        static_cast<short>(profile_.axisX), &xStatus), "IMC_GetAxSts",
+        static_cast<short>(profile_.axisX), &detail);
+    const bool yOk = callSucceeded(api_->axisStatus(profile_.cardIndex,
+        static_cast<short>(profile_.axisY), &yStatus), "IMC_GetAxSts",
+        static_cast<short>(profile_.axisY), &detail);
+    readiness.servosReady = xOk && yOk
+        && (xStatus & kAxisAlarm) == 0 && (yStatus & kAxisAlarm) == 0;
+    readiness.axesStopped = xOk && yOk
+        && (xStatus & kAxisBusy) == 0 && (yStatus & kAxisBusy) == 0;
+    if ((!xOk || !yOk) && errorMessage) *errorMessage = detail;
+    return readiness;
+}
+
+bool Imc60gMotionController::beginPrint(QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    if (errorMessage) errorMessage->clear();
+    if (state_ != Imc60gConnectionState::Ready || printActive_) {
+        setError(errorMessage,
+            "IMC60G print ownership requires Ready state and no active print.");
+        return false;
+    }
+    printActive_ = true;
+    return true;
+}
+
+void Imc60gMotionController::endPrint()
+{
+    QMutexLocker locker(&mutex_);
+    printActive_ = false;
+}
+
+bool Imc60gMotionController::startPrintMove(short axis, qint32 absoluteTarget,
+    const PrintAxisConfig& config, QString* errorMessage)
+{
+    if (state_ != Imc60gConnectionState::Ready || !printActive_) {
+        setError(errorMessage,
+            "IMC60G print move requires already-connected print ownership.");
+        return false;
+    }
+    if (axis < 0 || config.speedOfMovement <= 0
+        || config.acceleratedVelocity <= 0 || config.startSpeed < 0
+        || config.stopSpeed < 0) {
+        setError(errorMessage, "IMC60G print motion profile is invalid.");
+        return false;
+    }
+    if (!callSucceeded(api_->setMotionProfile(profile_.cardIndex, axis,
+            config.speedOfMovement, config.acceleratedVelocity,
+            config.acceleratedVelocity, config.startSpeed),
+            "IMC_SetAxMvPara", axis, errorMessage)) {
+        return false;
+    }
+    if (!callSucceeded(api_->setAxisEndVelocity(profile_.cardIndex, axis,
+            config.stopSpeed), "IMC_SetAxEndVel", axis, errorMessage)) {
+        return false;
+    }
+    return callSucceeded(api_->startPtp(profile_.cardIndex, axis, absoluteTarget),
+        "IMC_StartPtpMove", axis, errorMessage);
+}
+
+bool Imc60gMotionController::startYScan(qint32 absoluteTarget,
+    const PrintAxisConfig& config, QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    if (errorMessage) errorMessage->clear();
+    return startPrintMove(static_cast<short>(profile_.axisY), absoluteTarget,
+        config, errorMessage);
+}
+
+bool Imc60gMotionController::waitPrintAxisStopped(short axis, int timeoutMs,
+    const std::atomic_bool* cancelRequested, QString* errorMessage)
+{
+    if (timeoutMs <= 0) {
+        setError(errorMessage, "IMC60G wait timeout must be positive.");
+        return false;
+    }
+    const qint64 started = clock_->nowMs();
+    while (true) {
+        if (cancelRequested && cancelRequested->load()) {
+            setError(errorMessage, "IMC60G print wait was cancelled.");
+            return false;
+        }
+        unsigned int status = 0;
+        if (!callSucceeded(api_->axisStatus(profile_.cardIndex, axis, &status),
+                "IMC_GetAxSts", axis, errorMessage)) {
+            return false;
+        }
+        if ((status & kAxisAlarm) != 0) {
+            setError(errorMessage,
+                QString("IMC60G axis alarm while waiting: axis=%1 status=0x%2")
+                    .arg(axis).arg(status, 8, 16, QLatin1Char('0')));
+            return false;
+        }
+        if ((status & kAxisBusy) == 0) {
+            unsigned int reason = 0;
+            if (!callSucceeded(api_->stopReason(profile_.cardIndex, axis, &reason),
+                    "IMC_GetAxStopReason", axis, errorMessage)) {
+                return false;
+            }
+            if (reason == kPositiveLimitStopReason
+                || reason == kNegativeLimitStopReason
+                || reason == kDiStopReason) {
+                setError(errorMessage,
+                    QString("IMC60G print axis stopped by safety input: axis=%1 reason=0x%2")
+                        .arg(axis).arg(reason, 8, 16, QLatin1Char('0')));
+                return false;
+            }
+            return true;
+        }
+        if (clock_->nowMs() - started >= timeoutMs) {
+            setError(errorMessage,
+                QString("IMC60G axis stop wait timed out: axis=%1 timeoutMs=%2")
+                    .arg(axis).arg(timeoutMs));
+            return false;
+        }
+        clock_->sleepMs(2);
+    }
+}
+
+bool Imc60gMotionController::waitYStopped(int timeoutMs,
+    const std::atomic_bool& cancelRequested, QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    return waitPrintAxisStopped(static_cast<short>(profile_.axisY), timeoutMs,
+        &cancelRequested, errorMessage);
+}
+
+bool Imc60gMotionController::stepX(qint32 relativePulses,
+    const PrintAxisConfig& config, QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    if (errorMessage) errorMessage->clear();
+    if (state_ != Imc60gConnectionState::Ready || !printActive_) {
+        setError(errorMessage,
+            "IMC60G X row step requires already-connected print ownership.");
+        return false;
+    }
+    const short axis = static_cast<short>(profile_.axisX);
+    int current = 0;
+    if (!callSucceeded(api_->plannedPosition(profile_.cardIndex, axis, &current),
+            "IMC_GetAxPrfPos32", axis, errorMessage)) {
+        return false;
+    }
+    const qint64 target = static_cast<qint64>(current) + relativePulses;
+    if (target < std::numeric_limits<qint32>::min()
+        || target > std::numeric_limits<qint32>::max()) {
+        setError(errorMessage, "IMC60G X row-step target exceeds int32.");
+        return false;
+    }
+    return startPrintMove(axis, static_cast<qint32>(target), config, errorMessage);
+}
+
+bool Imc60gMotionController::waitXStopped(int timeoutMs,
+    const std::atomic_bool& cancelRequested, QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    return waitPrintAxisStopped(static_cast<short>(profile_.axisX), timeoutMs,
+        &cancelRequested, errorMessage);
+}
+
+bool Imc60gMotionController::stopMappedAxes(QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    QString errors;
+    QString detail;
+    const short y = static_cast<short>(profile_.axisY);
+    const short x = static_cast<short>(profile_.axisX);
+    if (!callSucceeded(api_->stop(profile_.cardIndex, y, 1),
+            "IMC_StopMove", y, &detail)) {
+        appendTaskError(&errors, "Y stop failed: " + detail);
+    }
+    detail.clear();
+    if (!callSucceeded(api_->stop(profile_.cardIndex, x, 1),
+            "IMC_StopMove", x, &detail)) {
+        appendTaskError(&errors, "X stop failed: " + detail);
+    }
+    setError(errorMessage, errors);
+    return errors.isEmpty();
+}
+
+bool Imc60gMotionController::waitMappedAxesStopped(int timeoutMs,
+    QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    QString errors;
+    QString detail;
+    if (!waitPrintAxisStopped(static_cast<short>(profile_.axisY), timeoutMs,
+            nullptr, &detail)) {
+        appendTaskError(&errors, "Y stopped verification failed: " + detail);
+    }
+    detail.clear();
+    if (!waitPrintAxisStopped(static_cast<short>(profile_.axisX), timeoutMs,
+            nullptr, &detail)) {
+        appendTaskError(&errors, "X stopped verification failed: " + detail);
+    }
+    setError(errorMessage, errors);
+    return errors.isEmpty();
+}
+
+bool Imc60gMotionController::returnToLogicalZero(
+    const PrintAxisConfig& xConfig, const PrintAxisConfig& yConfig,
+    int timeoutMs, QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    QString errors;
+    QString detail;
+    const short x = static_cast<short>(profile_.axisX);
+    const short y = static_cast<short>(profile_.axisY);
+    if (!startPrintMove(x, 0, xConfig, &detail)) {
+        appendTaskError(&errors, "X zero move failed: " + detail);
+    } else if (!waitPrintAxisStopped(x, timeoutMs, nullptr, &detail)) {
+        appendTaskError(&errors, "X zero wait failed: " + detail);
+    }
+    detail.clear();
+    if (!startPrintMove(y, 0, yConfig, &detail)) {
+        appendTaskError(&errors, "Y zero move failed: " + detail);
+    } else if (!waitPrintAxisStopped(y, timeoutMs, nullptr, &detail)) {
+        appendTaskError(&errors, "Y zero wait failed: " + detail);
+    }
+    setError(errorMessage, errors);
+    return errors.isEmpty();
+}
+
+bool Imc60gMotionController::verifyLogicalZero(QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    QString errors;
+    for (short axis : {static_cast<short>(profile_.axisX),
+             static_cast<short>(profile_.axisY)}) {
+        unsigned int status = 0;
+        int planned = 0;
+        int encoder = 0;
+        QString detail;
+        if (!callSucceeded(api_->axisStatus(profile_.cardIndex, axis, &status),
+                "IMC_GetAxSts", axis, &detail)
+            || !callSucceeded(api_->plannedPosition(profile_.cardIndex, axis, &planned),
+                "IMC_GetAxPrfPos32", axis, &detail)
+            || !callSucceeded(api_->encoderPosition(profile_.cardIndex, axis, &encoder),
+                "IMC_GetAxEncPos32", axis, &detail)) {
+            appendTaskError(&errors, detail);
+            continue;
+        }
+        if ((status & (kAxisAlarm | kAxisBusy)) != 0
+            || planned != 0 || std::abs(encoder) > profile_.homeMinimumMove) {
+            appendTaskError(&errors,
+                QString("Logical-zero verification failed: axis=%1 status=0x%2 planned=%3 encoder=%4 tolerance=%5")
+                    .arg(axis).arg(status, 8, 16, QLatin1Char('0'))
+                    .arg(planned).arg(encoder).arg(profile_.homeMinimumMove));
+        }
+    }
+    setError(errorMessage, errors);
+    return errors.isEmpty();
 }

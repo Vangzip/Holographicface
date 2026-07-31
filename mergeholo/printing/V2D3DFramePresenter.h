@@ -52,12 +52,7 @@ public:
     virtual void shutdown() = 0;
 };
 
-struct V2RowVBlankAnchor {
-private:
-    friend class V2D3DFramePresenter;
-    quint64 presenterGeneration = 0;
-    bool available = false;
-};
+using V2RowVBlankAnchor = PrintRowVBlankAnchor;
 
 class V2D3DFramePresenter final : public IPrintFramePresenter
 {
@@ -69,14 +64,17 @@ public:
         std::shared_ptr<IPresentationDispatcher> dispatcher);
     ~V2D3DFramePresenter() override;
 
+    PrintPresenterReadiness printReadiness(QString* errorMessage = nullptr) const override;
     bool prepare(const PrintFrame& firstFrame, const QSize& targetSize,
         QString* errorMessage = nullptr) override;
     bool present(const PrintFrame& frame, const QSize& targetSize,
         QString* errorMessage = nullptr) override;
+    bool presentRowAnchor(const PrintFrame& frame, const QSize& targetSize,
+        QString* errorMessage = nullptr) override;
     bool waitForDisplayFrame(QString* errorMessage = nullptr) override;
-    bool acquireRowAnchor(V2RowVBlankAnchor* anchor, QString* errorMessage = nullptr);
+    bool acquireRowAnchor(V2RowVBlankAnchor* anchor, QString* errorMessage = nullptr) override;
     bool waitForRowSlot(int slot, V2RowVBlankAnchor* anchor,
-        QString* errorMessage = nullptr);
+        QString* errorMessage = nullptr) override;
     void shutdown() override;
 
     bool isReady() const;

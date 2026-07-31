@@ -38,7 +38,17 @@ Sv660nExposureController::Sv660nExposureController(IImc60gApi& api,
     }
 }
 
-bool Sv660nExposureController::arm(long begin, long end, QString* errorMessage)
+PrintExposureReadiness Sv660nExposureController::printReadiness(QString* errorMessage) const
+{
+    PrintExposureReadiness readiness;
+    QString detail;
+    readiness.profileMatches = validateProfile(&detail);
+    readiness.safeBaseline = readiness.profileMatches && !armed_;
+    if (errorMessage) *errorMessage = readiness.profileMatches ? QString() : detail;
+    return readiness;
+}
+
+bool Sv660nExposureController::arm(qint32 begin, qint32 end, QString* errorMessage)
 {
     if (errorMessage) {
         errorMessage->clear();

@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QImage>
 #include <QMutex>
+#include <QPainter>
 #include <QThread>
 
 #include <atomic>
@@ -372,6 +373,13 @@ int runDisplaySmoke()
     for (int index = 0; index < 10; ++index) {
         QImage image(640, 480, QImage::Format_ARGB32);
         image.fill(QColor::fromHsv(index * 36, 220, 220));
+        QPainter painter(&image);
+        QFont font = painter.font();
+        font.setPixelSize(240);
+        font.setBold(true);
+        painter.setFont(font);
+        painter.setPen(Qt::white);
+        painter.drawText(image.rect(), Qt::AlignCenter, QString::number(index));
         images.push_back(image);
     }
 

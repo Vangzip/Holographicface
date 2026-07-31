@@ -20,6 +20,7 @@ constexpr unsigned int kNegativeLimit = 0x00000020;
 constexpr unsigned int kAxisEmergency = 0x00000200;
 constexpr unsigned int kAxisUnlinked = 0x00004000;
 constexpr unsigned int kEthercatMasterOperational = 6;
+constexpr short kHardwareEmergencyStop = 0x0001;
 constexpr unsigned int kPositiveLimitStopReason = 0x04;
 constexpr unsigned int kNegativeLimitStopReason = 0x05;
 constexpr unsigned int kDiStopReason = 0x0b;
@@ -450,8 +451,31 @@ bool Imc60gMotionController::connectAndHome(QString* errorMessage)
         goto fail;
     }
 
-    if (!callSucceeded(api_->setEmergencyLevel(0, 1), "IMC_SetEmgTrigLevelInv", kNoAxis, errorMessage)
-        || !callSucceeded(api_->clearAxisStatus(0, 0), "IMC_ClrAxSts", 0, errorMessage)
+    if (!callSucceeded(api_->setEmergencyLevel(0, 1), "IMC_SetEmgTrigLevelInv", kNoAxis, errorMessage)) {
+        goto fail;
+    }
+
+    short emergencyStatus = 0;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        if (!callSucceeded(api_->emergencyStatus(0, &emergencyStatus),
+                "IMC_GetEmgSts", kNoAxis, errorMessage)) {
+            goto fail;
+        }
+        if ((emergencyStatus & kHardwareEmergencyStop) == 0) {
+            break;
+        }
+        if (attempt < 19) {
+            clock_->sleepMs(50);
+        }
+    }
+    if ((emergencyStatus & kHardwareEmergencyStop) != 0) {
+        setError(errorMessage,
+            QString("IMC60G emergency state remains active after automatic software release: emergency=0x%1.")
+                .arg(static_cast<unsigned short>(emergencyStatus), 4, 16, QLatin1Char('0')));
+        goto fail;
+    }
+
+    if (!callSucceeded(api_->clearAxisStatus(0, 0), "IMC_ClrAxSts", 0, errorMessage)
         || !callSucceeded(api_->clearAxisStatus(0, 1), "IMC_ClrAxSts", 1, errorMessage)) {
         goto fail;
     }

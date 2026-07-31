@@ -11,6 +11,7 @@
 #include <QRegExp>
 #include <QSet>
 #include <QThread>
+#include <QVector>
 
 #include <atomic>
 #include <cstdio>
@@ -78,6 +79,8 @@ public:
     unsigned int cardCount = 1;
     unsigned int masterStatus = 6;
     short masterAxisCount = 2;
+    QVector<short> emergencyStatusSequence;
+    int emergencyStatusCalls = 0;
     QSet<short> homingAxes;
     QSet<short> backoffAxes;
     QSet<short> enabledAxes;
@@ -180,8 +183,18 @@ public:
     int emergencyStatus(unsigned int card, short* status) override
     {
         Q_UNUSED(card);
-        if (status) *status = 0;
-        return 0;
+        const int rc = result("emergency_status");
+        short value = 0;
+        if (!emergencyStatusSequence.isEmpty()) {
+            const int index = emergencyStatusCalls < emergencyStatusSequence.size()
+                ? emergencyStatusCalls
+                : emergencyStatusSequence.size() - 1;
+            value = emergencyStatusSequence.at(index);
+        }
+        ++emergencyStatusCalls;
+        record(QString("emg_status:%1").arg(value));
+        if (rc == 0 && status) *status = value;
+        return rc;
     }
 
     int clearAxisStatus(unsigned int card, short axis) override
@@ -647,6 +660,42 @@ void testEthercatOpGate()
     }
 }
 
+void testSoftwareEmergencyReleaseBeforeServoOn()
+{
+    {
+        SafetyApi api;
+        AdvancingClock clock;
+        api.emergencyStatusSequence = {1, 0};
+        Imc60gMotionController controller(&api, PrintHardwareProfile(), &clock);
+        QString error;
+        check(controller.connectAndHome(&error),
+            "software emergency release must allow connection: " + error);
+        const int release = api.events.indexOf("emg:0:1");
+        const int active = api.events.indexOf("emg_status:1");
+        const int clear = api.events.indexOf("emg_status:0");
+        const int clearAxis = api.events.indexOf("clear:0");
+        const int servoOn = api.events.indexOf("servo_on:0");
+        check(release >= 0 && active > release && clear > active
+                && clearAxis > clear && servoOn > clearAxis,
+            "software emergency must clear before Axis0/Axis1 enablement");
+    }
+
+    {
+        SafetyApi api;
+        AdvancingClock clock;
+        api.emergencyStatusSequence = {1};
+        Imc60gMotionController controller(&api, PrintHardwareProfile(), &clock);
+        QString error;
+        check(!controller.connectAndHome(&error),
+            "active emergency state must block connection");
+        check(error.contains("emergency state remains active")
+                && !api.events.contains("servo_on:0"),
+            "active emergency must block Servo On: " + error);
+        check(api.ethercatStopAttempted && api.closeAttempted,
+            "active emergency must release EtherCAT and card resources");
+    }
+}
+
 void checkMappedError(
     const QString& error, const QString& operation, const QString& symbol,
     int code, const QString& label)
@@ -908,6 +957,7 @@ bool runImc60gSafetyTests(const QStringList& arguments)
     testPollingAndTimeoutFailures();
     testFailedServoOnIsStillPoweredOff();
     testEthercatOpGate();
+    testSoftwareEmergencyReleaseBeforeServoOn();
     testTaskErrorCodeDescriptions();
     testDirectionalLimitStopReasons();
     testCancellationPaths();

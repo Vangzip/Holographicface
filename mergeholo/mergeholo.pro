@@ -14,6 +14,7 @@ SOURCES += \
     printing/Imc60gApi.cpp \
     printing/Imc60gMotionController.cpp \
     printing/PrintHardwareProfile.cpp \
+    printing/PrintFrame.cpp \
     printing/Sv660nExposureController.cpp \
     printing/V2PrintTiming.cpp \
     printing/SecondScreenSelection.cpp \

@@ -31,6 +31,8 @@ class IPresentationDispatcher
 {
 public:
     virtual ~IPresentationDispatcher() = default;
+    // Runs the command synchronously on one GUI/presentation owner. The caller
+    // must not hold presenter state locks while invoking this method.
     virtual bool invokeSynchronously(const std::function<bool()>& command,
         QString* errorMessage = nullptr) = 0;
 };
@@ -82,14 +84,13 @@ public:
 private:
     bool convertFrame(const PrintFrame& frame, const QSize& targetSize,
         QByteArray* packedBgra, QString* errorMessage) const;
-    bool waitForPhysicalVBlankLocked(QString* errorMessage);
-    void shutdownLocked();
+    void invalidateReadyState();
 
     QVector<DisplayMonitor> displays_;
     std::shared_ptr<IV2D3DBackend> backend_;
     std::shared_ptr<IVBlankWaiter> vblankWaiter_;
     std::shared_ptr<IPresentationDispatcher> dispatcher_;
-    mutable QMutex mutex_;
+    mutable QMutex stateMutex_;
     PresenterDiagnostics diagnostics_;
     DisplayMonitor selectedMonitor_;
     bool backendActive_ = false;

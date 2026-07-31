@@ -4,6 +4,7 @@
 #include <QImage>
 #include <QMutex>
 #include <QPainter>
+#include <QProcess>
 #include <QThread>
 
 #include <atomic>
@@ -51,11 +52,13 @@ class InlineDispatcher final : public IPresentationDispatcher
 public:
     bool invokeSynchronously(const std::function<bool()>& command, QString*) override
     {
+        QMutexLocker lock(&mutex);
         ++calls;
         return command();
     }
 
     int calls = 0;
+    QMutex mutex;
 };
 
 class RecordingVBlankWaiter final : public IVBlankWaiter
@@ -90,12 +93,15 @@ public:
     {
         ++prepareCalls;
         events.push_back(QStringLiteral("prepare:%1").arg(monitor.deviceName));
+        allocatedResources = resourcesAllocatedBeforeFailure;
+        if (prepareHook) prepareHook();
         if (!prepareSucceeds) {
             if (errorMessage) *errorMessage = prepareFailure;
             return false;
         }
         if (diagnostics) diagnostics->prepareHresult = 0;
         preparedMonitor = monitor.nativeMonitor;
+        allocatedResources = 4;
         return true;
     }
 
@@ -131,10 +137,7 @@ public:
             if (errorMessage) *errorMessage = presentFailure;
             return false;
         }
-        if (diagnostics) {
-            diagnostics->presentHresult = 0;
-            ++diagnostics->orderedPresentCount;
-        }
+        if (diagnostics) diagnostics->presentHresult = 0;
         return true;
     }
 
@@ -143,6 +146,7 @@ public:
         ++shutdownCalls;
         events.push_back(QStringLiteral("shutdown"));
         preparedMonitor = 0;
+        allocatedResources = 0;
     }
 
     bool prepareSucceeds = true;
@@ -164,6 +168,9 @@ public:
     std::atomic_int active{0};
     std::atomic_int maxActive{0};
     bool blockFirst = false;
+    int resourcesAllocatedBeforeFailure = 0;
+    int allocatedResources = 0;
+    std::function<void()> prepareHook;
     std::atomic_bool firstEntered{false};
     std::atomic_bool releaseFirst{false};
 };
@@ -210,6 +217,15 @@ void testDisplaySelection()
         "primary-only display list must fail closed");
 }
 
+void testPrintFrameOwnsItsLayoutValidation()
+{
+    expect(validBgr().isValid(), "PrintFrame must validate a complete padded BGR24 layout itself");
+    expect(!frame(2, 2, 6, PrintPixelFormat::Bgr24, QByteArray(11, 0)).isValid(),
+        "PrintFrame must reject truncated stride-aware bytes without PrintImageSource");
+    expect(!frame(2, 1, 8, static_cast<PrintPixelFormat>(99), QByteArray(8, 0)).isValid(),
+        "PrintFrame must reject unsupported formats without another module definition");
+}
+
 void testPrimaryOnlyFailsBeforeBackendConstructionWork()
 {
     Fixture f({primaryDisplay()});
@@ -240,6 +256,8 @@ void testBgrAndBgraUploadBytesAndStride()
         "BGRA32 present must succeed");
     expect(f.backend->uploaded == QByteArray(exact, sizeof(exact)) && f.backend->uploadedPitch == 8,
         "BGRA32 must preserve exact channel bytes while removing source padding");
+    expect(f.presenter.diagnostics().orderedPresentCount == 2,
+        "presenter diagnostics must count each successful Present exactly once");
 }
 
 void testInvalidFramesFailBeforeUpload()
@@ -298,6 +316,29 @@ void testRowAnchorConsumesExactlyOnePhysicalWait()
     expect(!f.presenter.waitForRowSlot(0, &anchor, &error), "consumed anchor must not be reusable");
 }
 
+void testFaultInvalidatesAcquiredRowAnchor()
+{
+    Fixture presentFault;
+    QString error;
+    expect(presentFault.presenter.prepare(validBgr(), QSize(2, 1), &error), "fixture prepare must succeed");
+    V2RowVBlankAnchor presentAnchor;
+    expect(presentFault.presenter.acquireRowAnchor(&presentAnchor, &error), "anchor acquisition must succeed");
+    presentFault.backend->presentSucceeds = false;
+    expect(!presentFault.presenter.present(validBgr(7), QSize(2, 1), &error), "Present fault must fail");
+    expect(!presentFault.presenter.waitForRowSlot(0, &presentAnchor, &error),
+        "a Present/output fault must invalidate an already acquired row anchor");
+
+    Fixture vblankFault;
+    expect(vblankFault.presenter.prepare(validBgr(), QSize(2, 1), &error), "fixture prepare must succeed");
+    V2RowVBlankAnchor vblankAnchor;
+    expect(vblankFault.presenter.acquireRowAnchor(&vblankAnchor, &error), "anchor acquisition must succeed");
+    vblankFault.waiter->succeeds = false;
+    vblankFault.waiter->hresult = static_cast<qint32>(0x887A0001u);
+    expect(!vblankFault.presenter.waitForDisplayFrame(&error), "VBlank fault must fail");
+    expect(!vblankFault.presenter.waitForRowSlot(0, &vblankAnchor, &error),
+        "a VBlank/output fault must invalidate an already acquired row anchor");
+}
+
 void testFailuresMismatchAndShutdownAreFailClosed()
 {
     const QStringList stages = {QStringLiteral("device"), QStringLiteral("swap-chain"),
@@ -306,6 +347,7 @@ void testFailuresMismatchAndShutdownAreFailClosed()
         Fixture f;
         f.backend->prepareSucceeds = false;
         f.backend->prepareFailure = stage + QStringLiteral(" creation failed");
+        f.backend->resourcesAllocatedBeforeFailure = stages.indexOf(stage) + 1;
         QString error;
         expect(!f.presenter.prepare(validBgr(), QSize(2, 1), &error), "prepare stage failure must fail closed");
         expect(error.contains(stage), "prepare stage diagnostics must propagate");
@@ -313,6 +355,8 @@ void testFailuresMismatchAndShutdownAreFailClosed()
         f.presenter.shutdown();
         f.presenter.shutdown();
         expect(f.backend->shutdownCalls == 1, "shutdown after partial prepare must be idempotent");
+        expect(f.backend->allocatedResources == 0,
+            "every native-style partial prepare stage must be released by presenter cleanup");
     }
 
     Fixture mismatch;
@@ -328,7 +372,77 @@ void testFailuresMismatchAndShutdownAreFailClosed()
     expect(!presentFailure.presenter.present(validBgr(7), QSize(2, 1), &error), "Present failure must propagate");
     expect(presentFailure.presenter.diagnostics().presentHresult == presentFailure.backend->presentFailureHr,
         "Present HRESULT must remain diagnostic evidence");
+    expect(presentFailure.presenter.diagnostics().orderedPresentCount == 1,
+        "a failed Present must not increment ordered-present diagnostics");
     expect(!presentFailure.presenter.isReady(), "Present failure must clear readiness");
+    presentFailure.presenter.shutdown();
+    expect(presentFailure.presenter.diagnostics().orderedPresentCount == 1
+            && !presentFailure.presenter.diagnostics().ready,
+        "shutdown must preserve telemetry while explicitly clearing readiness");
+}
+
+int runReentrantLockProbe()
+{
+    auto backend = std::make_shared<RecordingBackend>();
+    auto waiter = std::make_shared<RecordingVBlankWaiter>();
+    class GuiQueueDispatcher final : public IPresentationDispatcher {
+    public:
+        bool invokeSynchronously(const std::function<bool()>& command, QString*) override
+        {
+            if (QThread::currentThread() == qApp->thread()) return command();
+            bool result = false;
+            if (!QMetaObject::invokeMethod(qApp, [&] { result = command(); }, Qt::BlockingQueuedConnection)) {
+                return false;
+            }
+            return result;
+        }
+    };
+    auto dispatcher = std::make_shared<GuiQueueDispatcher>();
+    V2D3DFramePresenter presenter({primaryDisplay(), printDisplay()}, backend, waiter, dispatcher);
+    backend->prepareHook = [&] { (void)presenter.isReady(); };
+
+    std::atomic_bool done{false};
+    bool prepared = false;
+    std::thread worker([&] {
+        QString error;
+        prepared = presenter.prepare(validBgr(), QSize(2, 1), &error);
+        done.store(true);
+    });
+    while (!done.load()) {
+        qApp->processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(1);
+    }
+    worker.join();
+    if (!prepared || !presenter.isReady()) return 21;
+
+    // Queue a worker Present, but execute a direct GUI shutdown first. The queued
+    // command must observe the new generation and fail without resurrecting state.
+    std::atomic_bool presentDone{false};
+    bool presentResult = true;
+    std::thread queuedWorker([&] {
+        QString error;
+        presentResult = presenter.present(validBgr(31), QSize(2, 1), &error);
+        presentDone.store(true);
+    });
+    QThread::msleep(20);
+    presenter.shutdown();
+    while (!presentDone.load()) {
+        qApp->processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(1);
+    }
+    queuedWorker.join();
+    return (!presentResult && !presenter.isReady()) ? 0 : 22;
+}
+
+void testNoGuiWorkerDeadlockOrQueuedResurrection()
+{
+    QProcess probe;
+    probe.start(QCoreApplication::applicationFilePath(), {QStringLiteral("--reentrant-lock-probe")});
+    const bool finished = probe.waitForFinished(3000);
+    if (!finished) probe.kill();
+    expect(finished, "worker->GUI dispatch with reentrant state query must not deadlock");
+    expect(finished && probe.exitStatus() == QProcess::NormalExit && probe.exitCode() == 0,
+        "GUI shutdown must invalidate an already queued worker command without state resurrection");
 }
 
 void testSerializedCommandsCannotOvertake()
@@ -354,13 +468,16 @@ void testSerializedCommandsCannotOvertake()
 int runContractTests()
 {
     testDisplaySelection();
+    testPrintFrameOwnsItsLayoutValidation();
     testPrimaryOnlyFailsBeforeBackendConstructionWork();
     testBgrAndBgraUploadBytesAndStride();
     testInvalidFramesFailBeforeUpload();
     testVBlankFailureIsExactAndHasNoFallback();
     testRowAnchorConsumesExactlyOnePhysicalWait();
+    testFaultInvalidatesAcquiredRowAnchor();
     testFailuresMismatchAndShutdownAreFailClosed();
     testSerializedCommandsCannotOvertake();
+    testNoGuiWorkerDeadlockOrQueuedResurrection();
     if (failures == 0) std::puts("All V2 presenter contract tests passed.");
     return failures == 0 ? 0 : 1;
 }
@@ -428,6 +545,7 @@ int runDisplaySmoke()
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
+    if (app.arguments().contains(QStringLiteral("--reentrant-lock-probe"))) return runReentrantLockProbe();
     if (app.arguments().contains(QStringLiteral("--print-display-smoke"))) return runDisplaySmoke();
     return runContractTests();
 }

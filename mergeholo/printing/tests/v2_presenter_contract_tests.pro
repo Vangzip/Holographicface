@@ -9,6 +9,7 @@ INCLUDEPATH += ..
 
 SOURCES += \
     test_v2_presenter_contract.cpp \
+    ../PrintFrame.cpp \
     ../V2D3DFramePresenter.cpp \
     ../SecondScreenSelection.cpp
 

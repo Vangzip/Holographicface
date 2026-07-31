@@ -108,7 +108,6 @@ public:
         window_->setGeometry(monitor.geometry);
         window_->show();
         window_->raise();
-        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
         hwnd_ = reinterpret_cast<HWND>(window_->winId());
         if (!IsWindow(hwnd_)) {
             setError(errorMessage, QStringLiteral("Unable to create the native second-screen window."));
@@ -632,36 +631,75 @@ bool V2D3DFramePresenter::prepare(const PrintFrame& firstFrame, const QSize& tar
 {
     QByteArray bgra;
     if (!convertFrame(firstFrame, targetSize, &bgra, errorMessage)) return false;
-    QMutexLocker lock(&mutex_);
     if (!backend_ || !vblankWaiter_ || !dispatcher_) {
         setError(errorMessage, QStringLiteral("V2 presenter dependencies are unavailable."));
+        invalidateReadyState();
         return false;
     }
-    shutdownLocked();
-    diagnostics_ = {};
     const std::optional<int> selected = selectV2SecondScreenIndex(displays_);
     if (!selected) {
+        shutdown();
         setError(errorMessage, QStringLiteral("A valid attached non-primary display is required for printing."));
         return false;
     }
-    selectedMonitor_ = displays_.at(*selected);
-    diagnostics_.selectedOutputDeviceName = selectedMonitor_.deviceName;
-    backendActive_ = true;
-    const bool ok = dispatcher_->invokeSynchronously([&] {
-        return backend_->prepare(selectedMonitor_, selectedMonitor_.geometry.size(), &diagnostics_, errorMessage)
-            && backend_->outputMatches(selectedMonitor_, errorMessage)
+    const DisplayMonitor selectedMonitor = displays_.at(*selected);
+    quint64 commandGeneration = 0;
+    {
+        QMutexLocker stateLock(&stateMutex_);
+        commandGeneration = ++generation_;
+        ready_ = false;
+        diagnostics_ = {};
+        diagnostics_.selectedOutputDeviceName = selectedMonitor.deviceName;
+        selectedMonitor_ = selectedMonitor;
+    }
+
+    const bool ok = dispatcher_->invokeSynchronously([&, commandGeneration, selectedMonitor] {
+        bool oldBackendActive = false;
+        {
+            QMutexLocker stateLock(&stateMutex_);
+            if (generation_ != commandGeneration) return false;
+            oldBackendActive = backendActive_;
+            backendActive_ = false;
+        }
+        if (oldBackendActive) backend_->shutdown();
+        {
+            QMutexLocker stateLock(&stateMutex_);
+            if (generation_ != commandGeneration) return false;
+        }
+
+        PresenterDiagnostics localDiagnostics;
+        localDiagnostics.selectedOutputDeviceName = selectedMonitor.deviceName;
+        const bool prepared = backend_->prepare(selectedMonitor, selectedMonitor.geometry.size(),
+            &localDiagnostics, errorMessage)
+            && backend_->outputMatches(selectedMonitor, errorMessage)
             && backend_->uploadAndPresent(bgra, firstFrame.width, firstFrame.height,
-                firstFrame.width * 4, targetSize, &diagnostics_, errorMessage);
+                firstFrame.width * 4, targetSize, &localDiagnostics, errorMessage);
+        if (prepared) ++localDiagnostics.orderedPresentCount;
+
+        bool stale = false;
+        {
+            QMutexLocker stateLock(&stateMutex_);
+            stale = generation_ != commandGeneration;
+            if (!stale) {
+                diagnostics_ = localDiagnostics;
+                ready_ = prepared;
+                diagnostics_.ready = prepared;
+                backendActive_ = prepared;
+                if (!prepared) ++generation_;
+            }
+        }
+        if (!prepared || stale) backend_->shutdown();
+        return prepared && !stale;
     }, errorMessage);
     if (!ok) {
-        ready_ = false;
-        diagnostics_.ready = false;
-        shutdownLocked();
+        QMutexLocker stateLock(&stateMutex_);
+        if (generation_ == commandGeneration) {
+            ready_ = false;
+            diagnostics_.ready = false;
+            ++generation_;
+        }
         return false;
     }
-    ready_ = true;
-    diagnostics_.ready = true;
-    ++generation_;
     return true;
 }
 
@@ -669,72 +707,113 @@ bool V2D3DFramePresenter::present(const PrintFrame& frame, const QSize& targetSi
     QString* errorMessage)
 {
     QByteArray bgra;
-    if (!convertFrame(frame, targetSize, &bgra, errorMessage)) return false;
-    QMutexLocker lock(&mutex_);
-    if (!ready_) {
-        setError(errorMessage, QStringLiteral("V2 presenter is not ready."));
+    if (!convertFrame(frame, targetSize, &bgra, errorMessage)) {
+        invalidateReadyState();
         return false;
     }
-    const bool ok = dispatcher_->invokeSynchronously([&] {
-        return backend_->outputMatches(selectedMonitor_, errorMessage)
+    quint64 expectedGeneration = 0;
+    DisplayMonitor selectedMonitor;
+    PresenterDiagnostics localDiagnostics;
+    {
+        QMutexLocker stateLock(&stateMutex_);
+        if (!ready_) {
+            setError(errorMessage, QStringLiteral("V2 presenter is not ready."));
+            return false;
+        }
+        expectedGeneration = generation_;
+        selectedMonitor = selectedMonitor_;
+        localDiagnostics = diagnostics_;
+    }
+    return dispatcher_->invokeSynchronously([&, expectedGeneration, selectedMonitor] {
+        {
+            QMutexLocker stateLock(&stateMutex_);
+            if (!ready_ || generation_ != expectedGeneration) {
+                setError(errorMessage, QStringLiteral("Presentation command was invalidated before execution."));
+                return false;
+            }
+        }
+        const bool presented = backend_->outputMatches(selectedMonitor, errorMessage)
             && backend_->uploadAndPresent(bgra, frame.width, frame.height, frame.width * 4,
-                targetSize, &diagnostics_, errorMessage);
+                targetSize, &localDiagnostics, errorMessage);
+        if (presented) ++localDiagnostics.orderedPresentCount;
+        QMutexLocker stateLock(&stateMutex_);
+        if (generation_ != expectedGeneration) return false;
+        diagnostics_ = localDiagnostics;
+        if (!presented) {
+            ready_ = false;
+            diagnostics_.ready = false;
+            ++generation_;
+        }
+        return presented;
     }, errorMessage);
-    if (!ok) {
-        ready_ = false;
-        diagnostics_.ready = false;
-    }
-    return ok;
-}
-
-bool V2D3DFramePresenter::waitForPhysicalVBlankLocked(QString* errorMessage)
-{
-    if (!ready_) {
-        setError(errorMessage, QStringLiteral("V2 presenter is not ready for physical VBlank."));
-        return false;
-    }
-    const bool ok = dispatcher_->invokeSynchronously([&] {
-        if (!backend_->outputMatches(selectedMonitor_, errorMessage)) return false;
-        return vblankWaiter_->waitForPhysicalVBlank(&diagnostics_.vblank, errorMessage);
-    }, errorMessage);
-    if (!ok) {
-        ready_ = false;
-        diagnostics_.ready = false;
-    }
-    return ok;
 }
 
 bool V2D3DFramePresenter::waitForDisplayFrame(QString* errorMessage)
 {
-    QMutexLocker lock(&mutex_);
-    return waitForPhysicalVBlankLocked(errorMessage);
+    quint64 expectedGeneration = 0;
+    DisplayMonitor selectedMonitor;
+    PresenterDiagnostics localDiagnostics;
+    {
+        QMutexLocker stateLock(&stateMutex_);
+        if (!ready_) {
+            setError(errorMessage, QStringLiteral("V2 presenter is not ready for physical VBlank."));
+            return false;
+        }
+        expectedGeneration = generation_;
+        selectedMonitor = selectedMonitor_;
+        localDiagnostics = diagnostics_;
+    }
+    return dispatcher_->invokeSynchronously([&, expectedGeneration, selectedMonitor] {
+        {
+            QMutexLocker stateLock(&stateMutex_);
+            if (!ready_ || generation_ != expectedGeneration) {
+                setError(errorMessage, QStringLiteral("VBlank command was invalidated before execution."));
+                return false;
+            }
+        }
+        const bool waited = backend_->outputMatches(selectedMonitor, errorMessage)
+            && vblankWaiter_->waitForPhysicalVBlank(&localDiagnostics.vblank, errorMessage);
+        QMutexLocker stateLock(&stateMutex_);
+        if (generation_ != expectedGeneration) return false;
+        diagnostics_ = localDiagnostics;
+        if (!waited) {
+            ready_ = false;
+            diagnostics_.ready = false;
+            ++generation_;
+        }
+        return waited;
+    }, errorMessage);
 }
 
 bool V2D3DFramePresenter::acquireRowAnchor(V2RowVBlankAnchor* anchor, QString* errorMessage)
 {
-    QMutexLocker lock(&mutex_);
     if (!anchor) {
         setError(errorMessage, QStringLiteral("Row VBlank anchor destination is unavailable."));
         return false;
     }
     anchor->available = false;
     anchor->presenterGeneration = 0;
-    if (!waitForPhysicalVBlankLocked(errorMessage)) return false;
+    if (!waitForDisplayFrame(errorMessage)) return false;
+    QMutexLocker stateLock(&stateMutex_);
+    if (!ready_) {
+        setError(errorMessage, QStringLiteral("Row VBlank anchor was invalidated after acquisition."));
+        return false;
+    }
     anchor->presenterGeneration = generation_;
-    anchor->available = true;
+    anchor->available = ready_;
     return true;
 }
 
 bool V2D3DFramePresenter::waitForRowSlot(int slot, V2RowVBlankAnchor* anchor,
     QString* errorMessage)
 {
-    QMutexLocker lock(&mutex_);
     if (slot < 0 || !anchor) {
         setError(errorMessage, QStringLiteral("Row display slot or VBlank anchor is invalid."));
         return false;
     }
     if (slot == 0) {
-        if (!anchor->available || anchor->presenterGeneration != generation_) {
+        QMutexLocker stateLock(&stateMutex_);
+        if (!ready_ || !anchor->available || anchor->presenterGeneration != generation_) {
             setError(errorMessage, QStringLiteral("The first row slot requires an unconsumed physical VBlank anchor."));
             return false;
         }
@@ -742,33 +821,41 @@ bool V2D3DFramePresenter::waitForRowSlot(int slot, V2RowVBlankAnchor* anchor,
         clearError(errorMessage);
         return true;
     }
-    return waitForPhysicalVBlankLocked(errorMessage);
+    return waitForDisplayFrame(errorMessage);
 }
 
-void V2D3DFramePresenter::shutdownLocked()
+void V2D3DFramePresenter::invalidateReadyState()
 {
+    QMutexLocker stateLock(&stateMutex_);
     ready_ = false;
     diagnostics_.ready = false;
     ++generation_;
-    if (!backendActive_ || !backend_ || !dispatcher_) return;
-    dispatcher_->invokeSynchronously([&] { backend_->shutdown(); return true; }, nullptr);
-    backendActive_ = false;
 }
 
 void V2D3DFramePresenter::shutdown()
 {
-    QMutexLocker lock(&mutex_);
-    shutdownLocked();
+    invalidateReadyState();
+    if (!backend_ || !dispatcher_) return;
+    dispatcher_->invokeSynchronously([&] {
+        bool shouldShutdown = false;
+        {
+            QMutexLocker stateLock(&stateMutex_);
+            shouldShutdown = backendActive_;
+            backendActive_ = false;
+        }
+        if (shouldShutdown) backend_->shutdown();
+        return true;
+    }, nullptr);
 }
 
 bool V2D3DFramePresenter::isReady() const
 {
-    QMutexLocker lock(&mutex_);
+    QMutexLocker lock(&stateMutex_);
     return ready_;
 }
 
 PresenterDiagnostics V2D3DFramePresenter::diagnostics() const
 {
-    QMutexLocker lock(&mutex_);
+    QMutexLocker lock(&stateMutex_);
     return diagnostics_;
 }

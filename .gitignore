@@ -45,3 +45,4 @@ PCL 1.12.1-rc1/
 # Local agent/tool state
 .agents/
 .codex/
+.worktrees/

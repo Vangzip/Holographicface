@@ -28,9 +28,13 @@ public:
 
     PrintJobState state() const;
     bool start(const PrintJobSnapshot& job, QString* errorMessage = nullptr);
+    // Thread-safe request-only controls. They never call an SDK adapter.
     void requestPause();
     bool resume(QString* errorMessage = nullptr);
     void cancel();
+    // Must run on this object's owner thread. It performs paused-state cleanup
+    // after a thread-safe cancel request; active runs drain the request inline.
+    bool processPendingControl(QString* errorMessage = nullptr);
 
 signals:
     void stateChanged(PrintJobState state);
@@ -57,7 +61,7 @@ private:
     QVector<PrintFrame> frames_;
     std::atomic_bool cancelRequested_ {false};
     std::atomic_bool pauseRequested_ {false};
-    PrintJobState state_ = PrintJobState::Ready;
+    std::atomic<PrintJobState> state_ {PrintJobState::Ready};
     int nextRow_ = 0;
     bool pendingXStep_ = false;
     bool printOwnership_ = false;

@@ -6,8 +6,10 @@
 
 #include <cstdlib>
 #include <cstdio>
+#include <cmath>
 #include <functional>
 #include <limits>
+#include <thread>
 
 namespace {
 
@@ -406,6 +408,60 @@ void testExactSourceCountAndFrameValidity()
         "invalid frame error must be actionable");
 }
 
+void testPreflightRejectsMalformedRowAddressing()
+{
+    RecordingMotion motion;
+    RecordingExposure exposure;
+    RecordingPresenter presenter;
+    motion.readiness = readyMotion();
+    exposure.readiness = readyExposure();
+    presenter.readiness = readyPresenter();
+    PrintHardwarePreflight preflight(motion, exposure, presenter);
+
+    const auto rejected = [&](const PrintJobSnapshot& candidate, const QString& label) {
+        const PrintPreflightResult result = preflight.check(candidate, false);
+        expect(!result.ok && result.fault == PreflightFault::TimingPlan,
+            label + " must fail timing preflight");
+    };
+
+    PrintJobSnapshot job = makeJob(2, 3);
+    job.plan.rows[1].row = 0;
+    rejected(job, "duplicate row index");
+
+    job = makeJob(2, 3);
+    job.plan.rows[0].logicalFrameOrder = {0, 1, 3};
+    rejected(job, "out-of-range logical frame");
+
+    job = makeJob(2, 3);
+    job.plan.rows[0].logicalFrameOrder = {0, 1, 1};
+    rejected(job, "duplicate logical frame");
+}
+
+void testInvalidTargetScalesFailBeforeRounding()
+{
+    const double badScales[] = {
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::infinity(),
+        static_cast<double>(std::numeric_limits<int>::max()) * 2.0
+    };
+    for (double scale : badScales) {
+        RecordingMotion motion;
+        RecordingExposure exposure;
+        RecordingPresenter presenter;
+        RecordingPreflight preflight;
+        preflight.result.ok = true;
+        PrintJobSnapshot job = makeJob(1, 1);
+        job.config.main.widthScale = scale;
+        PrintJobRunner runner(motion, exposure, presenter, preflight);
+        QString error;
+        expect(!runner.start(job, &error), "invalid target scale must fail closed");
+        expect(error.contains("scale", Qt::CaseInsensitive),
+            "invalid target scale must return actionable error");
+        expect(presenter.prepareCalls == 0,
+            "invalid target scale must not reach the presenter");
+    }
+}
+
 void testPauseResumeRechecksAndDoesNotDuplicateFrames()
 {
     RecordingMotion motion;
@@ -470,7 +526,10 @@ void testCancelDuringPresentDoesNotAdvanceAnotherVBlank()
     PrintJobRunner runner(motion, exposure, presenter, preflight);
     QObject::connect(&runner, &PrintJobRunner::frameAdvanced,
         [&trace](int, int, int logicalFrame) { trace.append("frame:" + QString::number(logicalFrame)); });
-    presenter.onPresent = [&] { runner.cancel(); };
+    presenter.onPresent = [&] {
+        std::thread caller([&] { runner.cancel(); });
+        caller.join();
+    };
 
     QString error;
     expect(!runner.start(makeJob(1, 3), &error), "cancelled job must not report success");
@@ -483,6 +542,32 @@ void testCancelDuringPresentDoesNotAdvanceAnotherVBlank()
         "cancel must execute common safe cleanup");
     expect(runner.state() == PrintJobState::Ready,
         "safely cancelled connected hardware may return Ready");
+}
+
+void testPausedCancelIsDrainedOnlyOnOwnerThread()
+{
+    RecordingMotion motion;
+    RecordingExposure exposure;
+    RecordingPresenter presenter;
+    RecordingPreflight preflight;
+    preflight.result.ok = true;
+    PrintJobRunner runner(motion, exposure, presenter, preflight);
+    motion.onWaitY = [&] { runner.requestPause(); };
+
+    QString error;
+    expect(runner.start(makeJob(2, 1), &error), error);
+    expect(runner.state() == PrintJobState::Paused, "job must pause at the row boundary");
+    const int stopsBeforeCancel = motion.cleanupStops;
+    std::thread caller([&] { runner.cancel(); });
+    caller.join();
+    expect(motion.cleanupStops == stopsBeforeCancel,
+        "cross-thread cancel must not call cleanup or any SDK adapter");
+    expect(!runner.processPendingControl(&error),
+        "owner-thread drain of a paused cancel must report cancelled");
+    expect(motion.cleanupStops == stopsBeforeCancel + 1,
+        "owner-thread drain must execute cleanup exactly once");
+    expect(runner.state() == PrintJobState::Ready,
+        "safe paused cancellation may return Ready");
 }
 
 void testCleanupAggregatesFailuresAndStillShutsPresenterDown()
@@ -631,8 +716,11 @@ int main(int argc, char** argv)
     testExactOneRowOrder();
     testExactOneRowAndTwoByThreeOrder();
     testExactSourceCountAndFrameValidity();
+    testPreflightRejectsMalformedRowAddressing();
+    testInvalidTargetScalesFailBeforeRounding();
     testPauseResumeRechecksAndDoesNotDuplicateFrames();
     testCancelDuringPresentDoesNotAdvanceAnotherVBlank();
+    testPausedCancelIsDrainedOnlyOnOwnerThread();
     testCleanupAggregatesFailuresAndStillShutsPresenterDown();
     testEveryEngineOperationFailureUsesCommonCleanup();
     testEveryTerminalCleanupFailureIsUnsafe();

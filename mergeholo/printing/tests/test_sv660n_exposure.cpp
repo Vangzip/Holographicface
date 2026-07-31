@@ -78,7 +78,17 @@ public:
     int initEthercat(unsigned int) override { return 0; }
     int startEthercat(unsigned int) override { return 0; }
     int stopEthercat(unsigned int) override { return 0; }
+    int ethercatMasterStatus(unsigned int, unsigned int* status) override
+    {
+        if (status) *status = 6;
+        return 0;
+    }
     int setEmergencyLevel(unsigned int, short) override { return 0; }
+    int emergencyStatus(unsigned int, short* status) override
+    {
+        if (status) *status = 0;
+        return 0;
+    }
     int clearAxisStatus(unsigned int, short) override { return 0; }
     int servoOn(unsigned int, short) override { return 0; }
     int servoOff(unsigned int, short) override { return 0; }

@@ -12,9 +12,13 @@
 namespace {
 
 constexpr unsigned int kAxisAlarm = 0x00000001;
+constexpr unsigned int kAxisServoOn = 0x00000002;
 constexpr unsigned int kAxisBusy = 0x00000004;
 constexpr unsigned int kPositiveLimit = 0x00000010;
 constexpr unsigned int kNegativeLimit = 0x00000020;
+constexpr unsigned int kAxisEmergency = 0x00000200;
+constexpr unsigned int kAxisUnlinked = 0x00004000;
+constexpr unsigned int kEthercatMasterOperational = 6;
 constexpr unsigned int kPositiveLimitStopReason = 0x04;
 constexpr unsigned int kNegativeLimitStopReason = 0x05;
 constexpr unsigned int kDiStopReason = 0x0b;
@@ -867,28 +871,77 @@ PrintMotionReadiness Imc60gMotionController::printReadiness(
     readiness.axisMappingLocked = profile_.cardIndex == 0
         && profile_.axisX == 1 && profile_.axisY == 0;
     readiness.cardReady = state_ == Imc60gConnectionState::Ready;
-    readiness.ethercatReady = readiness.cardReady;
-    readiness.emergencyClear = readiness.cardReady;
     readiness.axesHomed = readiness.cardReady;
     if (!readiness.cardReady || !api_) {
         setError(errorMessage, "IMC60G requires an explicit successful connectAndHome().");
         return readiness;
     }
 
+    QString detail;
+    unsigned int masterStatus = 0;
+    if (!callSucceeded(api_->ethercatMasterStatus(profile_.cardIndex,
+            &masterStatus), "IMC_GetEcatMasterSts", kNoAxis, &detail)) {
+        if (errorMessage) *errorMessage = detail;
+        return readiness;
+    }
+    readiness.ethercatReady = masterStatus == kEthercatMasterOperational;
+
+    short emergencyStatus = 0;
+    if (!callSucceeded(api_->emergencyStatus(profile_.cardIndex,
+            &emergencyStatus), "IMC_GetEmgSts", kNoAxis, &detail)) {
+        if (errorMessage) *errorMessage = detail;
+        return readiness;
+    }
+    readiness.emergencyClear = emergencyStatus == 0;
+
     unsigned int xStatus = 0;
     unsigned int yStatus = 0;
-    QString detail;
     const bool xOk = callSucceeded(api_->axisStatus(profile_.cardIndex,
         static_cast<short>(profile_.axisX), &xStatus), "IMC_GetAxSts",
         static_cast<short>(profile_.axisX), &detail);
     const bool yOk = callSucceeded(api_->axisStatus(profile_.cardIndex,
         static_cast<short>(profile_.axisY), &yStatus), "IMC_GetAxSts",
         static_cast<short>(profile_.axisY), &detail);
+    const unsigned int unsafeMask =
+        kAxisAlarm | kAxisEmergency | kAxisUnlinked;
     readiness.servosReady = xOk && yOk
-        && (xStatus & kAxisAlarm) == 0 && (yStatus & kAxisAlarm) == 0;
+        && (xStatus & kAxisServoOn) != 0
+        && (yStatus & kAxisServoOn) != 0
+        && (xStatus & unsafeMask) == 0
+        && (yStatus & unsafeMask) == 0;
     readiness.axesStopped = xOk && yOk
-        && (xStatus & kAxisBusy) == 0 && (yStatus & kAxisBusy) == 0;
+        && (xStatus & (unsafeMask | kAxisBusy)) == 0
+        && (yStatus & (unsafeMask | kAxisBusy)) == 0;
+    readiness.emergencyClear = readiness.emergencyClear
+        && xOk && yOk
+        && (xStatus & kAxisEmergency) == 0
+        && (yStatus & kAxisEmergency) == 0;
+    readiness.ethercatReady = readiness.ethercatReady
+        && xOk && yOk
+        && (xStatus & kAxisUnlinked) == 0
+        && (yStatus & kAxisUnlinked) == 0;
     if ((!xOk || !yOk) && errorMessage) *errorMessage = detail;
+    if (errorMessage && errorMessage->isEmpty()) {
+        if (!readiness.ethercatReady) {
+            *errorMessage = QString("EtherCAT master/axis link is not operational: master=%1 x=0x%2 y=0x%3.")
+                .arg(masterStatus)
+                .arg(xStatus, 8, 16, QLatin1Char('0'))
+                .arg(yStatus, 8, 16, QLatin1Char('0'));
+        } else if (!readiness.emergencyClear) {
+            *errorMessage = QString("IMC60G emergency state is active: emergency=0x%1 x=0x%2 y=0x%3.")
+                .arg(static_cast<unsigned short>(emergencyStatus), 4, 16, QLatin1Char('0'))
+                .arg(xStatus, 8, 16, QLatin1Char('0'))
+                .arg(yStatus, 8, 16, QLatin1Char('0'));
+        } else if (!readiness.servosReady) {
+            *errorMessage = QString("X/Y Servo On verification failed: x=0x%1 y=0x%2.")
+                .arg(xStatus, 8, 16, QLatin1Char('0'))
+                .arg(yStatus, 8, 16, QLatin1Char('0'));
+        } else if (!readiness.axesStopped) {
+            *errorMessage = QString("X/Y stopped verification failed: x=0x%1 y=0x%2.")
+                .arg(xStatus, 8, 16, QLatin1Char('0'))
+                .arg(yStatus, 8, 16, QLatin1Char('0'));
+        }
+    }
     return readiness;
 }
 

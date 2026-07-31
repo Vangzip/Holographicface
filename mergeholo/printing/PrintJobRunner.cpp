@@ -1,7 +1,9 @@
 #include "PrintJobRunner.h"
 
 #include <QtMath>
+#include <QThread>
 
+#include <cmath>
 #include <limits>
 
 namespace {
@@ -16,9 +18,23 @@ void appendError(QString* destination, const QString& text)
 QSize targetSize(const PrintFrame& frame, const Print9030Config& config,
     QString* errorMessage)
 {
-    const qint64 width = qRound64(frame.width * config.main.widthScale);
-    const qint64 height = qRound64(frame.height * config.main.heightScale);
-    if (!frame.isValid() || width <= 0 || height <= 0
+    const double widthScale = config.main.widthScale;
+    const double heightScale = config.main.heightScale;
+    const double widthValue = static_cast<double>(frame.width) * widthScale;
+    const double heightValue = static_cast<double>(frame.height) * heightScale;
+    if (!frame.isValid()
+        || !std::isfinite(widthScale) || !std::isfinite(heightScale)
+        || widthScale <= 0.0 || heightScale <= 0.0
+        || !std::isfinite(widthValue) || !std::isfinite(heightValue)
+        || widthValue <= 0.0 || heightValue <= 0.0
+        || widthValue > std::numeric_limits<int>::max()
+        || heightValue > std::numeric_limits<int>::max()) {
+        if (errorMessage) *errorMessage = "Print frame or second-screen scale is invalid.";
+        return {};
+    }
+    const qint64 width = qRound64(widthValue);
+    const qint64 height = qRound64(heightValue);
+    if (width <= 0 || height <= 0
         || width > std::numeric_limits<int>::max()
         || height > std::numeric_limits<int>::max()) {
         if (errorMessage) *errorMessage = "Print frame or second-screen scale is invalid.";
@@ -50,27 +66,31 @@ PrintJobRunner::PrintJobRunner(IMotionController& motion,
 
 PrintJobRunner::~PrintJobRunner()
 {
-    if (state_ == PrintJobState::Printing || state_ == PrintJobState::Paused
-        || state_ == PrintJobState::Stopping) {
+    const PrintJobState current = state();
+    if (current == PrintJobState::Printing || current == PrintJobState::Paused
+        || current == PrintJobState::Stopping) {
         cancelRequested_.store(true);
         QString ignored;
         cleanup(&ignored);
-        state_ = PrintJobState::Fault;
+        state_.store(PrintJobState::Fault);
     }
 }
 
-PrintJobState PrintJobRunner::state() const { return state_; }
+PrintJobState PrintJobRunner::state() const
+{
+    return state_.load(std::memory_order_acquire);
+}
 
 void PrintJobRunner::setState(PrintJobState state)
 {
-    state_ = state;
-    emit stateChanged(state_);
+    state_.store(state, std::memory_order_release);
+    emit stateChanged(state);
 }
 
 bool PrintJobRunner::start(const PrintJobSnapshot& job, QString* errorMessage)
 {
     if (errorMessage) errorMessage->clear();
-    if (state_ != PrintJobState::Ready) {
+    if (state() != PrintJobState::Ready) {
         if (errorMessage) *errorMessage = "Print job is not Ready for a new start.";
         return false;
     }
@@ -115,15 +135,18 @@ bool PrintJobRunner::start(const PrintJobSnapshot& job, QString* errorMessage)
 
 void PrintJobRunner::requestPause()
 {
-    if (state_ == PrintJobState::Printing) pauseRequested_.store(true);
+    pauseRequested_.store(true, std::memory_order_release);
 }
 
 bool PrintJobRunner::resume(QString* errorMessage)
 {
     if (errorMessage) errorMessage->clear();
-    if (state_ != PrintJobState::Paused) {
+    if (state() != PrintJobState::Paused) {
         if (errorMessage) *errorMessage = "Only a Paused job can resume.";
         return false;
+    }
+    if (cancelRequested_.load(std::memory_order_acquire)) {
+        return processPendingControl(errorMessage);
     }
     const PrintPreflightResult dynamic = preflight_.check(job_, true);
     if (!dynamic.ok) return failAndCleanup("Dynamic resume preflight failed: " + dynamic.detail, errorMessage);
@@ -134,11 +157,25 @@ bool PrintJobRunner::resume(QString* errorMessage)
 
 void PrintJobRunner::cancel()
 {
-    cancelRequested_.store(true);
-    if (state_ == PrintJobState::Paused) {
-        QString ignored;
-        finishAndCleanup(false, "Print job was cancelled.", &ignored);
+    cancelRequested_.store(true, std::memory_order_release);
+}
+
+bool PrintJobRunner::processPendingControl(QString* errorMessage)
+{
+    if (errorMessage) errorMessage->clear();
+    if (QThread::currentThread() != thread()) {
+        if (errorMessage) {
+            *errorMessage =
+                "Print control cleanup must run on the runner owner thread.";
+        }
+        return false;
     }
+    if (state() == PrintJobState::Paused
+        && cancelRequested_.load(std::memory_order_acquire)) {
+        return finishAndCleanup(
+            false, "Print job was cancelled.", errorMessage);
+    }
+    return true;
 }
 
 bool PrintJobRunner::operation(bool ok, const QString& fallback,

@@ -58,9 +58,20 @@ int Imc60gApi::stopEthercat(unsigned int cardIndex)
     return IMC_DelEcatComm(cardNumber(cardIndex));
 }
 
+int Imc60gApi::ethercatMasterStatus(
+    unsigned int cardIndex, unsigned int* status)
+{
+    return IMC_GetEcatMasterSts(cardNumber(cardIndex), status);
+}
+
 int Imc60gApi::setEmergencyLevel(unsigned int cardIndex, short inverted)
 {
     return IMC_SetEmgTrigLevelInv(cardNumber(cardIndex), inverted);
+}
+
+int Imc60gApi::emergencyStatus(unsigned int cardIndex, short* status)
+{
+    return IMC_GetEmgSts(cardNumber(cardIndex), status);
 }
 
 int Imc60gApi::clearAxisStatus(unsigned int cardIndex, short axis)

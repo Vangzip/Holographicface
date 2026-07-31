@@ -11,7 +11,10 @@ public:
     virtual int initEthercat(unsigned int cardIndex) = 0;
     virtual int startEthercat(unsigned int cardIndex) = 0;
     virtual int stopEthercat(unsigned int cardIndex) = 0;
+    virtual int ethercatMasterStatus(unsigned int cardIndex,
+        unsigned int* status) = 0;
     virtual int setEmergencyLevel(unsigned int cardIndex, short inverted) = 0;
+    virtual int emergencyStatus(unsigned int cardIndex, short* status) = 0;
     virtual int clearAxisStatus(unsigned int cardIndex, short axis) = 0;
     virtual int servoOn(unsigned int cardIndex, short axis) = 0;
     virtual int servoOff(unsigned int cardIndex, short axis) = 0;

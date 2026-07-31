@@ -153,10 +153,24 @@ public:
         return result(shutdownMode ? "cleanup_stop_ecat" : "stop_ecat");
     }
 
+    int ethercatMasterStatus(unsigned int card, unsigned int* status) override
+    {
+        Q_UNUSED(card);
+        if (status) *status = 6;
+        return 0;
+    }
+
     int setEmergencyLevel(unsigned int card, short inverted) override
     {
         record(QString("emg:%1:%2").arg(card).arg(inverted));
         return result("emg");
+    }
+
+    int emergencyStatus(unsigned int card, short* status) override
+    {
+        Q_UNUSED(card);
+        if (status) *status = 0;
+        return 0;
     }
 
     int clearAxisStatus(unsigned int card, short axis) override

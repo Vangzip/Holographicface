@@ -15,6 +15,7 @@
 namespace {
 
 constexpr unsigned int kBusy = 0x00000004;
+constexpr unsigned int kServoOn = 0x00000002;
 constexpr unsigned int kNegativeLimit = 0x00000020;
 
 void expect(bool condition, const QString& message)
@@ -38,6 +39,9 @@ public:
     bool cardOpened = false;
     bool cardClosed = false;
     bool ptpStarted = false;
+    unsigned int masterStatus = 6;
+    short emergency = 0;
+    unsigned int forcedAxisBits = 0;
     short lastPtpAxis = -1;
     int lastPtpTarget = 0;
     double lastProfileVelocity = 0;
@@ -101,10 +105,25 @@ public:
         return result("stop_ecat");
     }
 
+    int ethercatMasterStatus(unsigned int cardIndex,
+        unsigned int* status) override
+    {
+        Q_UNUSED(cardIndex);
+        if (result("master_status") == 0) *status = masterStatus;
+        return result("master_status");
+    }
+
     int setEmergencyLevel(unsigned int cardIndex, short inverted) override
     {
         events << QString("emg_level:%1:%2").arg(cardIndex).arg(inverted);
         return result("emg");
+    }
+
+    int emergencyStatus(unsigned int cardIndex, short* status) override
+    {
+        Q_UNUSED(cardIndex);
+        if (result("emergency_status") == 0) *status = emergency;
+        return result("emergency_status");
     }
 
     int clearAxisStatus(unsigned int cardIndex, short axis) override
@@ -197,7 +216,9 @@ public:
         if (result("axis_status") != 0) {
             return result("axis_status");
         }
-        *status = homingAxes.contains(axis) ? kNegativeLimit : 0;
+        *status = (enabledAxes.contains(axis) ? kServoOn : 0)
+            | (homingAxes.contains(axis) ? kNegativeLimit : 0)
+            | forcedAxisBits;
         return 0;
     }
 
@@ -419,6 +440,52 @@ void testSnapshotsAndExplicitStops()
     expect(!controller.isReadyForPrint(), "active print is not available for another print");
 }
 
+void testPrintReadinessUsesLiveHardwareState()
+{
+    RecordingImc60gApi api;
+    Imc60gMotionController controller(&api, PrintHardwareProfile());
+    QString error;
+    expect(controller.connectAndHome(&error), "setup connection");
+
+    PrintMotionReadiness readiness = controller.printReadiness(&error);
+    expect(readiness.sdkRuntimeReady && readiness.cardReady
+            && readiness.ethercatReady && readiness.emergencyClear
+            && readiness.servosReady && readiness.axesHomed
+            && readiness.axesStopped,
+        "connected idle hardware must pass live print readiness: " + error);
+
+    api.enabledAxes.remove(1);
+    readiness = controller.printReadiness(&error);
+    expect(!readiness.servosReady,
+        "Servo Off without an alarm must fail live readiness");
+    api.enabledAxes.insert(1);
+
+    api.masterStatus = 3;
+    readiness = controller.printReadiness(&error);
+    expect(!readiness.ethercatReady,
+        "EtherCAT master outside OP must fail live readiness");
+    api.masterStatus = 6;
+
+    api.emergency = 1;
+    readiness = controller.printReadiness(&error);
+    expect(!readiness.emergencyClear,
+        "active hardware emergency must fail live readiness");
+    api.emergency = 0;
+
+    api.forcedAxisBits = 0x00004000;
+    readiness = controller.printReadiness(&error);
+    expect(!readiness.ethercatReady && !readiness.servosReady,
+        "an unlinked EtherCAT axis must fail live readiness");
+    api.forcedAxisBits = 0x00000200;
+    readiness = controller.printReadiness(&error);
+    expect(!readiness.emergencyClear && !readiness.servosReady,
+        "an axis emergency bit must fail live readiness");
+    api.forcedAxisBits = kBusy;
+    readiness = controller.printReadiness(&error);
+    expect(!readiness.axesStopped,
+        "a busy axis must fail stopped readiness");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -432,6 +499,7 @@ int main(int argc, char** argv)
     testManualMotionValidationAndMapping();
     testSdkOwnershipIsExclusive();
     testSnapshotsAndExplicitStops();
+    testPrintReadinessUsesLiveHardwareState();
     qInfo() << "All IMC60G motion tests passed.";
     return 0;
 }

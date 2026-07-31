@@ -86,12 +86,24 @@ PrintPreflightResult PrintHardwarePreflight::check(
                     QString("Image frame %1 dimensions or pixel format mismatch the first frame.").arg(index));
             }
         }
-        for (const V2RowPlan& row : job.plan.rows) {
+        for (int rowIndex = 0; rowIndex < job.plan.rows.size(); ++rowIndex) {
+            const V2RowPlan& row = job.plan.rows.at(rowIndex);
             if (row.logicalFrameOrder.size() != job.config.main.gridColumns
+                || row.row != rowIndex
                 || !sdkPosition(row.yStart) || !sdkPosition(row.yTarget)
                 || !sdkPosition(row.compareBegin) || !sdkPosition(row.compareEnd)
                 || row.holdFramesAfterPresent < 0 || row.startDelayFrames < 0) {
                 return fail(PreflightFault::TimingPlan, "V2 row plan or SDK int32 position range is invalid.");
+            }
+            QVector<bool> seen(job.config.main.gridColumns, false);
+            for (int logicalFrame : row.logicalFrameOrder) {
+                if (logicalFrame < 0
+                    || logicalFrame >= job.config.main.gridColumns
+                    || seen.at(logicalFrame)) {
+                    return fail(PreflightFault::TimingPlan,
+                        "V2 row frame order must contain each column exactly once.");
+                }
+                seen[logicalFrame] = true;
             }
         }
     }

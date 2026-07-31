@@ -155,6 +155,44 @@ void testVBlankFitAndVerifiedOutputHold()
     expectInvalid(config, 60.0, "supported");
 }
 
+void testEverySupportedMultiVBlankCount()
+{
+    struct GoldenCadence {
+        long speed;
+        int framesPerImage;
+        int holdFrames;
+    };
+    const GoldenCadence cases[] = {
+        {20000, 3, 2},
+        {15000, 4, 3},
+        {10000, 6, 5}
+    };
+
+    for (const GoldenCadence& golden : cases) {
+        Print9030Config config = defaultPrint9030Config();
+        config.main.gridRows = 1;
+        config.main.gridColumns = 1;
+        config.axisY.speedOfMovement = golden.speed;
+        QString error;
+
+        const V2PrintPlan plan = build(config, 60.0, &error);
+
+        expect(error.isEmpty(),
+            QString("%1-pulse/s cadence failed: %2")
+                .arg(golden.speed)
+                .arg(error));
+        expect(plan.framesPerImage == golden.framesPerImage,
+            QString("%1 pulse/s at 60 Hz must require %2 frames per image")
+                .arg(golden.speed)
+                .arg(golden.framesPerImage));
+        expect(plan.rows.size() == 1
+                && plan.rows[0].holdFramesAfterPresent == golden.holdFrames,
+            QString("%1-frame cadence must hold for %2 additional VBlanks")
+                .arg(golden.framesPerImage)
+                .arg(golden.holdFrames));
+    }
+}
+
 void testInvalidConfigurationFailsClosed()
 {
     Print9030Config config = defaultPrint9030Config();
@@ -208,6 +246,8 @@ void testInvalidConfigurationFailsClosed()
 
     config = defaultPrint9030Config();
     expectInvalid(config, 0.0, "refresh");
+    expectInvalid(config, -60.0, "refresh");
+    expectInvalid(config, std::numeric_limits<double>::quiet_NaN(), "refresh");
     expectInvalid(config, std::numeric_limits<double>::infinity(), "refresh");
 }
 
@@ -228,13 +268,24 @@ void testCheckedPositionAndIntermediateArithmetic()
     config.main.gridColumns = 1;
     config.main.addTempPulse = 0;
     config.main.leadPulse = std::numeric_limits<long long>::max();
-    expectInvalid(config, 60.0, "overflow");
+    expectInvalid(config, 60.0, "reverse display delay");
 
+    // This is the only checked qint64 helper overflow reachable through the
+    // locked public input types: non-negative int products cannot exceed
+    // INT_MAX^2, profile pulse values are fixed, allocation is capped, and
+    // acceleration is narrowed to int32 before later checked add/multiply
+    // operations. Keep the other checked helpers as defensive guards without
+    // claiming direct branch coverage or adding a production test seam.
     config = defaultPrint9030Config();
     config.axisY.subdivision = std::numeric_limits<int>::max();
     config.axisY.resolution = std::numeric_limits<int>::max();
     config.main.columnSpacingMm = 3.0;
     expectInvalid(config, 60.0, "stepPulse");
+
+    // With the locked zero Y anchor and equal positive snake travel, each
+    // reverse row returns to zero. Negative qint32 position overflow is not
+    // reachable from a valid public configuration; the production lower-bound
+    // checks remain intentionally defensive.
 }
 
 void testGridProductRepresentsRequiredFrameCount()
@@ -265,6 +316,7 @@ int main(int argc, char** argv)
     testDefaultTwoByThreeGoldenPlan();
     testProfileConstantsAndReverseDelayBoundaries();
     testVBlankFitAndVerifiedOutputHold();
+    testEverySupportedMultiVBlankCount();
     testInvalidConfigurationFailsClosed();
     testCheckedPositionAndIntermediateArithmetic();
     testGridProductRepresentsRequiredFrameCount();

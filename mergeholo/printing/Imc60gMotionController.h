@@ -77,6 +77,7 @@ public:
 
 private:
     bool homeAxis(PrintHardwareProfile::LogicalAxis logicalAxis, QString* errorMessage);
+    bool confirmServoOn(short axis, QString* errorMessage);
     bool callSucceeded(int code, const char* functionName, short axis,
         QString* errorMessage) const;
     bool cleanupHardware(QString* errorMessage);

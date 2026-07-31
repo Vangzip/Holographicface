@@ -7,6 +7,7 @@
 
 #include <QCoreApplication>
 #include <QDebug>
+#include <QHash>
 #include <QProcess>
 #include <QRegExp>
 #include <QSet>
@@ -81,6 +82,9 @@ public:
     short masterAxisCount = 2;
     QVector<short> emergencyStatusSequence;
     int emergencyStatusCalls = 0;
+    int servoEnableAfterStatusPolls = 0;
+    QSet<short> servoOnRequestedAxes;
+    QHash<short, int> servoStatusPolls;
     QSet<short> homingAxes;
     QSet<short> backoffAxes;
     QSet<short> enabledAxes;
@@ -210,7 +214,10 @@ public:
         record(QString("servo_on:%1").arg(axis));
         const int rc = result(QString("servo_on%1").arg(axis));
         if (rc == 0) {
-            enabledAxes.insert(axis);
+            servoOnRequestedAxes.insert(axis);
+            if (servoEnableAfterStatusPolls == 0) {
+                enabledAxes.insert(axis);
+            }
         }
         return rc;
     }
@@ -226,6 +233,7 @@ public:
         const int rc = result(QString("cleanup_servo_off%1").arg(axis));
         if (rc == 0) {
             enabledAxes.remove(axis);
+            servoOnRequestedAxes.remove(axis);
         }
         return rc;
     }
@@ -298,33 +306,38 @@ public:
             || (pollFailAt == "axis_status" && homingAxes.contains(axis))) {
             return failureCode;
         }
+        if (servoOnRequestedAxes.contains(axis) && !enabledAxes.contains(axis)
+            && ++servoStatusPolls[axis] >= servoEnableAfterStatusPolls) {
+            enabledAxes.insert(axis);
+        }
+        const unsigned int servoStatus = enabledAxes.contains(axis) ? 0x00000002 : 0;
         if (!homingAxes.contains(axis)) {
-            *status = 0;
+            *status = servoStatus;
             return 0;
         }
         if (backoffAxes.contains(axis)) {
-            *status = behavior == HomeBehavior::BackoffForever ? kBusy : 0;
+            *status = servoStatus | (behavior == HomeBehavior::BackoffForever ? kBusy : 0);
             return 0;
         }
         switch (behavior) {
         case HomeBehavior::Limit:
         case HomeBehavior::DiStop:
-            *status = behavior == HomeBehavior::Limit ? kNegativeLimit : kBusy;
+            *status = servoStatus | (behavior == HomeBehavior::Limit ? kNegativeLimit : kBusy);
             break;
         case HomeBehavior::SeekForever:
-            *status = kBusy;
+            *status = servoStatus | kBusy;
             break;
         case HomeBehavior::StableStop:
-            *status = 0;
+            *status = servoStatus;
             break;
         case HomeBehavior::WrongLimit:
-            *status = kPositiveLimit | kBusy;
+            *status = servoStatus | kPositiveLimit | kBusy;
             break;
         case HomeBehavior::AlarmWrongLimit:
-            *status = kAlarm | kPositiveLimit;
+            *status = servoStatus | kAlarm | kPositiveLimit;
             break;
         case HomeBehavior::BackoffForever:
-            *status = kNegativeLimit;
+            *status = servoStatus | kNegativeLimit;
             break;
         }
         return 0;
@@ -660,6 +673,36 @@ void testEthercatOpGate()
     }
 }
 
+void testServoOnStateIsConfirmedBeforeHoming()
+{
+    {
+        SafetyApi api;
+        AdvancingClock clock;
+        api.servoEnableAfterStatusPolls = 2;
+        Imc60gMotionController controller(&api, PrintHardwareProfile(), &clock);
+        QString error;
+        check(controller.connectAndHome(&error),
+            "delayed Servo On state must allow connection: " + error);
+        check(api.events.indexOf("status:0") > api.events.indexOf("servo_on:0")
+                && api.events.indexOf("jog_profile:0") > api.events.indexOf("status:0"),
+            "Axis0 Servo On state must be confirmed before homing");
+    }
+
+    {
+        SafetyApi api;
+        AdvancingClock clock;
+        api.servoEnableAfterStatusPolls = 100;
+        Imc60gMotionController controller(&api, PrintHardwareProfile(), &clock);
+        QString error;
+        check(!controller.connectAndHome(&error),
+            "unconfirmed Servo On state must block connection");
+        check(error.contains("did not enter Servo On state") && !api.jogStarted.load(),
+            "unconfirmed Servo On state must block homing: " + error);
+        check(api.ethercatStopAttempted && api.closeAttempted,
+            "unconfirmed Servo On state must release EtherCAT and card resources");
+    }
+}
+
 void testSoftwareEmergencyReleaseBeforeServoOn()
 {
     {
@@ -789,7 +832,12 @@ void testTaskErrorCodeDescriptions()
                 && error.contains("UNRECOGNIZED_IMC_ERROR")
                 && error.contains(QString::fromUtf8(u8"\u672A\u8BC6\u522B")),
             "unknown code must preserve value and mark unrecognized: " + error);
-        expectCleanupAttempted(api);
+        check(api.stopAttempts.contains(0) && api.stopAttempts.contains(1),
+            "axis status failure must still stop both axes");
+        check(api.servoOffAttempts.contains(0) && !api.servoOffAttempts.contains(1),
+            "Axis0 status failure must only power off the attempted axis");
+        check(api.ethercatStopAttempted && api.closeAttempted,
+            "Axis0 status failure must release EtherCAT and card resources");
     }
 }
 
@@ -956,6 +1004,7 @@ bool runImc60gSafetyTests(const QStringList& arguments)
     testAcceptedAndRejectedHomingStates();
     testPollingAndTimeoutFailures();
     testFailedServoOnIsStillPoweredOff();
+    testServoOnStateIsConfirmedBeforeHoming();
     testEthercatOpGate();
     testSoftwareEmergencyReleaseBeforeServoOn();
     testTaskErrorCodeDescriptions();

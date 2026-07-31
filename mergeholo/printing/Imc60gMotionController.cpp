@@ -482,11 +482,13 @@ bool Imc60gMotionController::connectAndHome(QString* errorMessage)
     // Once Servo On is issued, shutdown must treat the axis as potentially
     // enabled even when the return code is nonzero.
     servoEnabled_[0] = true;
-    if (!callSucceeded(api_->servoOn(0, 0), "IMC_ServoOn", 0, errorMessage)) {
+    if (!callSucceeded(api_->servoOn(0, 0), "IMC_ServoOn", 0, errorMessage)
+        || !confirmServoOn(0, errorMessage)) {
         goto fail;
     }
     servoEnabled_[1] = true;
-    if (!callSucceeded(api_->servoOn(0, 1), "IMC_ServoOn", 1, errorMessage)) {
+    if (!callSucceeded(api_->servoOn(0, 1), "IMC_ServoOn", 1, errorMessage)
+        || !confirmServoOn(1, errorMessage)) {
         goto fail;
     }
 
@@ -532,6 +534,31 @@ bool Imc60gMotionController::cancellationRequested(
                 .arg(profile_.cardIndex).arg(activeAxis));
     }
     return true;
+}
+
+bool Imc60gMotionController::confirmServoOn(short axis, QString* errorMessage)
+{
+    unsigned int status = 0;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        if (!callSucceeded(api_->axisStatus(0, axis, &status),
+                "IMC_GetAxSts", axis, errorMessage)) {
+            return false;
+        }
+        if ((status & kAxisServoOn) != 0) {
+            return true;
+        }
+        if ((status & (kAxisAlarm | kAxisEmergency | kAxisUnlinked)) != 0) {
+            break;
+        }
+        if (attempt < 19) {
+            clock_->sleepMs(50);
+        }
+    }
+    setError(errorMessage,
+        QString("IMC60G axis did not enter Servo On state after IMC_ServoOn: physical-axis=%1 status=0x%2.")
+            .arg(axis)
+            .arg(status, 8, 16, QLatin1Char('0')));
+    return false;
 }
 
 bool Imc60gMotionController::homeAxis(

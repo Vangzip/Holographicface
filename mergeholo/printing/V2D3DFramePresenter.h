@@ -24,6 +24,7 @@ struct PresenterDiagnostics {
     quint32 syncRefreshCount = 0;
     qint64 frameLatencyWaitResult = -1;
     quint64 orderedPresentCount = 0;
+    QString dispatcherFailure;
     VBlankDiagnostics vblank;
 };
 
@@ -84,6 +85,8 @@ public:
 private:
     bool convertFrame(const PrintFrame& frame, const QSize& targetSize,
         QByteArray* packedBgra, QString* errorMessage) const;
+    void failDispatcherCommand(quint64 expectedGeneration, const QString& commandName,
+        QString* errorMessage);
     void invalidateReadyState();
 
     QVector<DisplayMonitor> displays_;

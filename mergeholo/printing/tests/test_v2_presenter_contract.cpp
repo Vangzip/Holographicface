@@ -61,6 +61,18 @@ public:
     QMutex mutex;
 };
 
+class RejectingDispatcher final : public IPresentationDispatcher
+{
+public:
+    bool invokeSynchronously(const std::function<bool()>& command, QString*) override
+    {
+        if (reject.load()) return false;
+        return command();
+    }
+
+    std::atomic_bool reject{false};
+};
+
 class RecordingVBlankWaiter final : public IVBlankWaiter
 {
 public:
@@ -339,6 +351,84 @@ void testFaultInvalidatesAcquiredRowAnchor()
         "a VBlank/output fault must invalidate an already acquired row anchor");
 }
 
+void testDispatcherRejectionFailsClosedAndInvalidatesAnchor()
+{
+    auto makePresenter = [] {
+        struct Parts {
+            std::shared_ptr<RecordingBackend> backend = std::make_shared<RecordingBackend>();
+            std::shared_ptr<RecordingVBlankWaiter> waiter = std::make_shared<RecordingVBlankWaiter>();
+            std::shared_ptr<RejectingDispatcher> dispatcher = std::make_shared<RejectingDispatcher>();
+            V2D3DFramePresenter presenter{{primaryDisplay(), printDisplay()}, backend, waiter, dispatcher};
+        };
+        return std::make_unique<Parts>();
+    };
+
+    QString error;
+    auto prepareCase = makePresenter();
+    prepareCase->dispatcher->reject.store(true);
+    expect(!prepareCase->presenter.prepare(validBgr(), QSize(2, 1), &error),
+        "a rejected Prepare dispatch must fail");
+    expect(error.contains(QStringLiteral("dispatcher"), Qt::CaseInsensitive),
+        "rejected Prepare dispatch must report an explicit dispatcher failure");
+    expect(prepareCase->presenter.diagnostics().dispatcherFailure.contains(
+               QStringLiteral("prepare"), Qt::CaseInsensitive),
+        "rejected Prepare dispatch must remain in structured diagnostics");
+    expect(!prepareCase->presenter.isReady(), "rejected Prepare dispatch must remain fail-closed");
+    expect(prepareCase->backend->prepareCalls == 0,
+        "rejected Prepare dispatch must not execute backend work");
+
+    auto presentCase = makePresenter();
+    expect(presentCase->presenter.prepare(validBgr(), QSize(2, 1), &error), "fixture prepare must succeed");
+    V2RowVBlankAnchor presentAnchor;
+    expect(presentCase->presenter.acquireRowAnchor(&presentAnchor, &error), "anchor acquisition must succeed");
+    presentCase->dispatcher->reject.store(true);
+    expect(!presentCase->presenter.present(validBgr(41), QSize(2, 1), &error),
+        "a rejected Present dispatch must fail");
+    expect(error.contains(QStringLiteral("dispatcher"), Qt::CaseInsensitive),
+        "rejected Present dispatch must report an explicit dispatcher failure");
+    expect(presentCase->presenter.diagnostics().dispatcherFailure.contains(
+               QStringLiteral("present"), Qt::CaseInsensitive),
+        "rejected Present dispatch must remain in structured diagnostics");
+    expect(!presentCase->presenter.isReady(), "rejected Present dispatch must clear readiness");
+    expect(!presentCase->presenter.waitForRowSlot(0, &presentAnchor, &error),
+        "rejected Present dispatch must invalidate an acquired anchor generation");
+
+    auto vblankCase = makePresenter();
+    expect(vblankCase->presenter.prepare(validBgr(), QSize(2, 1), &error), "fixture prepare must succeed");
+    V2RowVBlankAnchor vblankAnchor;
+    expect(vblankCase->presenter.acquireRowAnchor(&vblankAnchor, &error), "anchor acquisition must succeed");
+    vblankCase->dispatcher->reject.store(true);
+    expect(!vblankCase->presenter.waitForDisplayFrame(&error), "a rejected VBlank dispatch must fail");
+    expect(error.contains(QStringLiteral("dispatcher"), Qt::CaseInsensitive),
+        "rejected VBlank dispatch must report an explicit dispatcher failure");
+    expect(vblankCase->presenter.diagnostics().dispatcherFailure.contains(
+               QStringLiteral("VBlank"), Qt::CaseInsensitive),
+        "rejected VBlank dispatch must remain in structured diagnostics");
+    expect(!vblankCase->presenter.isReady(), "rejected VBlank dispatch must clear readiness");
+    expect(!vblankCase->presenter.waitForRowSlot(0, &vblankAnchor, &error),
+        "rejected VBlank dispatch must invalidate an acquired anchor generation");
+
+    auto shutdownCase = makePresenter();
+    expect(shutdownCase->presenter.prepare(validBgr(), QSize(2, 1), &error), "fixture prepare must succeed");
+    V2RowVBlankAnchor shutdownAnchor;
+    expect(shutdownCase->presenter.acquireRowAnchor(&shutdownAnchor, &error),
+        "anchor acquisition must succeed");
+    shutdownCase->dispatcher->reject.store(true);
+    shutdownCase->presenter.shutdown();
+    expect(!shutdownCase->presenter.isReady(), "shutdown must fail closed before dispatch");
+    expect(shutdownCase->presenter.diagnostics().dispatcherFailure.contains(
+               QStringLiteral("shutdown"), Qt::CaseInsensitive),
+        "rejected Shutdown dispatch must remain in structured diagnostics");
+    expect(!shutdownCase->presenter.waitForRowSlot(0, &shutdownAnchor, &error),
+        "shutdown must invalidate an acquired anchor even when dispatch is rejected");
+    expect(shutdownCase->backend->shutdownCalls == 0,
+        "a rejected Shutdown dispatch must not claim backend cleanup ran");
+    shutdownCase->dispatcher->reject.store(false);
+    shutdownCase->presenter.shutdown();
+    expect(shutdownCase->backend->shutdownCalls == 1,
+        "shutdown must retry retained backend cleanup after dispatcher recovery");
+}
+
 void testFailuresMismatchAndShutdownAreFailClosed()
 {
     const QStringList stages = {QStringLiteral("device"), QStringLiteral("swap-chain"),
@@ -475,6 +565,7 @@ int runContractTests()
     testVBlankFailureIsExactAndHasNoFallback();
     testRowAnchorConsumesExactlyOnePhysicalWait();
     testFaultInvalidatesAcquiredRowAnchor();
+    testDispatcherRejectionFailsClosedAndInvalidatesAnchor();
     testFailuresMismatchAndShutdownAreFailClosed();
     testSerializedCommandsCannotOvertake();
     testNoGuiWorkerDeadlockOrQueuedResurrection();

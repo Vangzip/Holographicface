@@ -7,6 +7,7 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -653,7 +654,9 @@ bool V2D3DFramePresenter::prepare(const PrintFrame& firstFrame, const QSize& tar
         selectedMonitor_ = selectedMonitor;
     }
 
+    std::atomic_bool commandExecuted{false};
     const bool ok = dispatcher_->invokeSynchronously([&, commandGeneration, selectedMonitor] {
+        commandExecuted.store(true);
         bool oldBackendActive = false;
         {
             QMutexLocker stateLock(&stateMutex_);
@@ -691,16 +694,10 @@ bool V2D3DFramePresenter::prepare(const PrintFrame& firstFrame, const QSize& tar
         if (!prepared || stale) backend_->shutdown();
         return prepared && !stale;
     }, errorMessage);
-    if (!ok) {
-        QMutexLocker stateLock(&stateMutex_);
-        if (generation_ == commandGeneration) {
-            ready_ = false;
-            diagnostics_.ready = false;
-            ++generation_;
-        }
-        return false;
+    if (!ok && !commandExecuted.load()) {
+        failDispatcherCommand(commandGeneration, QStringLiteral("Prepare"), errorMessage);
     }
-    return true;
+    return ok;
 }
 
 bool V2D3DFramePresenter::present(const PrintFrame& frame, const QSize& targetSize,
@@ -724,7 +721,9 @@ bool V2D3DFramePresenter::present(const PrintFrame& frame, const QSize& targetSi
         selectedMonitor = selectedMonitor_;
         localDiagnostics = diagnostics_;
     }
-    return dispatcher_->invokeSynchronously([&, expectedGeneration, selectedMonitor] {
+    std::atomic_bool commandExecuted{false};
+    const bool presented = dispatcher_->invokeSynchronously([&, expectedGeneration, selectedMonitor] {
+        commandExecuted.store(true);
         {
             QMutexLocker stateLock(&stateMutex_);
             if (!ready_ || generation_ != expectedGeneration) {
@@ -746,6 +745,10 @@ bool V2D3DFramePresenter::present(const PrintFrame& frame, const QSize& targetSi
         }
         return presented;
     }, errorMessage);
+    if (!presented && !commandExecuted.load()) {
+        failDispatcherCommand(expectedGeneration, QStringLiteral("Present"), errorMessage);
+    }
+    return presented;
 }
 
 bool V2D3DFramePresenter::waitForDisplayFrame(QString* errorMessage)
@@ -763,7 +766,9 @@ bool V2D3DFramePresenter::waitForDisplayFrame(QString* errorMessage)
         selectedMonitor = selectedMonitor_;
         localDiagnostics = diagnostics_;
     }
-    return dispatcher_->invokeSynchronously([&, expectedGeneration, selectedMonitor] {
+    std::atomic_bool commandExecuted{false};
+    const bool waited = dispatcher_->invokeSynchronously([&, expectedGeneration, selectedMonitor] {
+        commandExecuted.store(true);
         {
             QMutexLocker stateLock(&stateMutex_);
             if (!ready_ || generation_ != expectedGeneration) {
@@ -783,6 +788,10 @@ bool V2D3DFramePresenter::waitForDisplayFrame(QString* errorMessage)
         }
         return waited;
     }, errorMessage);
+    if (!waited && !commandExecuted.load()) {
+        failDispatcherCommand(expectedGeneration, QStringLiteral("physical VBlank"), errorMessage);
+    }
+    return waited;
 }
 
 bool V2D3DFramePresenter::acquireRowAnchor(V2RowVBlankAnchor* anchor, QString* errorMessage)
@@ -832,11 +841,27 @@ void V2D3DFramePresenter::invalidateReadyState()
     ++generation_;
 }
 
+void V2D3DFramePresenter::failDispatcherCommand(quint64 expectedGeneration,
+    const QString& commandName, QString* errorMessage)
+{
+    const QString message = QStringLiteral("Presentation dispatcher rejected the %1 command.")
+                                .arg(commandName);
+    setError(errorMessage, message);
+    QMutexLocker stateLock(&stateMutex_);
+    if (generation_ != expectedGeneration) return;
+    ready_ = false;
+    diagnostics_.ready = false;
+    diagnostics_.dispatcherFailure = message;
+    ++generation_;
+}
+
 void V2D3DFramePresenter::shutdown()
 {
     invalidateReadyState();
     if (!backend_ || !dispatcher_) return;
-    dispatcher_->invokeSynchronously([&] {
+    std::atomic_bool commandExecuted{false};
+    const bool dispatched = dispatcher_->invokeSynchronously([&] {
+        commandExecuted.store(true);
         bool shouldShutdown = false;
         {
             QMutexLocker stateLock(&stateMutex_);
@@ -846,6 +871,11 @@ void V2D3DFramePresenter::shutdown()
         if (shouldShutdown) backend_->shutdown();
         return true;
     }, nullptr);
+    if (!dispatched && !commandExecuted.load()) {
+        QMutexLocker stateLock(&stateMutex_);
+        diagnostics_.dispatcherFailure =
+            QStringLiteral("Presentation dispatcher rejected the Shutdown command.");
+    }
 }
 
 bool V2D3DFramePresenter::isReady() const

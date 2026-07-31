@@ -16,6 +16,8 @@ SOURCES += \
     printing/PrintHardwareProfile.cpp \
     printing/Sv660nExposureController.cpp \
     printing/V2PrintTiming.cpp \
+    printing/SecondScreenSelection.cpp \
+    printing/V2D3DFramePresenter.cpp \
     vendor/base/FileLibrary.cpp \
     vendor/base/Logger.cpp \
     vendor/multiview/memoryAtlasPageSink.cpp \
@@ -46,6 +48,11 @@ HEADERS += \
     printing/Imc60gMotionController.h \
     printing/Sv660nExposureController.h \
     printing/V2PrintTiming.h \
+    printing/IPrintFramePresenter.h \
+    printing/IVBlankWaiter.h \
+    printing/PrintFrame.h \
+    printing/SecondScreenSelection.h \
+    printing/V2D3DFramePresenter.h \
     vendor/base/base.h \
     vendor/base/FileLibrary.h \
     vendor/base/Logger.hpp \
@@ -71,6 +78,7 @@ FORMS += \
 INCLUDEPATH += \
     apps \
     camera \
+    printing \
     widgets \
     vendor/base \
     vendor/multiview \
@@ -89,3 +97,4 @@ isEmpty(JP_LF_V4_ROOT): error("JpLFDll-v4.1.1 SDK not found. Set JP_LF_V4_ROOT o
 
 INCLUDEPATH += $$JP_LF_V4_ROOT/include
 LIBS += -L$$JP_LF_V4_ROOT/windows -lJpLFDll-v4.1.1
+win32:LIBS += -ld3d11 -ldxgi -ld3dcompiler -luser32

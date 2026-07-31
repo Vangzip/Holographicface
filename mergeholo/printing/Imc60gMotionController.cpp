@@ -5,6 +5,7 @@
 #include <QMutexLocker>
 #include <QThread>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -192,6 +193,7 @@ const ErrorInfo kTaskErrorInfo[] = {
     {0x0393, "ERR_HOMING_NOT_CSP", "axis is not in CSP homing", ErrorAction::AxisState},
     {0x0394, "ERR_HOMING_NOT_CIA", "axis is not in CiA402 homing", ErrorAction::AxisState},
     {0x0400, "ERR_PTP_STOPPED", "PTP motion is already stopped", ErrorAction::AxisState},
+    {0x0702, "ERR_NO_SYS_INT_SIGNAL", "system interrupt is not running; verify EtherCAT is operational", ErrorAction::Ethercat},
     {0x8000, "ERR_CARD_OPEN", "card has not been opened", ErrorAction::Card},
     {0x8001, "ERR_CARD_INDEX_READ", "failed to read card index", ErrorAction::Card},
     {0x8002, "ERR_CARD_INDEX_REPEAT", "duplicate card index detected", ErrorAction::Card},
@@ -410,6 +412,9 @@ bool Imc60gMotionController::connectAndHome(QString* errorMessage)
 
     state_ = Imc60gConnectionState::Connecting;
     unsigned int cards = 0;
+    unsigned int masterStatus = 0;
+    Imc60gMasterInfo masterInfo;
+    const int requiredAxisCount = std::max(profile_.axisX, profile_.axisY) + 1;
     if (!callSucceeded(api_->getCardsNum(&cards), "IMC_GetCardsNum", kNoAxis, errorMessage)) {
         goto fail;
     }
@@ -422,8 +427,30 @@ bool Imc60gMotionController::connectAndHome(QString* errorMessage)
     }
     cardOpened_ = true;
     ethercatTouched_ = true;
-    if (!callSucceeded(api_->scanEthercat(0, 40), "IMC_ScanCardEcat", kNoAxis, errorMessage)
-        || !callSucceeded(api_->setEmergencyLevel(0, 1), "IMC_SetEmgTrigLevelInv", kNoAxis, errorMessage)
+    if (!callSucceeded(api_->scanEthercat(0, 40), "IMC_ScanCardEcat", kNoAxis, errorMessage)) {
+        goto fail;
+    }
+
+    if (!callSucceeded(api_->ethercatMasterStatus(0, &masterStatus),
+            "IMC_GetEcatMasterSts", kNoAxis, errorMessage)
+        || !callSucceeded(api_->ethercatMasterInfo(0, &masterInfo),
+            "IMC_GetEcatMasterInfo", kNoAxis, errorMessage)) {
+        goto fail;
+    }
+    if (masterStatus != kEthercatMasterOperational) {
+        setError(errorMessage,
+            QString("IMC60G EtherCAT master is not OP after automatic scan: status=%1 expected=6 (OP).")
+                .arg(masterStatus));
+        goto fail;
+    }
+    if (masterInfo.axisCount < requiredAxisCount) {
+        setError(errorMessage,
+            QString("IMC60G EtherCAT discovery found %1 axis resources; X/Y require physical axes 0 and 1.")
+                .arg(masterInfo.axisCount));
+        goto fail;
+    }
+
+    if (!callSucceeded(api_->setEmergencyLevel(0, 1), "IMC_SetEmgTrigLevelInv", kNoAxis, errorMessage)
         || !callSucceeded(api_->clearAxisStatus(0, 0), "IMC_ClrAxSts", 0, errorMessage)
         || !callSucceeded(api_->clearAxisStatus(0, 1), "IMC_ClrAxSts", 1, errorMessage)) {
         goto fail;

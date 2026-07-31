@@ -40,6 +40,7 @@ public:
     bool cardClosed = false;
     bool ptpStarted = false;
     unsigned int masterStatus = 6;
+    short masterAxisCount = 2;
     short emergency = 0;
     unsigned int forcedAxisBits = 0;
     short lastPtpAxis = -1;
@@ -111,6 +112,16 @@ public:
         Q_UNUSED(cardIndex);
         if (result("master_status") == 0) *status = masterStatus;
         return result("master_status");
+    }
+
+    int ethercatMasterInfo(unsigned int cardIndex,
+        Imc60gMasterInfo* info) override
+    {
+        Q_UNUSED(cardIndex);
+        if (result("master_info") == 0 && info) {
+            info->axisCount = masterAxisCount;
+        }
+        return result("master_info");
     }
 
     int setEmergencyLevel(unsigned int cardIndex, short inverted) override

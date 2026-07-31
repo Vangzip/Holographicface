@@ -76,6 +76,8 @@ public:
     unsigned int forcedStopReason = 0;
     HomeBehavior behavior = HomeBehavior::Limit;
     unsigned int cardCount = 1;
+    unsigned int masterStatus = 6;
+    short masterAxisCount = 2;
     QSet<short> homingAxes;
     QSet<short> backoffAxes;
     QSet<short> enabledAxes;
@@ -156,8 +158,17 @@ public:
     int ethercatMasterStatus(unsigned int card, unsigned int* status) override
     {
         Q_UNUSED(card);
-        if (status) *status = 6;
-        return 0;
+        if (result("master_status") == 0 && status) *status = masterStatus;
+        return result("master_status");
+    }
+
+    int ethercatMasterInfo(unsigned int card, Imc60gMasterInfo* info) override
+    {
+        Q_UNUSED(card);
+        if (result("master_info") == 0 && info) {
+            info->axisCount = masterAxisCount;
+        }
+        return result("master_info");
     }
 
     int setEmergencyLevel(unsigned int card, short inverted) override
@@ -607,6 +618,35 @@ void testFailedServoOnIsStillPoweredOff()
         "successful and unverified Servo On axes must both receive Servo Off");
 }
 
+void testEthercatOpGate()
+{
+    {
+        SafetyApi api;
+        AdvancingClock clock;
+        api.masterStatus = 4;
+        Imc60gMotionController controller(&api, PrintHardwareProfile(), &clock);
+        QString error;
+        check(!controller.connectAndHome(&error), "non-OP master must fail connection");
+        check(error.contains("OP") && !api.events.contains("servo_on:0"),
+            "non-OP master must block Servo On: " + error);
+        check(api.ethercatStopAttempted && api.closeAttempted,
+            "non-OP master must release EtherCAT and card resources");
+    }
+
+    {
+        SafetyApi api;
+        AdvancingClock clock;
+        api.masterAxisCount = 1;
+        Imc60gMotionController controller(&api, PrintHardwareProfile(), &clock);
+        QString error;
+        check(!controller.connectAndHome(&error), "insufficient EtherCAT axes must fail connection");
+        check(error.contains("axis") && !api.events.contains("servo_on:0"),
+            "insufficient EtherCAT axes must block Servo On: " + error);
+        check(api.ethercatStopAttempted && api.closeAttempted,
+            "insufficient EtherCAT axes must release EtherCAT and card resources");
+    }
+}
+
 void checkMappedError(
     const QString& error, const QString& operation, const QString& symbol,
     int code, const QString& label)
@@ -654,6 +694,7 @@ void testTaskErrorCodeDescriptions()
         const char* label;
     } connectionErrors[] = {
         {"scan", 0x10018201, "IMC_ScanCardEcat", "ERR_ECAT_MASTER_NOT_OP_STS", "wrapped EtherCAT master status"},
+        {"servo_on0", 0x32000702, "IMC_ServoOn", "ERR_NO_SYS_INT_SIGNAL", "missing EtherCAT system interrupt"},
         {"emg", 0x0310, "IMC_SetEmgTrigLevelInv", "ERR_HW_ESTP_IS_TRIG", "emergency stop"},
         {"backoff0", 0x033c, "IMC_StartPtpMove", "ERR_AX_BUSY", "axis busy"},
         {"jog_profile0", 0x033a, "IMC_JogPrf", "ERR_AX_SVOFF", "servo off"},
@@ -675,6 +716,13 @@ void testTaskErrorCodeDescriptions()
                 "pre-servo failure must not power off axes that were never enabled");
             check(api.ethercatStopAttempted && api.closeAttempted,
                 "pre-servo failure must release EtherCAT and card resources");
+        } else if (QString(item.point) == "servo_on0") {
+            check(api.stopAttempts.contains(0) && api.stopAttempts.contains(1),
+                "first Servo On failure must still stop both axes");
+            check(api.servoOffAttempts.contains(0) && !api.servoOffAttempts.contains(1),
+                "first Servo On failure must only power off the potentially enabled axis");
+            check(api.ethercatStopAttempted && api.closeAttempted,
+                "first Servo On failure must release EtherCAT and card resources");
         } else {
             expectCleanupAttempted(api);
         }
@@ -859,6 +907,7 @@ bool runImc60gSafetyTests(const QStringList& arguments)
     testAcceptedAndRejectedHomingStates();
     testPollingAndTimeoutFailures();
     testFailedServoOnIsStillPoweredOff();
+    testEthercatOpGate();
     testTaskErrorCodeDescriptions();
     testDirectionalLimitStopReasons();
     testCancellationPaths();

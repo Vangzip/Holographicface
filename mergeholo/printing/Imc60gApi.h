@@ -17,6 +17,8 @@ public:
     int stopEthercat(unsigned int cardIndex) override;
     int ethercatMasterStatus(unsigned int cardIndex,
         unsigned int* status) override;
+    int ethercatMasterInfo(unsigned int cardIndex,
+        Imc60gMasterInfo* info) override;
     int setEmergencyLevel(unsigned int cardIndex, short inverted) override;
     int emergencyStatus(unsigned int cardIndex, short* status) override;
     int clearAxisStatus(unsigned int cardIndex, short axis) override;

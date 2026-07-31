@@ -1,5 +1,9 @@
 #pragma once
 
+struct Imc60gMasterInfo {
+    short axisCount = 0;
+};
+
 class IImc60gApi {
 public:
     virtual ~IImc60gApi() = default;
@@ -13,6 +17,8 @@ public:
     virtual int stopEthercat(unsigned int cardIndex) = 0;
     virtual int ethercatMasterStatus(unsigned int cardIndex,
         unsigned int* status) = 0;
+    virtual int ethercatMasterInfo(unsigned int cardIndex,
+        Imc60gMasterInfo* info) = 0;
     virtual int setEmergencyLevel(unsigned int cardIndex, short inverted) = 0;
     virtual int emergencyStatus(unsigned int cardIndex, short* status) = 0;
     virtual int clearAxisStatus(unsigned int cardIndex, short axis) = 0;

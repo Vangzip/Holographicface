@@ -83,6 +83,11 @@ public:
         if (status) *status = 6;
         return 0;
     }
+    int ethercatMasterInfo(unsigned int, Imc60gMasterInfo* info) override
+    {
+        if (info) info->axisCount = 2;
+        return 0;
+    }
     int setEmergencyLevel(unsigned int, short) override { return 0; }
     int emergencyStatus(unsigned int, short* status) override
     {

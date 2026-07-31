@@ -64,6 +64,17 @@ int Imc60gApi::ethercatMasterStatus(
     return IMC_GetEcatMasterSts(cardNumber(cardIndex), status);
 }
 
+int Imc60gApi::ethercatMasterInfo(
+    unsigned int cardIndex, Imc60gMasterInfo* info)
+{
+    TMasterInfo nativeInfo = {};
+    const int rc = IMC_GetEcatMasterInfo(cardNumber(cardIndex), &nativeInfo);
+    if (rc == 0 && info) {
+        info->axisCount = nativeInfo.axisCnt;
+    }
+    return rc;
+}
+
 int Imc60gApi::setEmergencyLevel(unsigned int cardIndex, short inverted)
 {
     return IMC_SetEmgTrigLevelInv(cardNumber(cardIndex), inverted);

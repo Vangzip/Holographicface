@@ -52,6 +52,7 @@ public:
     void cancel() override { commands.append("cancel"); }
 
     void publishState(PrintUiState state) { emit stateChanged(state); }
+    void publishError(const QString& detail) { emit errorChanged(detail); }
     void publishSafeStopCompleted() { emit safeStopCompleted(); }
 };
 
@@ -71,6 +72,17 @@ void testOpeningIsHardwareSilentAndExplicitConnectOwnsStartup()
 
     expect(controller.commands.isEmpty(),
         "opening the print dialog must issue zero controller commands");
+    QLabel* sourceSummary = dialog.findChild<QLabel*>("sourceSummaryLabel");
+    expect(sourceSummary
+            && sourceSummary->text() == QString::fromUtf8(u8"\u672A\u52A0\u8F7D"),
+        "dynamic source summary must preserve exact Chinese Unicode text");
+    const QString diagnostic = QString::fromUtf8(
+        u8"UNRECOGNIZED_IMC_ERROR: \u672A\u8BC6\u522B\u7684 IMC errorcode.h \u9519\u8BEF");
+    controller.publishError(diagnostic);
+    QCoreApplication::processEvents();
+    QLabel* errorDetail = dialog.findChild<QLabel*>("errorDetailLabel");
+    expect(errorDetail && errorDetail->text() == diagnostic,
+        "controller diagnostics must reach the UI without an encoding conversion");
     QPushButton* connect = dialog.findChild<QPushButton*>("connectHomeButton");
     expect(connect != nullptr, "connect/home button must exist");
     connect->click();

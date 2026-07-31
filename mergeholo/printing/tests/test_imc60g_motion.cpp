@@ -302,7 +302,7 @@ void testLifecycleAndHomingOrder()
     QString error;
     expect(controller.connectAndHome(&error), "connect and home should pass with recording API: " + error);
     expect(api.events == QStringList({
-        "cards", "open:0", "scan:0:40", "ecat_init:0", "ecat_start:0",
+        "cards", "open:0", "scan:0:40",
         "emg_level:0:1", "clear:0", "clear:1", "servo_on:0", "servo_on:1",
         "home:0:-1", "backoff:0:92000", "zero:0",
         "home:1:-1", "backoff:1:28000", "zero:1"
@@ -315,7 +315,7 @@ void testLifecycleAndHomingOrder()
 void testLifecycleFailuresCloseSafely()
 {
     const QStringList failurePoints = {
-        "scan", "init", "start", "emg", "servo0", "servo1",
+        "scan", "emg", "servo0", "servo1",
         "home0", "backoff0", "zero0", "home1", "backoff1", "zero1"
     };
     for (const QString& point : failurePoints) {

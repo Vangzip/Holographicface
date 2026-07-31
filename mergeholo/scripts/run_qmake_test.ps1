@@ -15,6 +15,7 @@ Push-Location $buildDir
 try {
     $command = "call `"$vs`" -arch=x64 -host_arch=x64 >nul && " +
         "`"$qmake`" `"$projectPath`" `"CONFIG+=release`" -o Makefile && " +
+        "nmake /NOLOGO /F Makefile.Release clean && " +
         "nmake /NOLOGO /F Makefile.Release"
     cmd /d /c $command
     if ($LASTEXITCODE -ne 0) { throw "qmake test build failed: $Project" }

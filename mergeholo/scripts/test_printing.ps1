@@ -32,6 +32,45 @@ function Assert-PeX64 {
     }
 }
 
+function New-BmpString {
+    param([Parameter(Mandatory = $true)][int[]]$CodePoints)
+    return -join ($CodePoints | ForEach-Object { [char]$_ })
+}
+
+function Find-ByteSequence {
+    param(
+        [Parameter(Mandatory = $true)][byte[]]$Bytes,
+        [Parameter(Mandatory = $true)][byte[]]$Needle
+    )
+    for ($offset = 0; $offset -le $Bytes.Length - $Needle.Length; ++$offset) {
+        $matches = $true
+        for ($index = 0; $index -lt $Needle.Length; ++$index) {
+            if ($Bytes[$offset + $index] -ne $Needle[$index]) {
+                $matches = $false
+                break
+            }
+        }
+        if ($matches) { return $offset }
+    }
+    return -1
+}
+
+function Assert-Utf16BinaryText {
+    param(
+        [Parameter(Mandatory = $true)][byte[]]$Bytes,
+        [Parameter(Mandatory = $true)][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [switch]$Absent
+    )
+    $offset = Find-ByteSequence -Bytes $Bytes -Needle ([Text.Encoding]::Unicode.GetBytes($Text))
+    if ($Absent.IsPresent -and $offset -ge 0) {
+        throw "Unexpected mojibake UTF-16 text in production binary: $Label offset=$offset"
+    }
+    if (-not $Absent.IsPresent -and $offset -lt 0) {
+        throw "Missing expected UTF-16 UI text in production binary: $Label"
+    }
+}
+
 function Read-IniValues {
     param([Parameter(Mandatory = $true)][string]$Path)
     $values = @{}
@@ -89,6 +128,19 @@ $exe = Join-Path $outputDir "mergeholo.exe"
 $imcDll = Join-Path $outputDir "IMC_Library_x64.dll"
 Assert-PeX64 -Path $exe
 Assert-PeX64 -Path $imcDll
+$exeBytes = [IO.File]::ReadAllBytes($exe)
+$memoryText = New-BmpString -CodePoints @(0x5185, 0x5B58)
+$sheetText = New-BmpString -CodePoints @(0x5F20)
+$unrecognizedText = New-BmpString -CodePoints @(0x672A, 0x8BC6, 0x522B, 0x7684)
+$errorText = New-BmpString -CodePoints @(0x9519, 0x8BEF)
+$mojibakeMemoryText = New-BmpString -CodePoints @(0x9350, 0x546D, 0x74E8)
+Assert-Utf16BinaryText -Bytes $exeBytes `
+    -Text "$memoryText elemental: %1 $sheetText" -Label "memory elemental source summary"
+Assert-Utf16BinaryText -Bytes $exeBytes `
+    -Text "UNRECOGNIZED_IMC_ERROR: $unrecognizedText IMC errorcode.h $errorText" `
+    -Label "IMC unknown-error diagnostic"
+Assert-Utf16BinaryText -Bytes $exeBytes `
+    -Text "$mojibakeMemoryText elemental" -Label "legacy GBK-decoded memory summary" -Absent
 Invoke-CheckedPowerShell -Script (Join-Path $PSScriptRoot "verify_imc60g_sdk.ps1") `
     -Arguments @("-RepoRoot", $repoRoot, "-RuntimeDirectory", $outputDir)
 

@@ -616,7 +616,7 @@ void checkMappedError(
     check(error.contains(QString("code=%1").arg(code))
             && error.contains(QString("[0x%1]").arg(static_cast<unsigned int>(code), 0, 16)),
         label + " must show decimal and hexadecimal values: " + error);
-    check(error.contains(QStringLiteral("\u64CD\u4F5C"))
+    check(error.contains(QString::fromUtf8(u8"\u64CD\u4F5C"))
             && error.contains("Action"),
         label + " must include actionable Chinese/English guidance: " + error);
 }
@@ -653,6 +653,7 @@ void testTaskErrorCodeDescriptions()
         const char* symbol;
         const char* label;
     } connectionErrors[] = {
+        {"scan", 0x10018201, "IMC_ScanCardEcat", "ERR_ECAT_MASTER_NOT_OP_STS", "wrapped EtherCAT master status"},
         {"emg", 0x0310, "IMC_SetEmgTrigLevelInv", "ERR_HW_ESTP_IS_TRIG", "emergency stop"},
         {"backoff0", 0x033c, "IMC_StartPtpMove", "ERR_AX_BUSY", "axis busy"},
         {"jog_profile0", 0x033a, "IMC_JogPrf", "ERR_AX_SVOFF", "servo off"},
@@ -667,7 +668,7 @@ void testTaskErrorCodeDescriptions()
         QString error;
         check(!controller.connectAndHome(&error), QString(item.label) + " must fail");
         checkMappedError(error, item.operation, item.symbol, item.code, item.label);
-        if (QString(item.point) == "emg") {
+        if (QString(item.point) == "scan" || QString(item.point) == "emg") {
             check(api.stopAttempts.contains(0) && api.stopAttempts.contains(1),
                 "pre-servo failure must still stop both axes");
             check(api.servoOffAttempts.isEmpty(),
@@ -689,7 +690,7 @@ void testTaskErrorCodeDescriptions()
         check(!controller.connectAndHome(&error), "unknown code must fail");
         check(error.contains("code=31420") && error.contains("[0x7abc]")
                 && error.contains("UNRECOGNIZED_IMC_ERROR")
-                && error.contains(QStringLiteral("\u672A\u8BC6\u522B")),
+                && error.contains(QString::fromUtf8(u8"\u672A\u8BC6\u522B")),
             "unknown code must preserve value and mark unrecognized: " + error);
         expectCleanupAttempted(api);
     }

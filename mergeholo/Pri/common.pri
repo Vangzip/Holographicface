@@ -21,7 +21,7 @@ MOC_DIR =       $$PWD/../FF-tmp/moc/$$TARGET/$$MERGEHOLO_BUILD_VARIANT/$$MERGEHO
 OBJECTS_DIR =   $$PWD/../FF-tmp/obj/$$TARGET/$$MERGEHOLO_BUILD_VARIANT/$$MERGEHOLO_TOOLSET
 RCC_DIR =       $$PWD/../FF-tmp/rcc/$$TARGET/$$MERGEHOLO_BUILD_VARIANT/$$MERGEHOLO_TOOLSET
 
-win32:QMAKE_CXXFLAGS += /source-charset:utf-8 /execution-charset:utf-8
+win32:QMAKE_CXXFLAGS += /utf-8
 
 
 

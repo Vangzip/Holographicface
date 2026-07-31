@@ -262,6 +262,41 @@ function Remove-ObsoletePrintRuntime {
     }
 }
 
+function Invoke-VsCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string]$FailureMessage
+    )
+    $VsCommand = "call `"$VsDevCmd`" -arch=x64 && $Command"
+    cmd.exe /d /s /c $VsCommand
+    if ($LASTEXITCODE -ne 0) {
+        throw "$FailureMessage (exit code $LASTEXITCODE)"
+    }
+}
+
+function Get-CompilerFingerprint {
+    param([Parameter(Mandatory = $true)][string]$MakefilePath)
+
+    $BuildSettingLines = Get-Content -LiteralPath $MakefilePath | Where-Object {
+        $_ -match '^(CC|CXX|DEFINES|CFLAGS|CXXFLAGS|INCPATH|LINK|LFLAGS|LIBS|QMAKE)\s*='
+    }
+    $Signature = @(
+        "architecture=x64",
+        "config=$Config",
+        "qmake=$([IO.Path]::GetFullPath($QMake))",
+        "vsdevcmd=$([IO.Path]::GetFullPath($VsDevCmd))"
+    ) + $BuildSettingLines
+    $Sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $HashBytes = $Sha256.ComputeHash(
+            [Text.Encoding]::UTF8.GetBytes(($Signature -join "`n")))
+        return -join ($HashBytes | ForEach-Object { $_.ToString("x2") })
+    }
+    finally {
+        $Sha256.Dispose()
+    }
+}
+
 Push-Location $ProjectRoot
 try {
     $QMakeStash = Join-Path $ProjectRoot ".qmake.stash"
@@ -269,15 +304,32 @@ try {
         Remove-Item -LiteralPath $QMakeStash -Force
     }
 
-    $Cmd = "call `"$VsDevCmd`" -arch=x64 && `"$QMake`" mergeholo.pro -spec win32-msvc $QMakeConfig"
-    if ($Clean) {
-        $Cmd += " && if exist $Makefile nmake /f $Makefile clean"
+    Invoke-VsCommand `
+        -Command "`"$QMake`" mergeholo.pro -spec win32-msvc $QMakeConfig" `
+        -FailureMessage "qmake failed"
+
+    $MakefilePath = Join-Path $ProjectRoot $Makefile
+    if (-not (Test-Path -LiteralPath $MakefilePath -PathType Leaf)) {
+        throw "qmake did not create expected makefile: $MakefilePath"
     }
-    $Cmd += " && nmake /f $Makefile"
-    cmd.exe /s /c $Cmd
-    if ($LASTEXITCODE -ne 0) {
-        throw "Build failed with exit code $LASTEXITCODE"
+    $Fingerprint = Get-CompilerFingerprint -MakefilePath $MakefilePath
+    $BuildStateDir = Join-Path $ProjectRoot "FF-tmp\build-state"
+    $FingerprintPath = Join-Path $BuildStateDir "$Config-x64-compiler.sha256"
+    $PreviousFingerprint = if (Test-Path -LiteralPath $FingerprintPath -PathType Leaf) {
+        (Get-Content -LiteralPath $FingerprintPath -Raw).Trim()
+    } else { "" }
+    $CompilerSettingsChanged = $PreviousFingerprint -ne $Fingerprint
+    if ($Clean.IsPresent -or $CompilerSettingsChanged) {
+        $CleanReason = if ($Clean.IsPresent) { "explicit -Clean" } else { "compiler settings changed" }
+        Write-Host "Cleaning $Config objects: $CleanReason"
+        Invoke-VsCommand -Command "nmake /f $Makefile clean" -FailureMessage "Clean failed"
     }
+    Invoke-VsCommand -Command "nmake /f $Makefile" -FailureMessage "Build failed"
+
+    if (-not (Test-Path -LiteralPath $BuildStateDir)) {
+        New-Item -ItemType Directory -Path $BuildStateDir | Out-Null
+    }
+    Set-Content -LiteralPath $FingerprintPath -Value $Fingerprint -Encoding ASCII
 
     $imcRuntime = Join-Path $repoRoot "vendor\imc60g\bin\x64\IMC_Library_x64.dll"
     if (-not (Test-Path -LiteralPath $imcRuntime)) { throw "Missing IMC runtime: $imcRuntime" }

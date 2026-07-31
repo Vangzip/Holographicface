@@ -251,12 +251,24 @@ QString actionText(ErrorAction action)
 
 QString errorCodeText(int code)
 {
+    const auto describe = [](const ErrorInfo& info) {
+        return QString("%1: %2. %3")
+            .arg(QString::fromLatin1(info.symbol))
+            .arg(QString::fromLatin1(info.explanation))
+            .arg(actionText(info.action));
+    };
     for (const ErrorInfo& info : kTaskErrorInfo) {
         if (info.code == code) {
-            return QString("%1: %2. %3")
-                .arg(QString::fromLatin1(info.symbol))
-                .arg(QString::fromLatin1(info.explanation))
-                .arg(actionText(info.action));
+            return describe(info);
+        }
+    }
+    const int lowWord = static_cast<int>(static_cast<unsigned int>(code) & 0xffffU);
+    if (lowWord != code) {
+        for (const ErrorInfo& info : kTaskErrorInfo) {
+            if (info.code == lowWord) {
+                return describe(info)
+                    + QString(" (decoded vendor low16=0x%1)").arg(lowWord, 4, 16, QChar('0'));
+            }
         }
     }
     return QStringLiteral("UNRECOGNIZED_IMC_ERROR: \u672A\u8BC6\u522B\u7684 IMC errorcode.h \u9519\u8BEF / unrecognized IMC errorcode.h value. \u64CD\u4F5C / Action: \u4FDD\u7559\u6570\u503C\u5E76\u67E5\u8BE2\u5F53\u524D SDK errorcode.h\uFF0C\u505C\u6B62\u786C\u4EF6\u64CD\u4F5C / preserve the value, inspect the installed SDK errorcode.h, and stop hardware operation");
@@ -411,8 +423,6 @@ bool Imc60gMotionController::connectAndHome(QString* errorMessage)
     cardOpened_ = true;
     ethercatTouched_ = true;
     if (!callSucceeded(api_->scanEthercat(0, 40), "IMC_ScanCardEcat", kNoAxis, errorMessage)
-        || !callSucceeded(api_->initEthercat(0), "IMC_InitEcatComm", kNoAxis, errorMessage)
-        || !callSucceeded(api_->startEthercat(0), "IMC_StartEcatComm", kNoAxis, errorMessage)
         || !callSucceeded(api_->setEmergencyLevel(0, 1), "IMC_SetEmgTrigLevelInv", kNoAxis, errorMessage)
         || !callSucceeded(api_->clearAxisStatus(0, 0), "IMC_ClrAxSts", 0, errorMessage)
         || !callSucceeded(api_->clearAxisStatus(0, 1), "IMC_ClrAxSts", 1, errorMessage)) {

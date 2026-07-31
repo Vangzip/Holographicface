@@ -246,6 +246,22 @@ function Deploy-MergeHoloConfig {
     Copy-FileSet -SourceDir (Join-Path $ProjectRoot "config") -DestinationDir $ConfigTarget -Patterns @("*.ini", "*.cfg")
 }
 
+function Remove-ObsoletePrintRuntime {
+    param([Parameter(Mandatory = $true)][string]$DestinationRoot)
+
+    foreach ($FileName in @(
+        "DfjzhControlerDll.dll",
+        "dfjzh6052dll.dll",
+        "dfjzh6052dll0.dll",
+        "CH365DLL.DLL"
+    )) {
+        $LegacyPath = Join-Path $DestinationRoot $FileName
+        if (Test-Path -LiteralPath $LegacyPath -PathType Leaf) {
+            Remove-Item -LiteralPath $LegacyPath -Force
+        }
+    }
+}
+
 Push-Location $ProjectRoot
 try {
     $QMakeStash = Join-Path $ProjectRoot ".qmake.stash"
@@ -279,6 +295,7 @@ try {
         Deploy-CameraRuntime -DestinationRoot $OutDir
         Deploy-MsvcRuntime -DestinationRoot $OutDir -VsDevCmdPath $VsDevCmd
         Deploy-MergeHoloConfig -DestinationRoot $OutDir
+        Remove-ObsoletePrintRuntime -DestinationRoot $OutDir
     }
 }
 finally {

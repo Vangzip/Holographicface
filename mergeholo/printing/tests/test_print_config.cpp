@@ -124,7 +124,12 @@ void testPrintConfigMigratesEditableValuesWithoutLegacyShutter()
     expect(savePrint9030Config(path, config, &error), "migrated config should save");
     QSettings saved(path, QSettings::IniFormat);
     expect(saved.value("meta/version").toInt() == 2, "saved config should declare version 2");
-    expect(!saved.value("axis_w/electrical_status").toBool(), "saved config must keep W shutter disabled");
+    expect(!saved.childGroups().contains("axis_z") && !saved.childGroups().contains("axis_w"),
+        "saved IMC60G config must not retain unavailable Z/W controls");
+    expect(!saved.contains("main/move_adjust_mm")
+            && !saved.contains("main/delay_seconds")
+            && !saved.contains("main/exposure_seconds"),
+        "saved config must not expose inactive legacy timing fields");
 }
 
 void testUnknownProfileVersionIsRejected()

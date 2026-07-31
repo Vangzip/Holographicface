@@ -77,11 +77,8 @@ bool validateFiniteMainConfig(const PrintMainConfig& main, QString* field)
         double value;
     };
     const NamedValue values[] = {
-        {"moveAdjustMm", main.moveAdjustMm},
         {"rowSpacingMm", main.rowSpacingMm},
         {"columnSpacingMm", main.columnSpacingMm},
-        {"delaySeconds", main.delaySeconds},
-        {"exposureSeconds", main.exposureSeconds},
         {"widthScale", main.widthScale},
         {"heightScale", main.heightScale}
     };
@@ -182,16 +179,6 @@ V2PrintPlan buildV2PrintPlan(
                 .arg(config.main.gridColumns)
                 .arg(requiredFrames)
                 .arg(kMaximumPlannedFrames));
-    }
-    if (config.main.delaySeconds < 0.0) {
-        return fail(errorMessage,
-            QString("delaySeconds cannot be negative; value=%1")
-                .arg(config.main.delaySeconds));
-    }
-    if (config.main.exposureSeconds <= 0.0) {
-        return fail(errorMessage,
-            QString("exposureSeconds must be positive; value=%1")
-                .arg(config.main.exposureSeconds));
     }
     if (config.main.widthScale <= 0.0 || config.main.heightScale <= 0.0) {
         return fail(errorMessage,

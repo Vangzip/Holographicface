@@ -209,14 +209,6 @@ void testInvalidConfigurationFailsClosed()
     expectInvalid(config, 60.0, "allocation");
 
     config = defaultPrint9030Config();
-    config.main.delaySeconds = -0.001;
-    expectInvalid(config, 60.0, "delay");
-
-    config = defaultPrint9030Config();
-    config.main.exposureSeconds = 0.0;
-    expectInvalid(config, 60.0, "exposure");
-
-    config = defaultPrint9030Config();
     config.main.widthScale = std::numeric_limits<double>::quiet_NaN();
     expectInvalid(config, 60.0, "widthScale");
 
@@ -249,6 +241,18 @@ void testInvalidConfigurationFailsClosed()
     expectInvalid(config, -60.0, "refresh");
     expectInvalid(config, std::numeric_limits<double>::quiet_NaN(), "refresh");
     expectInvalid(config, std::numeric_limits<double>::infinity(), "refresh");
+}
+
+void testInactiveLegacyFieldsDoNotAffectV2Plan()
+{
+    Print9030Config config = defaultPrint9030Config();
+    config.main.moveAdjustMm = std::numeric_limits<double>::quiet_NaN();
+    config.main.delaySeconds = -100.0;
+    config.main.exposureSeconds = 0.0;
+    QString error;
+    const V2PrintPlan plan = build(config, 60.0, &error);
+    expect(error.isEmpty() && !plan.rows.isEmpty(),
+        "inactive legacy fields must not gate or alter the active IMC60G V2 path");
 }
 
 void testCheckedPositionAndIntermediateArithmetic()
@@ -318,6 +322,7 @@ int main(int argc, char** argv)
     testVBlankFitAndVerifiedOutputHold();
     testEverySupportedMultiVBlankCount();
     testInvalidConfigurationFailsClosed();
+    testInactiveLegacyFieldsDoNotAffectV2Plan();
     testCheckedPositionAndIntermediateArithmetic();
     testGridProductRepresentsRequiredFrameCount();
     qInfo() << "V2 print timing tests passed";

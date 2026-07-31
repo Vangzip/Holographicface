@@ -221,13 +221,10 @@ void Print9030Dialog::saveConfigFromUi()
 
 void Print9030Dialog::populateUiFromConfig()
 {
-    ui_->moveAdjustSpin->setValue(config_.main.moveAdjustMm);
     ui_->rowSpacingSpin->setValue(config_.main.rowSpacingMm);
     ui_->columnSpacingSpin->setValue(config_.main.columnSpacingMm);
     ui_->gridRowsSpin->setValue(config_.main.gridRows);
     ui_->gridColumnsSpin->setValue(config_.main.gridColumns);
-    ui_->delaySpin->setValue(config_.main.delaySeconds);
-    ui_->exposureSpin->setValue(config_.main.exposureSeconds);
     ui_->widthScaleSpin->setValue(config_.main.widthScale);
     ui_->heightScaleSpin->setValue(config_.main.heightScale);
     ui_->addTempPulseSpin->setValue(config_.main.addTempPulse);
@@ -238,13 +235,10 @@ void Print9030Dialog::populateUiFromConfig()
 
 void Print9030Dialog::updateConfigFromUi()
 {
-    config_.main.moveAdjustMm = ui_->moveAdjustSpin->value();
     config_.main.rowSpacingMm = ui_->rowSpacingSpin->value();
     config_.main.columnSpacingMm = ui_->columnSpacingSpin->value();
     config_.main.gridRows = ui_->gridRowsSpin->value();
     config_.main.gridColumns = ui_->gridColumnsSpin->value();
-    config_.main.delaySeconds = ui_->delaySpin->value();
-    config_.main.exposureSeconds = ui_->exposureSpin->value();
     config_.main.widthScale = ui_->widthScaleSpin->value();
     config_.main.heightScale = ui_->heightScaleSpin->value();
     config_.main.addTempPulse = ui_->addTempPulseSpin->value();

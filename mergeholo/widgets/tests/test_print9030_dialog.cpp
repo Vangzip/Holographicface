@@ -144,13 +144,12 @@ void testValidSourceAndFieldsRoundTripIntoStart()
     expect(button(dialog, "startButton")->isEnabled(),
         "start is enabled only for Ready with a valid source");
 
-    auto* moveAdjust = dialog.findChild<QDoubleSpinBox*>("moveAdjustSpin");
-    expect(moveAdjust != nullptr, "move adjustment field must exist");
-    moveAdjust->setValue(12.375);
+    expect(dialog.findChild<QDoubleSpinBox*>("moveAdjustSpin") == nullptr
+            && dialog.findChild<QDoubleSpinBox*>("delaySpin") == nullptr
+            && dialog.findChild<QDoubleSpinBox*>("exposureSpin") == nullptr,
+        "inactive legacy timing fields must not be exposed as functional controls");
     dialog.findChild<QDoubleSpinBox*>("rowSpacingSpin")->setValue(1.125);
     dialog.findChild<QDoubleSpinBox*>("columnSpacingSpin")->setValue(2.250);
-    dialog.findChild<QDoubleSpinBox*>("delaySpin")->setValue(0.375);
-    dialog.findChild<QDoubleSpinBox*>("exposureSpin")->setValue(0.625);
     dialog.findChild<QDoubleSpinBox*>("widthScaleSpin")->setValue(1.500);
     dialog.findChild<QDoubleSpinBox*>("heightScaleSpin")->setValue(2.500);
     dialog.findChild<QSpinBox*>("addTempPulseSpin")->setValue(16000);
@@ -163,12 +162,8 @@ void testValidSourceAndFieldsRoundTripIntoStart()
         "preview button must display the active first image");
     button(dialog, "startButton")->click();
     expect(controller.commands == QStringList({"start"}), "start must dispatch once");
-    expect(controller.startedConfig.main.moveAdjustMm == 12.375,
-        "typed main parameter must round-trip into controller snapshot");
     expect(controller.startedConfig.main.rowSpacingMm == 1.125
             && controller.startedConfig.main.columnSpacingMm == 2.250
-            && controller.startedConfig.main.delaySeconds == 0.375
-            && controller.startedConfig.main.exposureSeconds == 0.625
             && controller.startedConfig.main.widthScale == 1.500
             && controller.startedConfig.main.heightScale == 2.500
             && controller.startedConfig.main.addTempPulse == 16000
@@ -177,8 +172,8 @@ void testValidSourceAndFieldsRoundTripIntoStart()
     QString loadError;
     const Print9030Config persisted = loadPrint9030Config(
         QDir(root.path()).filePath("config/print_9030.ini"), &loadError);
-    expect(loadError.isEmpty() && persisted.main.moveAdjustMm == 12.375
-            && persisted.main.gridRows == 1 && persisted.main.gridColumns == 1,
+    expect(loadError.isEmpty() && persisted.main.gridRows == 1
+            && persisted.main.gridColumns == 1,
         "retained fields must persist to and reload from print_9030.ini");
 
     QTableWidget* axes = dialog.findChild<QTableWidget*>("axisTable");

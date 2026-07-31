@@ -2,8 +2,12 @@
 #include "CaptureImport.h"
 #include "CaptureSession.h"
 #include "HoloPipeline.h"
+#include "PrintHardwareProfile.h"
 
 #include <QApplication>
+#include <QCryptographicHash>
+#include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -36,6 +40,81 @@ QString firstExisting(const QStringList& candidates, const QString& fallback)
         }
     }
     return QFileInfo(fallback).absoluteFilePath();
+}
+
+QString sha256File(const QString& path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return QStringLiteral("unavailable");
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&file)) {
+        return QStringLiteral("unavailable");
+    }
+    return QString::fromLatin1(hash.result().toHex());
+}
+
+void logImc60gStartupDiagnostics()
+{
+    const QString root = projectRoot();
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QString runtimePath = QFileInfo(
+        QDir(appDir).filePath("IMC_Library_x64.dll")).absoluteFilePath();
+    const QString profilePath = firstExisting({
+        QDir(root).filePath("config/imc60g_print.ini"),
+        QDir(appDir).filePath("config/imc60g_print.ini")
+    }, QDir(appDir).filePath("config/imc60g_print.ini"));
+    const QString logDirectory = QDir(root).filePath("runs/latest");
+    const QString logPath = QDir(logDirectory).filePath("imc60g_startup.log");
+
+    QString profileError;
+    const PrintHardwareProfile profile = loadPrintHardwareProfile(profilePath, &profileError);
+    const QString architecture = sizeof(void*) == 8
+        ? QStringLiteral("x64") : QStringLiteral("not-x64");
+    const QStringList lines = {
+        QStringLiteral("IMC60G startup architecture=%1").arg(architecture),
+        QStringLiteral("IMC60G runtime path=%1")
+            .arg(QDir::toNativeSeparators(runtimePath)),
+        QStringLiteral("IMC60G runtime sha256=%1").arg(sha256File(runtimePath)),
+        QStringLiteral("IMC60G profile version=%1 card=%2 axis_x=%3 axis_y=%4 home_order=Y,X")
+            .arg(profile.version)
+            .arg(profile.cardIndex)
+            .arg(profile.axisX)
+            .arg(profile.axisY),
+        QStringLiteral("IMC60G exposure backend=SV660N internal position compare DO1"),
+        QStringLiteral("IMC60G startup action=diagnostics-only; card remains closed"),
+        QStringLiteral("IMC60G startup log path=%1")
+            .arg(QDir::toNativeSeparators(QFileInfo(logPath).absoluteFilePath()))
+    };
+
+    for (const QString& line : lines) {
+        qInfo().noquote() << line;
+    }
+    if (!profileError.isEmpty()) {
+        qWarning().noquote() << "IMC60G profile error=" + profileError;
+    }
+
+    if (!QDir().mkpath(logDirectory)) {
+        qWarning().noquote() << "IMC60G startup log directory unavailable="
+                            + QDir::toNativeSeparators(logDirectory);
+        return;
+    }
+    QFile logFile(logPath);
+    if (!logFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        qWarning().noquote() << "IMC60G startup log unavailable="
+                            + QDir::toNativeSeparators(logPath);
+        return;
+    }
+    QTextStream stream(&logFile);
+    stream << QDateTime::currentDateTime().toString(Qt::ISODateWithMs) << '\n';
+    for (const QString& line : lines) {
+        stream << line << '\n';
+    }
+    if (!profileError.isEmpty()) {
+        stream << "IMC60G profile error=" << profileError << '\n';
+    }
+    stream.flush();
 }
 
 QString readSimpleIniValue(const QString& path, const QString& key)
@@ -194,6 +273,7 @@ CaptureSessionOptions captureOptionsFromArgs(const QStringList& args)
 int main(int argc, char* argv[])
 {
     QApplication app(argc, argv);
+    logImc60gStartupDiagnostics();
     const QStringList args = app.arguments();
 
     if (hasOption(args, "--mergeholo-help")) {

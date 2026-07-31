@@ -52,8 +52,6 @@
      <widget class="QWidget" name="mainTab">
       <attribute name="title"><string>打印参数</string></attribute>
       <layout class="QGridLayout" name="mainGrid">
-       <item row="0" column="0"><widget class="QLabel" name="moveAdjustLabel"><property name="text"><string>移动调整</string></property></widget></item>
-       <item row="0" column="1"><widget class="QDoubleSpinBox" name="moveAdjustSpin"><property name="decimals"><number>3</number></property><property name="minimum"><double>-100000.000</double></property><property name="maximum"><double>100000.000</double></property><property name="suffix"><string> mm</string></property></widget></item>
        <item row="0" column="2"><widget class="QLabel" name="rowSpacingLabel"><property name="text"><string>行间距</string></property></widget></item>
        <item row="0" column="3"><widget class="QDoubleSpinBox" name="rowSpacingSpin"><property name="decimals"><number>3</number></property><property name="minimum"><double>0.001</double></property><property name="maximum"><double>100000.000</double></property><property name="suffix"><string> mm</string></property></widget></item>
        <item row="1" column="0"><widget class="QLabel" name="columnSpacingLabel"><property name="text"><string>列间距</string></property></widget></item>
@@ -62,10 +60,6 @@
        <item row="1" column="3"><widget class="QSpinBox" name="gridRowsSpin"><property name="minimum"><number>1</number></property><property name="maximum"><number>1000000</number></property></widget></item>
        <item row="2" column="0"><widget class="QLabel" name="gridColumnsLabel"><property name="text"><string>列数</string></property></widget></item>
        <item row="2" column="1"><widget class="QSpinBox" name="gridColumnsSpin"><property name="minimum"><number>1</number></property><property name="maximum"><number>1000000</number></property></widget></item>
-       <item row="2" column="2"><widget class="QLabel" name="delayLabel"><property name="text"><string>静台时间</string></property></widget></item>
-       <item row="2" column="3"><widget class="QDoubleSpinBox" name="delaySpin"><property name="decimals"><number>3</number></property><property name="maximum"><double>3600.000</double></property><property name="suffix"><string> s</string></property></widget></item>
-       <item row="3" column="0"><widget class="QLabel" name="exposureLabel"><property name="text"><string>曝光时间</string></property></widget></item>
-       <item row="3" column="1"><widget class="QDoubleSpinBox" name="exposureSpin"><property name="decimals"><number>3</number></property><property name="minimum"><double>0.001</double></property><property name="maximum"><double>3600.000</double></property><property name="suffix"><string> s</string></property></widget></item>
        <item row="3" column="2"><widget class="QLabel" name="widthScaleLabel"><property name="text"><string>输出宽缩放</string></property></widget></item>
        <item row="3" column="3"><widget class="QDoubleSpinBox" name="widthScaleSpin"><property name="decimals"><number>3</number></property><property name="minimum"><double>0.001</double></property><property name="maximum"><double>1000.000</double></property></widget></item>
        <item row="4" column="0"><widget class="QLabel" name="heightScaleLabel"><property name="text"><string>输出高缩放</string></property></widget></item>

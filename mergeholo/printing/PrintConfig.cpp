@@ -161,13 +161,10 @@ bool savePrint9030Config(const QString& path, const Print9030Config& config, QSt
     settings.endGroup();
 
     settings.beginGroup("main");
-    settings.setValue("move_adjust_mm", config.main.moveAdjustMm);
     settings.setValue("row_spacing_mm", config.main.rowSpacingMm);
     settings.setValue("column_spacing_mm", config.main.columnSpacingMm);
     settings.setValue("grid_rows", config.main.gridRows);
     settings.setValue("grid_columns", config.main.gridColumns);
-    settings.setValue("delay_seconds", config.main.delaySeconds);
-    settings.setValue("exposure_seconds", config.main.exposureSeconds);
     settings.setValue("width_scale", config.main.widthScale);
     settings.setValue("height_scale", config.main.heightScale);
     settings.setValue("add_temp_pulse", static_cast<qlonglong>(config.main.addTempPulse));
@@ -176,10 +173,6 @@ bool savePrint9030Config(const QString& path, const Print9030Config& config, QSt
 
     writeAxis(settings, "axis_x", config.axisX);
     writeAxis(settings, "axis_y", config.axisY);
-    writeAxis(settings, "axis_z", config.axisZ);
-    PrintAxisConfig axisW = config.axisW;
-    axisW.electricalStatus = false;
-    writeAxis(settings, "axis_w", axisW);
     settings.sync();
 
     if (settings.status() != QSettings::NoError) {

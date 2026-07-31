@@ -35,6 +35,12 @@ QVector<DisplayMonitor> enumerateAttachedDesktopMonitors(QString* errorMessage)
             display.attachedToDesktop = true;
             display.nativeMonitor = reinterpret_cast<quintptr>(monitor);
             display.deviceName = QString::fromWCharArray(info.szDevice);
+            DEVMODEW mode = {};
+            mode.dmSize = sizeof(mode);
+            if (EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode)
+                && mode.dmDisplayFrequency > 1) {
+                display.refreshHz = static_cast<double>(mode.dmDisplayFrequency);
+            }
             result->push_back(display);
             return TRUE;
         }, reinterpret_cast<LPARAM>(&displays));

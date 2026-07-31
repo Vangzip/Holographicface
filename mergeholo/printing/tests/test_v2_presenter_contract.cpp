@@ -39,12 +39,13 @@ PrintFrame frame(int width, int height, int stride, PrintPixelFormat format, con
 
 DisplayMonitor primaryDisplay()
 {
-    return {QRect(0, 0, 1920, 1080), true, true, 1, QStringLiteral("PRIMARY")};
+    return {QRect(0, 0, 1920, 1080), true, true, 1,
+        QStringLiteral("PRIMARY"), 60.0};
 }
 
 DisplayMonitor printDisplay(quintptr handle = 2, const QString& name = QStringLiteral("PRINT"))
 {
-    return {QRect(1920, 0, 1920, 1080), false, true, handle, name};
+    return {QRect(1920, 0, 1920, 1080), false, true, handle, name, 60.0};
 }
 
 class InlineDispatcher final : public IPresentationDispatcher
@@ -227,6 +228,30 @@ void testDisplaySelection()
         "last attached non-primary valid monitor must be selected exactly as V2");
     expect(!selectV2SecondScreenIndex({primaryDisplay()}).has_value(),
         "primary-only display list must fail closed");
+}
+
+void testSelectedRefreshRateIsExactAndFailClosed()
+{
+    Fixture valid({primaryDisplay(), printDisplay()});
+    QString error;
+    expect(valid.presenter.selectedRefreshHz(&error) == 60.0 && error.isEmpty(),
+        "presenter must expose the selected print output refresh rate");
+
+    DisplayMonitor invalidRefresh = printDisplay();
+    invalidRefresh.refreshHz = 0.0;
+    Fixture invalid({primaryDisplay(), invalidRefresh});
+    expect(invalid.presenter.selectedRefreshHz(&error) == 0.0
+            && error.contains("refresh", Qt::CaseInsensitive),
+        "missing print-output refresh rate must fail closed");
+}
+
+void testInactiveShutdownDoesNotDispatchToGui()
+{
+    Fixture inactive;
+    const int callsBeforeShutdown = inactive.dispatcher->calls;
+    inactive.presenter.shutdown();
+    expect(inactive.dispatcher->calls == callsBeforeShutdown,
+        "shutdown without active display resources must not bounce to the GUI thread");
 }
 
 void testPrintFrameOwnsItsLayoutValidation()
@@ -558,6 +583,8 @@ void testSerializedCommandsCannotOvertake()
 int runContractTests()
 {
     testDisplaySelection();
+    testSelectedRefreshRateIsExactAndFailClosed();
+    testInactiveShutdownDoesNotDispatchToGui();
     testPrintFrameOwnsItsLayoutValidation();
     testPrimaryOnlyFailsBeforeBackendConstructionWork();
     testBgrAndBgraUploadBytesAndStride();

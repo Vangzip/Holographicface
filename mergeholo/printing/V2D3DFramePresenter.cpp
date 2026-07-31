@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -530,12 +531,24 @@ public:
 } // namespace
 
 V2D3DFramePresenter::V2D3DFramePresenter()
-    : displays_(enumerateAttachedDesktopMonitors())
-    , dispatcher_(std::make_shared<QtPresentationDispatcher>())
+    : dispatcher_(std::make_shared<QtPresentationDispatcher>())
 {
     const auto native = std::make_shared<NativeD3DBackend>();
     backend_ = native;
     vblankWaiter_ = native;
+}
+
+bool V2D3DFramePresenter::refreshAttachedDisplays(QString* errorMessage)
+{
+    QString detail;
+    QVector<DisplayMonitor> displays = enumerateAttachedDesktopMonitors(&detail);
+    if (!detail.isEmpty()) {
+        setError(errorMessage, detail);
+        return false;
+    }
+    displays_ = std::move(displays);
+    if (errorMessage) errorMessage->clear();
+    return true;
 }
 
 V2D3DFramePresenter::V2D3DFramePresenter(QVector<DisplayMonitor> displays,
@@ -717,6 +730,24 @@ PrintPresenterReadiness V2D3DFramePresenter::printReadiness(QString* errorMessag
     return readiness;
 }
 
+double V2D3DFramePresenter::selectedRefreshHz(QString* errorMessage) const
+{
+    if (errorMessage) errorMessage->clear();
+    const std::optional<int> selected = selectV2SecondScreenIndex(displays_);
+    if (!selected) {
+        setError(errorMessage,
+            QStringLiteral("A valid attached non-primary display is required to determine refresh rate."));
+        return 0.0;
+    }
+    const double refreshHz = displays_.at(*selected).refreshHz;
+    if (!std::isfinite(refreshHz) || refreshHz <= 1.0) {
+        setError(errorMessage,
+            QStringLiteral("The selected print display refresh rate is unavailable or invalid."));
+        return 0.0;
+    }
+    return refreshHz;
+}
+
 bool V2D3DFramePresenter::present(const PrintFrame& frame, const QSize& targetSize,
     QString* errorMessage)
 {
@@ -882,6 +913,10 @@ void V2D3DFramePresenter::shutdown()
 {
     invalidateReadyState();
     if (!backend_ || !dispatcher_) return;
+    {
+        QMutexLocker stateLock(&stateMutex_);
+        if (!backendActive_) return;
+    }
     std::atomic_bool commandExecuted{false};
     const bool dispatched = dispatcher_->invokeSynchronously([&] {
         commandExecuted.store(true);

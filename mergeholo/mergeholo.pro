@@ -21,6 +21,7 @@ SOURCES += \
     printing/PrintConfig.cpp \
     printing/PrintImageSource.cpp \
     printing/PrintJobRunner.cpp \
+    printing/PrintController.cpp \
     printing/SecondScreenSelection.cpp \
     printing/V2D3DFramePresenter.cpp \
     vendor/base/FileLibrary.cpp \
@@ -38,7 +39,8 @@ SOURCES += \
     vendor/point_cloud/src/modifiedPclFunctions.cpp \
     vendor/point_cloud/src/OdmTexturing.cpp \
     vendor/point_cloud/src/poissonmesh.cpp \
-    widgets/CaptureWindow.cpp
+    widgets/CaptureWindow.cpp \
+    widgets/Print9030Dialog.cpp
 
 HEADERS += \
     camera/CaptureSession.h \
@@ -62,6 +64,7 @@ HEADERS += \
     printing/PrintFrame.h \
     printing/PrintImageSource.h \
     printing/PrintJobRunner.h \
+    printing/PrintController.h \
     printing/SecondScreenSelection.h \
     printing/V2D3DFramePresenter.h \
     vendor/base/base.h \
@@ -81,10 +84,12 @@ HEADERS += \
     vendor/point_cloud/include/modifiedPclFunctions.hpp \
     vendor/point_cloud/include/OdmTexturing.hpp \
     vendor/point_cloud/include/poissonmesh.hpp \
-    widgets/CaptureWindow.h
+    widgets/CaptureWindow.h \
+    widgets/Print9030Dialog.h
 
 FORMS += \
-    ui/CaptureWindow.ui
+    ui/CaptureWindow.ui \
+    ui/Print9030Dialog.ui
 
 INCLUDEPATH += \
     apps \

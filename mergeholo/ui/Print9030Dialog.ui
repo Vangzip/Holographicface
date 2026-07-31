@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Print9030Dialog</class>
+ <widget class="QDialog" name="Print9030Dialog">
+  <property name="geometry"><rect><x>0</x><y>0</y><width>920</width><height>820</height></rect></property>
+  <property name="windowTitle"><string>IMC60G 9030 打印</string></property>
+  <layout class="QVBoxLayout" name="rootLayout">
+   <item>
+    <widget class="QGroupBox" name="sourceGroup">
+     <property name="title"><string>图像源与预览</string></property>
+     <layout class="QGridLayout" name="sourceLayout">
+      <item row="0" column="0"><widget class="QRadioButton" name="memorySourceRadio"><property name="text"><string>内存 elemental</string></property><property name="checked"><bool>true</bool></property></widget></item>
+      <item row="0" column="1"><widget class="QLabel" name="sourceSummaryLabel"><property name="text"><string>未加载</string></property></widget></item>
+      <item row="0" column="2"><widget class="QPushButton" name="previewButton"><property name="text"><string>预览</string></property></widget></item>
+      <item row="1" column="0"><widget class="QRadioButton" name="folderSourceRadio"><property name="text"><string>手动文件夹</string></property></widget></item>
+      <item row="1" column="1"><widget class="QLineEdit" name="folderPathEdit"><property name="placeholderText"><string>输入或选择图像文件夹</string></property></widget></item>
+      <item row="1" column="2"><widget class="QPushButton" name="browseFolderButton"><property name="text"><string>选择</string></property></widget></item>
+      <item row="2" column="0" colspan="3"><widget class="QLabel" name="previewLabel"><property name="minimumSize"><size><width>0</width><height>80</height></size></property><property name="alignment"><set>Qt::AlignCenter</set></property><property name="text"><string>预览未加载</string></property></widget></item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="hardwareGroup">
+     <property name="title"><string>生产映射：Card0，X→Axis1，Y→Axis0，SV660N DO1+/DO1- 位置比较</string></property>
+     <layout class="QGridLayout" name="hardwareLayout">
+      <item row="0" column="0"><widget class="QPushButton" name="connectHomeButton"><property name="text"><string>连接并回零</string></property></widget></item>
+      <item row="0" column="1"><widget class="QPushButton" name="disconnectButton"><property name="text"><string>断开</string></property></widget></item>
+      <item row="0" column="2"><widget class="QLabel" name="stateLabel"><property name="text"><string>未连接</string></property></widget></item>
+      <item row="1" column="0"><widget class="QLabel" name="ethercatStatusLabel"><property name="text"><string>EtherCAT: 离线</string></property></widget></item>
+      <item row="1" column="1"><widget class="QLabel" name="servoStatusLabel"><property name="text"><string>Servo: OFF</string></property></widget></item>
+      <item row="1" column="2"><widget class="QLabel" name="homeStatusLabel"><property name="text"><string>Home: 未完成</string></property></widget></item>
+      <item row="2" column="0"><widget class="QLabel" name="xPositionLabel"><property name="text"><string>X: 0.000 mm</string></property></widget></item>
+      <item row="2" column="1"><widget class="QLabel" name="yPositionLabel"><property name="text"><string>Y: 0.000 mm</string></property></widget></item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="manualMotionGroup">
+     <property name="title"><string>X/Y 手动移动</string></property>
+     <layout class="QHBoxLayout" name="manualMotionLayout">
+      <item><widget class="QDoubleSpinBox" name="manualStepSpin"><property name="decimals"><number>3</number></property><property name="minimum"><double>0.001</double></property><property name="maximum"><double>100.000</double></property><property name="value"><double>1.000</double></property><property name="suffix"><string> mm</string></property></widget></item>
+      <item><widget class="QPushButton" name="xNegativeButton"><property name="text"><string>X-</string></property></widget></item>
+      <item><widget class="QPushButton" name="xPositiveButton"><property name="text"><string>X+</string></property></widget></item>
+      <item><widget class="QPushButton" name="yNegativeButton"><property name="text"><string>Y-</string></property></widget></item>
+      <item><widget class="QPushButton" name="yPositiveButton"><property name="text"><string>Y+</string></property></widget></item>
+      <item><widget class="QPushButton" name="manualStopButton"><property name="text"><string>停止</string></property></widget></item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTabWidget" name="configTabs">
+     <widget class="QWidget" name="mainTab">
+      <attribute name="title"><string>打印参数</string></attribute>
+      <layout class="QGridLayout" name="mainGrid">
+       <item row="0" column="0"><widget class="QLabel" name="moveAdjustLabel"><property name="text"><string>移动调整</string></property></widget></item>
+       <item row="0" column="1"><widget class="QDoubleSpinBox" name="moveAdjustSpin"><property name="decimals"><number>3</number></property><property name="minimum"><double>-100000.000</double></property><property name="maximum"><double>100000.000</double></property><property name="suffix"><string> mm</string></property></widget></item>
+       <item row="0" column="2"><widget class="QLabel" name="rowSpacingLabel"><property name="text"><string>行间距</string></property></widget></item>
+       <item row="0" column="3"><widget class="QDoubleSpinBox" name="rowSpacingSpin"><property name="decimals"><number>3</number></property><property name="minimum"><double>0.001</double></property><property name="maximum"><double>100000.000</double></property><property name="suffix"><string> mm</string></property></widget></item>
+       <item row="1" column="0"><widget class="QLabel" name="columnSpacingLabel"><property name="text"><string>列间距</string></property></widget></item>
+       <item row="1" column="1"><widget class="QDoubleSpinBox" name="columnSpacingSpin"><property name="decimals"><number>3</number></property><property name="minimum"><double>0.001</double></property><property name="maximum"><double>100000.000</double></property><property name="suffix"><string> mm</string></property></widget></item>
+       <item row="1" column="2"><widget class="QLabel" name="gridRowsLabel"><property name="text"><string>行数</string></property></widget></item>
+       <item row="1" column="3"><widget class="QSpinBox" name="gridRowsSpin"><property name="minimum"><number>1</number></property><property name="maximum"><number>1000000</number></property></widget></item>
+       <item row="2" column="0"><widget class="QLabel" name="gridColumnsLabel"><property name="text"><string>列数</string></property></widget></item>
+       <item row="2" column="1"><widget class="QSpinBox" name="gridColumnsSpin"><property name="minimum"><number>1</number></property><property name="maximum"><number>1000000</number></property></widget></item>
+       <item row="2" column="2"><widget class="QLabel" name="delayLabel"><property name="text"><string>静台时间</string></property></widget></item>
+       <item row="2" column="3"><widget class="QDoubleSpinBox" name="delaySpin"><property name="decimals"><number>3</number></property><property name="maximum"><double>3600.000</double></property><property name="suffix"><string> s</string></property></widget></item>
+       <item row="3" column="0"><widget class="QLabel" name="exposureLabel"><property name="text"><string>曝光时间</string></property></widget></item>
+       <item row="3" column="1"><widget class="QDoubleSpinBox" name="exposureSpin"><property name="decimals"><number>3</number></property><property name="minimum"><double>0.001</double></property><property name="maximum"><double>3600.000</double></property><property name="suffix"><string> s</string></property></widget></item>
+       <item row="3" column="2"><widget class="QLabel" name="widthScaleLabel"><property name="text"><string>输出宽缩放</string></property></widget></item>
+       <item row="3" column="3"><widget class="QDoubleSpinBox" name="widthScaleSpin"><property name="decimals"><number>3</number></property><property name="minimum"><double>0.001</double></property><property name="maximum"><double>1000.000</double></property></widget></item>
+       <item row="4" column="0"><widget class="QLabel" name="heightScaleLabel"><property name="text"><string>输出高缩放</string></property></widget></item>
+       <item row="4" column="1"><widget class="QDoubleSpinBox" name="heightScaleSpin"><property name="decimals"><number>3</number></property><property name="minimum"><double>0.001</double></property><property name="maximum"><double>1000.000</double></property></widget></item>
+       <item row="4" column="2"><widget class="QLabel" name="addTempPulseLabel"><property name="text"><string>延长匀速段</string></property></widget></item>
+       <item row="4" column="3"><widget class="QSpinBox" name="addTempPulseSpin"><property name="minimum"><number>-2147483647</number></property><property name="maximum"><number>2147483647</number></property><property name="suffix"><string> pulse</string></property></widget></item>
+       <item row="5" column="0"><widget class="QLabel" name="leadPulseLabel"><property name="text"><string>反向提前</string></property></widget></item>
+       <item row="5" column="1"><widget class="QSpinBox" name="leadPulseSpin"><property name="minimum"><number>-2147483647</number></property><property name="maximum"><number>2147483647</number></property><property name="suffix"><string> pulse</string></property></widget></item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="axisTab">
+      <attribute name="title"><string>X/Y 轴参数</string></attribute>
+      <layout class="QVBoxLayout" name="axisLayout">
+       <item><widget class="QTableWidget" name="axisTable">
+        <property name="rowCount"><number>2</number></property><property name="columnCount"><number>8</number></property>
+        <row><property name="text"><string>X (Axis1)</string></property></row><row><property name="text"><string>Y (Axis0)</string></property></row>
+        <column><property name="text"><string>细分</string></property></column><column><property name="text"><string>分辨率</string></property></column>
+        <column><property name="text"><string>运行速度</string></property></column><column><property name="text"><string>加速度</string></property></column>
+        <column><property name="text"><string>启动速度</string></property></column><column><property name="text"><string>停止速度</string></property></column>
+        <column><property name="text"><string>最大行程(mm)</string></property></column><column><property name="text"><string>反向</string></property></column>
+       </widget></item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+   <item><widget class="QProgressBar" name="printProgressBar"><property name="value"><number>0</number></property></widget></item>
+   <item><widget class="QLabel" name="statusLabel"><property name="text"><string>待连接</string></property></widget></item>
+   <item><widget class="QLabel" name="errorDetailLabel"><property name="text"><string/></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+   <item><layout class="QHBoxLayout" name="buttonLayout">
+    <item><spacer name="buttonSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+    <item><widget class="QPushButton" name="startButton"><property name="text"><string>开始</string></property></widget></item>
+    <item><widget class="QPushButton" name="pauseButton"><property name="text"><string>暂停</string></property></widget></item>
+    <item><widget class="QPushButton" name="resumeButton"><property name="text"><string>继续</string></property></widget></item>
+    <item><widget class="QPushButton" name="cancelButton"><property name="text"><string>取消</string></property></widget></item>
+    <item><widget class="QPushButton" name="closeButton"><property name="text"><string>关闭</string></property></widget></item>
+   </layout></item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

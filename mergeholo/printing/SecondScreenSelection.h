@@ -12,6 +12,7 @@ struct DisplayMonitor {
     bool attachedToDesktop = false;
     quintptr nativeMonitor = 0;
     QString deviceName;
+    double refreshHz = 0.0;
 };
 
 QVector<DisplayMonitor> enumerateAttachedDesktopMonitors(QString* errorMessage = nullptr);

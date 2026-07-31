@@ -77,7 +77,9 @@ public:
         QString* errorMessage = nullptr) override;
     void shutdown() override;
 
+    bool refreshAttachedDisplays(QString* errorMessage = nullptr);
     bool isReady() const;
+    double selectedRefreshHz(QString* errorMessage = nullptr) const;
     PresenterDiagnostics diagnostics() const;
 
 private:

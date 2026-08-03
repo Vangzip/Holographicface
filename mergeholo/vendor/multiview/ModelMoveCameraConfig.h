@@ -6,8 +6,8 @@ struct ModelMoveCameraConfig
 {
     double distanceScale = 2.0;
     osg::Vec3d centerOffset = osg::Vec3d(0.0, 0.0, 0.0);
-    osg::Vec3d eyeDirection = osg::Vec3d(0.0, -1.0, 0.0);
-    osg::Vec3d upDirection = osg::Vec3d(0.0, 0.0, 1.0);
+    osg::Vec3d eyeDirection = osg::Vec3d(0.0, 0.0, 1.0);
+    osg::Vec3d upDirection = osg::Vec3d(0.0, 1.0, 0.0);
     double fovyDeg = 0.0;
     double zNear = 0.0;
     double zFar = 0.0;

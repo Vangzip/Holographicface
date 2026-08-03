@@ -5,11 +5,13 @@
 #include "PrintHardwarePreflight.h"
 #include "PrintHardwareProfile.h"
 #include "PrintJobRunner.h"
+#include "PrintPositionSampler.h"
 #include "Sv660nExposureController.h"
 #include "V2D3DFramePresenter.h"
 #include "V2PrintTiming.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QMetaObject>
 #include <QPointer>
@@ -51,18 +53,29 @@ public:
                     emit owner->progressChanged(value, detail);
                 });
             });
+        connect(runner_, &PrintJobRunner::frameAdvanced, this,
+            [this](int, int, int) { publishPrintingPosition(); });
         connect(runner_, &PrintJobRunner::finished, this,
             [this](bool success, const QString& detail) {
                 busy_ = false;
-                post([success, detail](PrintController* owner) {
-                    emit owner->statusChanged(detail);
-                    if (!success) emit owner->errorChanged(detail);
+                const bool safelyCancelled = !success
+                    && runner_->state() == PrintJobState::Ready;
+                post([success, detail, safelyCancelled](PrintController* owner) {
+                    emit owner->statusChanged(safelyCancelled
+                            ? QStringLiteral("Print job cancelled; ready for the next job.")
+                            : detail);
+                    if (safelyCancelled) emit owner->errorChanged(QString());
+                    else if (!success) emit owner->errorChanged(detail);
                     emit owner->safeStopCompleted();
                 });
             });
     }
 
-    void initialize() { pollTimer_->start(); }
+    void initialize()
+    {
+        positionClock_.start();
+        pollTimer_->start();
+    }
 
     void connectAndHome()
     {
@@ -136,6 +149,48 @@ public:
         busy_ = false;
         if (!xStopped || !yStopped) fail((xError + " " + yError).trimmed());
         else pollPositions();
+    }
+
+    void setLogicalOrigin()
+    {
+        if (busy_ || state_ != PrintUiState::Ready) return;
+        busy_ = true;
+        QString detail;
+        const bool ok = motion_.setCurrentPositionAsLogicalOrigin(&detail);
+        busy_ = false;
+        if (!ok) {
+            fail(detail.isEmpty() ? "Setting IMC60G logical origin failed." : detail);
+            return;
+        }
+        post([](PrintController* owner) {
+            emit owner->positionsChanged(0.0, 0.0);
+            emit owner->statusChanged("IMC60G X/Y logical origin set.");
+            emit owner->errorChanged(QString());
+        });
+    }
+
+    void returnToLogicalOrigin()
+    {
+        if (busy_ || state_ != PrintUiState::Ready) return;
+        busy_ = true;
+        QString detail;
+        const int timeoutMs = 5000;
+        const bool returned = motion_.returnToLogicalZeroWhenReady(config_.axisX,
+            config_.axisY, timeoutMs, &detail);
+        const bool verified = returned && motion_.verifyLogicalZero(&detail);
+        busy_ = false;
+        if (!verified) {
+            fail(detail.isEmpty() ? "Returning IMC60G X/Y to logical origin failed." : detail);
+            return;
+        }
+        if (!publishPositions(&detail)) {
+            fail(detail.isEmpty() ? "Refreshing IMC60G origin position failed." : detail);
+            return;
+        }
+        post([](PrintController* owner) {
+            emit owner->statusChanged("IMC60G X/Y returned to logical origin.");
+            emit owner->errorChanged(QString());
+        });
     }
 
     void start(const Print9030Config& config, const PrintImageSet& images)
@@ -240,25 +295,50 @@ private:
         });
     }
 
+    bool publishPositions(QString* errorMessage = nullptr)
+    {
+        if (errorMessage) errorMessage->clear();
+        int xPulses = 0;
+        int yPulses = 0;
+        QString detail;
+        if (!motion_.readMappedPlannedPositions(&xPulses, &yPulses, &detail)) {
+            if (errorMessage) *errorMessage = detail;
+            return false;
+        }
+        QPointF position;
+        if (!PrintPositionSampler::toMillimeters(xPulses, yPulses,
+                config_.axisX, config_.axisY, &position)) {
+            if (errorMessage) *errorMessage = "IMC60G position scale is invalid.";
+            return false;
+        }
+        post([position](PrintController* owner) {
+            emit owner->positionsChanged(position.x(), position.y());
+        });
+        return true;
+    }
+
     void pollPositions()
     {
         if (busy_ || state_ != PrintUiState::Ready) return;
-        busy_ = true;
-        Imc60gAxisSnapshot x;
-        Imc60gAxisSnapshot y;
         QString detail;
-        const bool ok = motion_.readSnapshot(PrintHardwareProfile::LogicalAxis::X, &x, &detail)
-            && motion_.readSnapshot(PrintHardwareProfile::LogicalAxis::Y, &y, &detail);
-        busy_ = false;
-        if (!ok) {
-            fail(detail);
+        if (!publishPositions(&detail)) fail(detail);
+    }
+
+    void publishPrintingPosition()
+    {
+        if (state_ != PrintUiState::Printing || !positionSampler_.isDue(positionClock_.elapsed())) {
             return;
         }
-        const double xScale = static_cast<double>(config_.axisX.subdivision) * config_.axisX.resolution;
-        const double yScale = static_cast<double>(config_.axisY.subdivision) * config_.axisY.resolution;
-        const double xMm = xScale > 0.0 ? x.plannedPosition / xScale : 0.0;
-        const double yMm = yScale > 0.0 ? y.plannedPosition / yScale : 0.0;
-        post([xMm, yMm](PrintController* owner) { emit owner->positionsChanged(xMm, yMm); });
+        QString detail;
+        if (!publishPositions(&detail)) {
+            runner_->cancel();
+            motion_.requestCancellation();
+            post([detail](PrintController* owner) {
+                emit owner->errorChanged(detail.isEmpty()
+                        ? QStringLiteral("IMC60G position refresh failed; cancelling print safely.")
+                        : detail);
+            });
+        }
     }
 
     PrintController* owner_;
@@ -271,6 +351,8 @@ private:
     PrintHardwarePreflight preflight_;
     PrintJobRunner* runner_;
     QTimer* pollTimer_;
+    QElapsedTimer positionClock_;
+    PrintPositionSampler positionSampler_;
     Print9030Config config_;
     PrintUiState state_ = PrintUiState::Disconnected;
     bool busy_ = false;
@@ -346,6 +428,17 @@ void PrintController::moveYPositive(double millimeters, const PrintAxisConfig& c
 void PrintController::stopManualMotion()
 {
     QMetaObject::invokeMethod(worker_, [this] { worker_->stopManualMotion(); }, Qt::QueuedConnection);
+}
+
+void PrintController::setLogicalOrigin()
+{
+    QMetaObject::invokeMethod(worker_, [this] { worker_->setLogicalOrigin(); }, Qt::QueuedConnection);
+}
+
+void PrintController::returnToLogicalOrigin()
+{
+    QMetaObject::invokeMethod(worker_, [this] { worker_->returnToLogicalOrigin(); },
+        Qt::QueuedConnection);
 }
 
 void PrintController::start(const Print9030Config& config, const PrintImageSet& images)

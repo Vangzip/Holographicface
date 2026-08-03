@@ -118,6 +118,11 @@ void applyConfig(HoloConfig& config, const fs::path& configPath) {
     };
 
     config.depthInputDir = resolvePath(configDir, get("depth_input_dir"));
+    config.inputDirectory = resolvePath(configDir, get("input_dir"));
+    PipelineInputMode inputMode = PipelineInputMode::Camera;
+    if (parsePipelineInputMode(get("input_mode"), &inputMode)) {
+        config.inputMode = inputMode;
+    }
     config.depthConfig = resolvePath(configDir, get("depth_config"));
     config.meshConfig = resolvePath(configDir, get("mesh_config"));
     config.meshObj = resolvePath(configDir, get("mesh_obj"));

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "LightFieldCapture.h"
+#include "ProcessingSettingsStore.h"
 
 #include <QElapsedTimer>
 #include <QImage>
@@ -10,6 +11,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 
 #include <opencv2/core.hpp>
 
@@ -17,6 +19,7 @@ class QLabel;
 class QPushButton;
 class QProgressBar;
 class QTimer;
+struct ElementalMemoryResult;
 
 namespace Ui {
 class CaptureWindow;
@@ -49,7 +52,14 @@ private:
     void captureFrame();
     void resetCapture();
     void startProcessing();
+    void openProcessingSettings();
+    void openPrintSettings();
+    bool testCameraConnection(const CameraCaptureSettings& camera, QString* message);
+    void showResultSaveWarnings();
     bool preparePipelineInput(QString* errorMessage);
+    bool resolveSelectedInput(PipelineInputFiles* files, QString* errorMessage) const;
+    bool applySelectedInput(QString* errorMessage);
+    void clearInputSettingsAndResumeCamera();
     bool writePipelineConfig(QString* errorMessage);
     void startPipelineThread();
     void finishPipelineRun(int exitCode, bool normalExit);
@@ -64,7 +74,8 @@ private:
     QString pipelineLogPath() const;
 
     QString projectRoot_;
-    QString cameraConfigPath_;
+    ProcessingSettingsPaths settingsPaths_;
+    ProcessingSettings settings_;
     std::unique_ptr<Ui::CaptureWindow> ui_;
 
     QLabel* rgbLabel_ = nullptr;
@@ -74,6 +85,7 @@ private:
     QPushButton* captureButton_ = nullptr;
     QPushButton* confirmButton_ = nullptr;
     QPushButton* retakeButton_ = nullptr;
+    QPushButton* settingsButton_ = nullptr;
     QTimer* frameTimer_ = nullptr;
     QThread* pipelineThread_ = nullptr;
     std::atomic<int> pipelineExitCode_{0};
@@ -93,4 +105,8 @@ private:
     QImage rgbPreview_;
     QImage depthPreview_;
     QElapsedTimer confirmTimer_;
+    std::mutex elementalResultMutex_;
+    std::shared_ptr<ElementalMemoryResult> elementalResult_;
+    QString activeResultTimestamp_;
+    std::shared_ptr<ResultSaveReport> resultSaveReport_;
 };

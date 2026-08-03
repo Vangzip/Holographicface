@@ -4,7 +4,7 @@
 
 **Goal:** Rotate camera RGB and depth frames 90 degrees counterclockwise before preview, freezing, saving, point-cloud generation, multiview, elemental conversion, and printing.
 
-**Architecture:** A small camera utility owns the exact OpenCV rotation operation and returns an independent matrix. Both camera consumers, `CaptureWindow` and `runCaptureSession`, transform RGB and three-channel depth immediately after dequeueing an SDK frame, before any preview, movement detection, freeze, or file write. Existing downstream stages remain unchanged and consume the corrected pair.
+**Architecture:** A small camera utility owns the exact OpenCV rotation operation and returns an independent matrix. RGB and display depth use a pixel-only rotation; three-channel spatial depth also maps every `(X,Y,Z)` point to `(Y,-X,Z)`. Both camera consumers transform frames immediately after dequeueing. Multiview uses the corresponding `+Z/+Y` camera basis and absolute upper-left-to-lower-right orbit poses instead of accumulating model rotations.
 
 **Tech Stack:** C++17, OpenCV 4.5 `cv::rotate`, Qt 5.15 Core/Widgets, qmake, MSVC 2019 v142 x64.
 
@@ -12,10 +12,12 @@
 
 - Rotation direction is exactly `cv::ROTATE_90_COUNTERCLOCKWISE`.
 - RGB, `img3d`, and display `depthMap` use the same row/column transform.
+- `img3d` additionally maps `(X,Y,Z)` to `(Y,-X,Z)` so `depth_io` produces counterclockwise-rotated PCL geometry.
 - The rotated matrix owns its storage and preserves source type/channel count.
-- Main-window preview, frozen frame, `0.jpg`, `0.tiff`, mesh, multiview, elemental, and printing use the rotated data exactly once.
+- Main-window preview, frozen frame, `0.jpg`, `0.tiff`, mesh, multiview, elemental, and printing use the rotated data exactly once; multiview changes only its camera basis and symmetric sample-center orbit.
+- Atlas and batch multiview paths restore the original viewer callback and scene/view state after success or exceptions, and atlas restores OpenGL pack state around readback failures.
 - Standalone `--capture` preview, movement detection, and saved 2D/3D files use the same rotation.
-- Do not change camera SDK parsing, depth XYZ components, calibration values, downstream stage code, print timing, second-screen, motion, exposure, cancellation, or homing behavior.
+- Do not change camera SDK parsing, calibration values, downstream stage code, print timing, second-screen, motion, exposure, cancellation, or homing behavior.
 - Preserve current uncommitted native-UI and 9030 changes; do not revert or clean them.
 
 ---
@@ -48,7 +50,7 @@
 
 **Interfaces:**
 
-- Produces: `cv::Mat rotateCaptureCounterClockwise90(const cv::Mat& source)`.
+- Produces: `cv::Mat rotateCaptureCounterClockwise90(const cv::Mat& source)` and `cv::Mat rotateCaptureDepthCounterClockwise90(const cv::Mat& source)`.
 - Guarantees: empty input returns empty; nonempty output has `source.cols` rows and `source.rows` columns; type and channels are preserved; result storage is independent.
 
 - [ ] **Step 1: Write the failing mapping tests**
@@ -70,9 +72,9 @@ cv::Mat rgb(2, 3, CV_8UC3);
 cv::Mat depth(2, 3, CV_32FC3);
 ```
 
-Store the same unique pixel ID in RGB channel 0 and depth channel 0, rotate both, and assert the IDs remain equal at every destination coordinate. Modify one output pixel and assert the source pixel is unchanged to prove independent ownership.
+Store the same unique pixel ID in RGB channel 0 and depth Z, rotate both, and assert the IDs remain equal at every destination coordinate. Assert that representative spatial points are transformed from `(X,Y,Z)` to `(Y,-X,Z)`. Modify one output pixel and assert the source pixel is unchanged to prove independent ownership.
 
-Use `QTemporaryDir` to save a rotated non-square RGB matrix as JPEG and a rotated `CV_32FC3` matrix as uncompressed TIFF. Reload both and assert dimensions are swapped; assert exact channel-0 IDs for TIFF and red/blue block dominance for JPEG.
+Use `QTemporaryDir` to save a rotated non-square RGB matrix as JPEG and a rotated `CV_32FC3` matrix as uncompressed TIFF. Reload both and assert dimensions are swapped; assert exact transformed XYZ values for TIFF and red/blue block dominance for JPEG.
 
 - [ ] **Step 2: Add the isolated qmake target and run red**
 
@@ -149,7 +151,7 @@ Include `CaptureOrientation.h`. In `pollCameraFrame()`, compute local matrices f
 
 ```cpp
 cv::Mat orientedRgb = rotateCaptureCounterClockwise90(frame.img2d);
-cv::Mat orientedDepth = rotateCaptureCounterClockwise90(frame.img3d);
+cv::Mat orientedDepth = rotateCaptureDepthCounterClockwise90(frame.img3d);
 cv::Mat orientedDepthDisplay = rotateCaptureCounterClockwise90(
     frame.depthMap.empty() ? frame.img3d : frame.depthMap);
 
@@ -166,7 +168,7 @@ Include `CaptureOrientation.h`. Replace the two clones after `GetHoloOutData` wi
 
 ```cpp
 cv::Mat image2d = rotateCaptureCounterClockwise90(data.img2d);
-cv::Mat image3d = rotateCaptureCounterClockwise90(data.img3d);
+cv::Mat image3d = rotateCaptureDepthCounterClockwise90(data.img3d);
 ```
 
 Keep preview, movement detection, type conversion, JPEG/TIFF write, and `previousImage2d` assignment unchanged.
@@ -179,7 +181,7 @@ Add `camera/CaptureOrientation.cpp` to `SOURCES` and `camera/CaptureOrientation.
 
 Rebuild and run the orientation test.
 
-Expected: all exact mapping, alignment, ownership, empty-input, and both-consumer integration assertions pass.
+Expected: all exact pixel/XYZ mapping, alignment, ownership, empty-input, and both-consumer integration assertions pass.
 
 ---
 
@@ -227,7 +229,7 @@ Launch `00-bin/mergeholo.exe --ui` and confirm RGB/depth are both upright and sp
 
 - [ ] **Step 5: Final diff and review**
 
-Run `git diff --check` on touched paths. Confirm no downstream mesh/multiview/elemental/printing method was modified and no duplicate rotation exists after `pollCameraFrame()`/`runCaptureSession()`.
+Run `git diff --check` on touched paths. Confirm mesh/elemental/printing do not add a duplicate image rotation, multiview uses absolute camera poses, and no duplicate capture rotation exists after `pollCameraFrame()`/`runCaptureSession()`.
 
 - [ ] **Step 6: Commit only isolated orientation paths**
 

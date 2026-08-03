@@ -10,6 +10,7 @@
 #include <QDoubleSpinBox>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
@@ -17,7 +18,9 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStringList>
 #include <QTemporaryDir>
+#include <QTimer>
 
 #include <cmath>
 #include <cstdlib>
@@ -56,6 +59,22 @@ QByteArray readFile(const QString& path)
     QFile file(path);
     expect(file.open(QIODevice::ReadOnly), "fixture file could not be read");
     return file.readAll();
+}
+
+QString projectFile(const QString& relativePath)
+{
+    const QStringList candidates = {
+        QDir(QCoreApplication::applicationDirPath()).filePath("../../../" + relativePath),
+        QDir::current().filePath("../../" + relativePath),
+        QDir::current().filePath(relativePath)
+    };
+    for (const QString& candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return QDir::cleanPath(candidate);
+        }
+    }
+    expect(false, "project source fixture could not be located");
+    return {};
 }
 
 ProcessingSettingsPaths createSettingsFiles(QTemporaryDir& directory)
@@ -236,7 +255,11 @@ void testSettingsStorePreservesCommentsAndUnknownKeys()
 
     settings.pipeline.multiviewAngle = 90;
     settings.pointCloud.focus = 105.0;
+    settings.pointCloud.meanK = 64;
+    settings.pointCloud.radiusSearch = 0.075;
     settings.mesh.kSearch = 20;
+    settings.mesh.maximumNearestNeighbors = 128;
+    settings.mesh.textureFocus = 1800.0;
     settings.camera.exposureValue = 12000;
     settings.camera.rotation = CaptureRotation::Clockwise90;
     expect(saveProcessingSettings(paths, settings, &error), qPrintable(error));
@@ -251,8 +274,12 @@ void testSettingsStorePreservesCommentsAndUnknownKeys()
     expect(pipeline.contains("multiview_angle=90"), "pipeline key must update");
     expect(pointCloud.contains("vendor_depth_key=keep-depth"),
         "unknown point-cloud key must survive");
+    expect(pointCloud.contains("meanK=64") && pointCloud.contains("radiussearch=0.075"),
+        "point-cloud detail keys must persist");
     expect(mesh.contains("vendor_mesh_key=keep-mesh"),
         "unknown mesh key must survive");
+    expect(mesh.contains("maximumNearestNeighbors=128") && mesh.contains("focus=1800"),
+        "mesh detail keys must persist");
     expect(camera.contains("# camera comment"), "camera comment must survive");
     expect(camera.contains("vendor_camera_key=keep-camera"),
         "unknown camera key must survive");
@@ -400,6 +427,40 @@ void testAdvancedPageBindingsAndHardwareAdaptiveState()
     expect(changed.mesh.kSearch == 26, "mesh neighbor count must collect");
 }
 
+void testAdvancedDetailDialogsUpdateDraft()
+{
+    ProcessingSettingsDialog dialog;
+    dialog.setSettings(defaultProcessingSettings("C:/MergeHolo", "C:/MergeHolo/config/084C"));
+    QPushButton* pointDetails = dialog.findChild<QPushButton*>("pointCloudDetailsButton");
+    QPushButton* meshDetails = dialog.findChild<QPushButton*>("meshDetailsButton");
+    expect(pointDetails && meshDetails, "advanced detail buttons must exist");
+
+    QTimer::singleShot(0, [] {
+        QDialog* details = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        expect(details != nullptr, "point-cloud detail dialog must open");
+        QSpinBox* meanK = details->findChild<QSpinBox*>("pointDetailMeanKSpin");
+        expect(meanK != nullptr, "point-cloud detail controls must exist");
+        meanK->setValue(73);
+        details->accept();
+    });
+    pointDetails->click();
+    expect(dialog.settings().pointCloud.meanK == 73,
+        "point-cloud detail dialog must update the shared draft");
+
+    QTimer::singleShot(0, [] {
+        QDialog* details = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        expect(details != nullptr, "mesh detail dialog must open");
+        QSpinBox* maximumNeighbors = details->findChild<QSpinBox*>(
+            "meshDetailMaximumNeighborsSpin");
+        expect(maximumNeighbors != nullptr, "mesh detail controls must exist");
+        maximumNeighbors->setValue(144);
+        details->accept();
+    });
+    meshDetails->click();
+    expect(dialog.settings().mesh.maximumNearestNeighbors == 144,
+        "mesh detail dialog must update the shared draft");
+}
+
 void testDevicePageBindingsAndBusyState()
 {
     QTemporaryDir preset;
@@ -428,6 +489,15 @@ void testDevicePageBindingsAndBusyState()
         "camera rotation must populate");
     expect(dialog.findChild<QPushButton*>("engineerSettingsButton") != nullptr,
         "device page must expose engineer settings");
+
+    bool cameraTestRequested = false;
+    QObject::connect(&dialog, &ProcessingSettingsDialog::cameraTestRequested,
+        [&cameraTestRequested](const CameraCaptureSettings&) {
+            cameraTestRequested = true;
+        });
+    dialog.findChild<QPushButton*>("testCameraButton")->click();
+    expect(cameraTestRequested,
+        "valid camera preset must request a real connection test");
 
     exposure->setValue(13500);
     rotation->setCurrentIndex(rotation->findData(
@@ -467,6 +537,63 @@ void testCameraInputUsesTypedSettings()
         "disabled temperature serial settings must retain safe defaults");
 }
 
+void testMainWindowUsesUnifiedSettingsEntry()
+{
+    const QByteArray ui = readFile(projectFile("ui/CaptureWindow.ui"));
+    expect(ui.contains("name=\"settingsButton\""),
+        "main window must expose the unified settings button");
+    expect(!ui.contains("name=\"inputSettingsButton\"")
+            && !ui.contains("name=\"printSettingsButton\"")
+            && !ui.contains("name=\"saveSettingsButton\""),
+        "main window must remove the three legacy settings buttons");
+
+    const QByteArray source = readFile(projectFile("widgets/CaptureWindow.cpp"));
+    expect(source.contains("ProcessingSettingsDialog"),
+        "main window must open the unified settings dialog");
+    expect(source.contains("saveProcessingSettings"),
+        "accepted unified settings must be persisted");
+    expect(source.contains("makeCameraInput(settings_.camera)"),
+        "camera startup must use the typed camera settings");
+
+    const QByteArray pipelineTemplate = readFile(
+        projectFile("config/ui_pipeline_template.ini"));
+    expect(pipelineTemplate.contains("multiview_angle={{multiview_angle}}")
+            && pipelineTemplate.contains("jpg_quality={{jpg_quality}}")
+            && pipelineTemplate.contains("elemental_writer_threads={{elemental_writer_threads}}"),
+        "runtime pipeline template must expose unified settings placeholders");
+}
+
+void testCliCaptureUsesUnifiedCameraSettings()
+{
+    const QByteArray sessionSource = readFile(projectFile("camera/CaptureSession.cpp"));
+    expect(sessionSource.contains("makeCameraInput(options.cameraSettings)"),
+        "CLI capture must reuse typed camera settings");
+    const QByteArray mainSource = readFile(projectFile("apps/mergeholo_main.cpp"));
+    expect(mainSource.contains("loadProcessingSettings")
+            && mainSource.contains("options.cameraSettings = settings.camera"),
+        "CLI capture options must load the persisted camera settings");
+}
+
+void renderDialogWhenRequested()
+{
+    const QString screenshotPath = QString::fromLocal8Bit(
+        qgetenv("MERGEHOLO_SETTINGS_SCREENSHOT"));
+    if (screenshotPath.isEmpty()) {
+        return;
+    }
+    bool pageOk = false;
+    const int requestedPage = QString::fromLocal8Bit(
+        qgetenv("MERGEHOLO_SETTINGS_PAGE")).toInt(&pageOk);
+    ProcessingSettingsDialog dialog;
+    dialog.setSettings(defaultProcessingSettings(
+        projectFile("."), projectFile("00-bin/config/084C")));
+    dialog.selectPage(pageOk ? requestedPage : 0);
+    dialog.show();
+    QApplication::processEvents();
+    expect(dialog.grab().save(screenshotPath),
+        "processing settings screenshot could not be saved");
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -486,8 +613,12 @@ int main(int argc, char* argv[])
     testCommonPageBindingsAndDerivedSummary();
     testImagingPageBindings();
     testAdvancedPageBindingsAndHardwareAdaptiveState();
+    testAdvancedDetailDialogsUpdateDraft();
     testDevicePageBindingsAndBusyState();
     testCameraInputUsesTypedSettings();
+    testMainWindowUsesUnifiedSettingsEntry();
+    testCliCaptureUsesUnifiedCameraSettings();
+    renderDialogWhenRequested();
     std::cout << "processing settings tests passed" << std::endl;
     return 0;
 }

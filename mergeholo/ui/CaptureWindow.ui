@@ -16,24 +16,24 @@
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="rootLayout">
     <property name="spacing">
-     <number>14</number>
+     <number>12</number>
     </property>
     <property name="leftMargin">
-     <number>46</number>
+     <number>20</number>
     </property>
     <property name="topMargin">
-     <number>38</number>
+     <number>20</number>
     </property>
     <property name="rightMargin">
-     <number>46</number>
+     <number>20</number>
     </property>
     <property name="bottomMargin">
-     <number>38</number>
+     <number>20</number>
     </property>
     <item>
      <layout class="QHBoxLayout" name="previewLayout">
       <property name="spacing">
-       <number>0</number>
+       <number>12</number>
       </property>
       <item>
        <spacer name="previewLeftSpacer">
@@ -62,14 +62,14 @@
           <height>220</height>
          </size>
         </property>
-        <property name="styleSheet">
-         <string notr="true">QLabel { background: #ffffff; color: #111111; border: 2px solid #111111; }</string>
-        </property>
         <property name="frameShape">
-         <enum>QFrame::Box</enum>
+         <enum>QFrame::StyledPanel</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Sunken</enum>
         </property>
         <property name="lineWidth">
-         <number>2</number>
+         <number>1</number>
         </property>
         <property name="text">
          <string>显示rgb</string>
@@ -93,14 +93,14 @@
           <height>220</height>
          </size>
         </property>
-        <property name="styleSheet">
-         <string notr="true">QLabel { background: #ffffff; color: #111111; border: 2px solid #111111; }</string>
-        </property>
         <property name="frameShape">
-         <enum>QFrame::Box</enum>
+         <enum>QFrame::StyledPanel</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Sunken</enum>
         </property>
         <property name="lineWidth">
-         <number>2</number>
+         <number>1</number>
         </property>
         <property name="text">
          <string>显示深度图</string>
@@ -160,10 +160,6 @@
           <height>20</height>
          </size>
         </property>
-        <property name="styleSheet">
-         <string notr="true">QProgressBar { border: 2px solid #111111; background: #ffffff; }
-QProgressBar::chunk { background: #2f80ed; }</string>
-        </property>
         <property name="value">
          <number>0</number>
         </property>
@@ -186,8 +182,8 @@ QProgressBar::chunk { background: #2f80ed; }</string>
     </item>
     <item>
      <layout class="QHBoxLayout" name="buttonLayout">
-      <property name="spacing">
-       <number>84</number>
+     <property name="spacing">
+       <number>12</number>
       </property>
       <item>
        <spacer name="buttonLeftSpacer">
@@ -206,8 +202,8 @@ QProgressBar::chunk { background: #2f80ed; }</string>
        <widget class="QPushButton" name="captureButton">
         <property name="minimumSize">
          <size>
-          <width>138</width>
-          <height>56</height>
+          <width>112</width>
+          <height>36</height>
          </size>
         </property>
         <property name="text">
@@ -219,8 +215,8 @@ QProgressBar::chunk { background: #2f80ed; }</string>
        <widget class="QPushButton" name="confirmButton">
         <property name="minimumSize">
          <size>
-          <width>138</width>
-          <height>56</height>
+          <width>112</width>
+          <height>36</height>
          </size>
         </property>
         <property name="text">
@@ -232,12 +228,25 @@ QProgressBar::chunk { background: #2f80ed; }</string>
        <widget class="QPushButton" name="retakeButton">
         <property name="minimumSize">
          <size>
-          <width>138</width>
-          <height>56</height>
+          <width>112</width>
+          <height>36</height>
          </size>
         </property>
         <property name="text">
          <string>重新拍照</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="settingsButton">
+        <property name="minimumSize">
+         <size>
+          <width>112</width>
+          <height>36</height>
+         </size>
+        </property>
+        <property name="text">
+         <string>设置</string>
         </property>
        </widget>
       </item>

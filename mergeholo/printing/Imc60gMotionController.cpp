@@ -26,6 +26,35 @@ constexpr unsigned int kNegativeLimitStopReason = 0x05;
 constexpr unsigned int kDiStopReason = 0x0b;
 constexpr short kNoAxis = -1;
 
+qint64 absolutePulsePosition(int position)
+{
+    const qint64 value = position;
+    return value < 0 ? -value : value;
+}
+
+qint64 configuredAxisTravelPulses(const PrintAxisConfig& config)
+{
+    if (config.maxDistance <= 0.0 || config.subdivision <= 0 || config.resolution <= 0) {
+        return 0;
+    }
+    const long double pulses = static_cast<long double>(config.maxDistance)
+        * config.subdivision * config.resolution;
+    return pulses >= std::numeric_limits<qint64>::max()
+        ? std::numeric_limits<qint64>::max() : static_cast<qint64>(pulses);
+}
+
+int returnToZeroTimeoutMs(qint64 distancePulses, const PrintAxisConfig& config,
+    int minimumTimeoutMs)
+{
+    const qint64 speed = qMax<qint64>(1, config.speedOfMovement);
+    const qint64 acceleration = qMax<qint64>(1, config.acceleratedVelocity);
+    const qint64 cruiseMs = (distancePulses * 1000 + speed - 1) / speed;
+    const qint64 rampMs = (2 * speed * 1000 + acceleration - 1) / acceleration;
+    const qint64 requiredMs = cruiseMs + rampMs + 5000;
+    return static_cast<int>(qBound<qint64>(5000,
+        qMax<qint64>(minimumTimeoutMs, requiredMs), 300000));
+}
+
 QMutex gSdkOwnerMutex;
 Imc60gMotionController* gSdkOwner = nullptr;
 bool gSdkShutdownPoisoned = false;
@@ -937,6 +966,90 @@ bool Imc60gMotionController::readSnapshot(
     return true;
 }
 
+bool Imc60gMotionController::readMappedPlannedPositions(int* xPulses, int* yPulses,
+    QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    if (errorMessage) errorMessage->clear();
+    if (!xPulses || !yPulses) {
+        setError(errorMessage, "IMC60G planned-position destinations are null.");
+        return false;
+    }
+    const short x = static_cast<short>(profile_.axisX);
+    const short y = static_cast<short>(profile_.axisY);
+    if (state_ != Imc60gConnectionState::Ready || x < 0 || y < 0) {
+        setError(errorMessage, "Cannot read mapped IMC60G positions before connectAndHome().");
+        return false;
+    }
+    int xPosition = 0;
+    int yPosition = 0;
+    if (!callSucceeded(api_->plannedPosition(profile_.cardIndex, x, &xPosition),
+            "IMC_GetAxPrfPos32", x, errorMessage)
+        || !callSucceeded(api_->plannedPosition(profile_.cardIndex, y, &yPosition),
+            "IMC_GetAxPrfPos32", y, errorMessage)) {
+        return false;
+    }
+    *xPulses = xPosition;
+    *yPulses = yPosition;
+    return true;
+}
+
+bool Imc60gMotionController::setCurrentPositionAsLogicalOrigin(QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    if (errorMessage) errorMessage->clear();
+    const short x = static_cast<short>(profile_.axisX);
+    const short y = static_cast<short>(profile_.axisY);
+    if (state_ != Imc60gConnectionState::Ready || x < 0 || y < 0) {
+        setError(errorMessage, "Cannot set logical origin before connectAndHome().");
+        return false;
+    }
+    if (printActive_) {
+        setError(errorMessage, "Cannot set logical origin while a print is active.");
+        return false;
+    }
+
+    QString errors;
+    QString detail;
+    if (!callSucceeded(api_->stop(profile_.cardIndex, y, 1), "IMC_StopMove", y, &detail)) {
+        appendTaskError(&errors, "Y stop failed: " + detail);
+    }
+    detail.clear();
+    if (!callSucceeded(api_->stop(profile_.cardIndex, x, 1), "IMC_StopMove", x, &detail)) {
+        appendTaskError(&errors, "X stop failed: " + detail);
+    }
+    if (errors.isEmpty()) {
+        detail.clear();
+        if (!waitPrintAxisStopped(y, profile_.homeBackoffTimeoutMs, nullptr, &detail)) {
+            appendTaskError(&errors, "Y stopped verification failed: " + detail);
+        }
+        detail.clear();
+        if (!waitPrintAxisStopped(x, profile_.homeBackoffTimeoutMs, nullptr, &detail)) {
+            appendTaskError(&errors, "X stopped verification failed: " + detail);
+        }
+    }
+    if (errors.isEmpty()) {
+        for (short axis : {x, y}) {
+            detail.clear();
+            if (!callSucceeded(api_->clearAxisStatus(profile_.cardIndex, axis),
+                    "IMC_ClrAxSts", axis, &detail)
+                || !callSucceeded(api_->setCurrentPosition(profile_.cardIndex, axis, 0.0),
+                    "IMC_SetAxCurPos", axis, &detail)
+                || !callSucceeded(api_->syncPosition(profile_.cardIndex, axis),
+                    "IMC_SyncAxPos", axis, &detail)
+                || !callSucceeded(api_->setCurrentPosition(profile_.cardIndex, axis, 0.0),
+                    "IMC_SetAxCurPos", axis, &detail)
+                || !callSucceeded(api_->clearAxisStatus(profile_.cardIndex, axis),
+                    "IMC_ClrAxSts", axis, &detail)) {
+                appendTaskError(&errors,
+                    QString("Logical-origin reset failed for axis %1: %2").arg(axis).arg(detail));
+            }
+        }
+    }
+    setError(errorMessage, errors);
+    return errors.isEmpty();
+}
+
 bool Imc60gMotionController::isReadyForPrint() const
 {
     QMutexLocker locker(&mutex_);
@@ -1228,19 +1341,45 @@ bool Imc60gMotionController::returnToLogicalZero(
     QString detail;
     const short x = static_cast<short>(profile_.axisX);
     const short y = static_cast<short>(profile_.axisY);
+    int xPosition = 0;
+    int yPosition = 0;
+    const bool xPositionRead = api_->plannedPosition(profile_.cardIndex, x, &xPosition) == 0;
+    const bool yPositionRead = api_->plannedPosition(profile_.cardIndex, y, &yPosition) == 0;
+    const int xTimeoutMs = returnToZeroTimeoutMs(xPositionRead
+            ? absolutePulsePosition(xPosition) : configuredAxisTravelPulses(xConfig),
+        xConfig, timeoutMs);
+    const int yTimeoutMs = returnToZeroTimeoutMs(yPositionRead
+            ? absolutePulsePosition(yPosition) : configuredAxisTravelPulses(yConfig),
+        yConfig, timeoutMs);
     if (!startPrintMove(x, 0, xConfig, &detail)) {
         appendTaskError(&errors, "X zero move failed: " + detail);
-    } else if (!waitPrintAxisStopped(x, timeoutMs, nullptr, &detail)) {
+    } else if (!waitPrintAxisStopped(x, xTimeoutMs, nullptr, &detail)) {
         appendTaskError(&errors, "X zero wait failed: " + detail);
     }
     detail.clear();
     if (!startPrintMove(y, 0, yConfig, &detail)) {
         appendTaskError(&errors, "Y zero move failed: " + detail);
-    } else if (!waitPrintAxisStopped(y, timeoutMs, nullptr, &detail)) {
+    } else if (!waitPrintAxisStopped(y, yTimeoutMs, nullptr, &detail)) {
         appendTaskError(&errors, "Y zero wait failed: " + detail);
     }
     setError(errorMessage, errors);
     return errors.isEmpty();
+}
+
+bool Imc60gMotionController::returnToLogicalZeroWhenReady(
+    const PrintAxisConfig& xConfig, const PrintAxisConfig& yConfig,
+    int timeoutMs, QString* errorMessage)
+{
+    QString detail;
+    if (!beginPrint(&detail)) {
+        setError(errorMessage, detail);
+        return false;
+    }
+
+    const bool returned = returnToLogicalZero(xConfig, yConfig, timeoutMs, &detail);
+    endPrint();
+    setError(errorMessage, detail);
+    return returned;
 }
 
 bool Imc60gMotionController::verifyLogicalZero(QString* errorMessage)

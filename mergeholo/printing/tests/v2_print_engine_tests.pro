@@ -10,6 +10,7 @@ SOURCES += \
     test_v2_print_engine.cpp \
     ../PrintFrame.cpp \
     ../PrintConfig.cpp \
+    ../PrintPositionSampler.cpp \
     ../PrintHardwareProfile.cpp \
     ../PrintImageSource.cpp \
     ../PrintHardwarePreflight.cpp \
@@ -21,6 +22,7 @@ HEADERS += \
     ../IMotionController.h \
     ../IPrintFramePresenter.h \
     ../PrintConfig.h \
+    ../PrintPositionSampler.h \
     ../PrintFrame.h \
     ../PrintHardwarePreflight.h \
     ../PrintHardwareProfile.h \

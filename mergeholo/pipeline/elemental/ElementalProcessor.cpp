@@ -89,11 +89,20 @@ std::string padNumber(int value, int digits) {
     return out.str();
 }
 
+const fs::path& multiviewInputDirectory(const HoloConfig& config)
+{
+    if (config.inputMode == PipelineInputMode::Multiview
+        && !config.inputDirectory.empty()) {
+        return config.inputDirectory;
+    }
+    return config.multiviewOutDir;
+}
+
 fs::path viewPath(const HoloConfig& config, int row, int col) {
     const std::string name = padNumber(row, config.viewNameDigits)
         + padNumber(col, config.viewNameDigits)
         + ".jpg";
-    return config.multiviewOutDir / name;
+    return multiviewInputDirectory(config) / name;
 }
 
 int chooseElementalWriterThreads(int requested, int targetPixels) {
@@ -141,7 +150,7 @@ int processElemental(
         }
     }
     else {
-        if (!requireExists(config.multiviewOutDir, "multiview_out_dir")) {
+        if (!requireExists(multiviewInputDirectory(config), "multiview input directory")) {
             return 1;
         }
 
@@ -227,7 +236,6 @@ int processElemental(
 
     const auto loadStart = std::chrono::steady_clock::now();
     const size_t targetRowBytes = static_cast<size_t>(config.targetCols) * 3;
-    int mismatchedViewImages = 0;
     const int loadProgressEvery = std::max(1, config.viewRows / 10);
 
     if (!useMemoryViews) {
@@ -237,14 +245,12 @@ int processElemental(
                     + static_cast<size_t>(viewCol - 1);
                 unsigned char* viewBase = viewPixels.get() + viewIndex * viewImageBytes;
                 std::fill(viewBase, viewBase + viewImageBytes, 0);
-                const int copyCols = std::min(config.targetCols, sourceCols);
-                const size_t copyBytes = static_cast<size_t>(copyCols) * 3;
+                const fs::path inputPath = viewPath(config, viewRow, viewCol);
                 cv::Mat input;
                 if (viewRow == 1 && viewCol == 1) {
                     input = sample;
                 }
                 else {
-                    const fs::path inputPath = viewPath(config, viewRow, viewCol);
                     input = cv::imread(inputPath.string(), cv::IMREAD_COLOR);
                     if (input.empty()) {
                         std::cerr << "[error] Cannot read multiview image: " << inputPath.string() << std::endl;
@@ -255,10 +261,14 @@ int processElemental(
                 cv::Mat rgbInput;
                 cv::cvtColor(input, rgbInput, cv::COLOR_BGR2RGB);
 
-                const bool mismatchedSize = rgbInput.rows != config.targetRows
-                    || rgbInput.cols != config.targetCols;
-                if (mismatchedSize) {
-                    ++mismatchedViewImages;
+                if (rgbInput.rows != config.targetRows
+                    || rgbInput.cols != config.targetCols) {
+                    std::cerr << "[error] Multiview image has size "
+                              << rgbInput.cols << "x" << rgbInput.rows
+                              << "; expected " << config.targetCols << "x"
+                              << config.targetRows << ": " << inputPath.string()
+                              << std::endl;
+                    return 1;
                 }
                 for (int targetRow = 0; targetRow < config.targetRows; ++targetRow) {
                     const int sourceRow = config.elementalFlipSourceY
@@ -270,7 +280,7 @@ int processElemental(
                     std::memcpy(
                         viewBase + static_cast<size_t>(targetRow) * targetRowBytes,
                         rgbInput.ptr<unsigned char>(sourceRow),
-                        copyBytes);
+                        targetRowBytes);
                 }
             }
 
@@ -281,11 +291,6 @@ int processElemental(
         }
     }
 
-    if (mismatchedViewImages > 0) {
-        std::cout << "[elemental] warning: " << mismatchedViewImages
-                  << " view images did not match target grid "
-                  << config.targetCols << "x" << config.targetRows << std::endl;
-    }
     if (useMemoryViews) {
         std::cout << "[elemental] using multiview memory buffer directly; no file load or duplicate view cache." << std::endl;
     }

@@ -5,9 +5,11 @@ SOURCES += \
     $$PIPELINE_ROOT/elemental/ElementalAtlasDirectSink.cpp \
     $$PIPELINE_ROOT/elemental/ElementalMemoryTransform.cpp \
     $$PIPELINE_ROOT/elemental/ElementalProcessor.cpp \
+    $$PIPELINE_ROOT/ExternalDepthOrientation.cpp \
     $$PIPELINE_ROOT/HoloPipeline.cpp \
     $$PIPELINE_ROOT/multiview/PclMeshOsgBuilder.cpp \
     $$PIPELINE_ROOT/PipelineConfig.cpp \
+    $$PIPELINE_ROOT/PipelineInput.cpp \
     $$PIPELINE_ROOT/PipelineLogger.cpp \
     $$PIPELINE_ROOT/PipelineTiming.cpp \
     $$PIPELINE_ROOT/ResultPersistence.cpp \
@@ -25,9 +27,11 @@ HEADERS += \
     $$PIPELINE_ROOT/elemental/ElementalMemoryResult.h \
     $$PIPELINE_ROOT/elemental/ElementalMemoryTransform.h \
     $$PIPELINE_ROOT/elemental/ElementalProcessor.h \
+    $$PIPELINE_ROOT/ExternalDepthOrientation.h \
     $$PIPELINE_ROOT/HoloPipeline.h \
     $$PIPELINE_ROOT/PipelineConfig.h \
     $$PIPELINE_ROOT/PipelineContext.h \
+    $$PIPELINE_ROOT/PipelineInput.h \
     $$PIPELINE_ROOT/PipelineLogger.h \
     $$PIPELINE_ROOT/PipelineTiming.h \
     $$PIPELINE_ROOT/ResultPersistence.h \

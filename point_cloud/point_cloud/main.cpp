@@ -9,7 +9,16 @@
 #include "ConverPointCloud.h"
 #include "depth_io.h"
 #include <pcl/filters/fast_bilateral.h>
+#include <pcl/filters/radius_outlier_removal.h>
+#ifdef max
+#undef max
+#endif
+#ifdef min
+#undef min
+#endif
+#include <pcl/segmentation/extract_clusters.h>
 #include <direct.h>
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -45,6 +54,12 @@ struct MergeConfig
     float euclideanFitnessEpsilon;
     int maxIterations;
     float focalLength;
+    float whiteLumaThreshold;
+    float foregroundZQuantile;
+    float radiusOutlierRadius;
+    int radiusOutlierMinNeighbors;
+    float clusterTolerance;
+    int minClusterPoints;
 
     MergeConfig()
         : sourceVoxel(0.001f),
@@ -54,7 +69,13 @@ struct MergeConfig
           transformationEpsilon(1e-8f),
           euclideanFitnessEpsilon(1e-6f),
           maxIterations(50),
-          focalLength(2000.0f)
+          focalLength(2000.0f),
+          whiteLumaThreshold(170.0f),
+          foregroundZQuantile(0.10f),
+          radiusOutlierRadius(0.006f),
+          radiusOutlierMinNeighbors(8),
+          clusterTolerance(0.018f),
+          minClusterPoints(5000)
     {
     }
 };
@@ -347,6 +368,30 @@ static bool parseMergeConfig(const string& configFile, MergeConfig& config)
         {
             config.focalLength = fvalue;
         }
+        else if (key == "merge_white_luma")
+        {
+            config.whiteLumaThreshold = fvalue;
+        }
+        else if (key == "merge_foreground_z_quantile")
+        {
+            config.foregroundZQuantile = fvalue;
+        }
+        else if (key == "merge_ror_radius")
+        {
+            config.radiusOutlierRadius = fvalue;
+        }
+        else if (key == "merge_ror_min_neighbors")
+        {
+            config.radiusOutlierMinNeighbors = atoi(value.c_str());
+        }
+        else if (key == "merge_cluster_tolerance")
+        {
+            config.clusterTolerance = fvalue;
+        }
+        else if (key == "merge_min_cluster_points")
+        {
+            config.minClusterPoints = atoi(value.c_str());
+        }
     }
 
     return true;
@@ -381,6 +426,183 @@ static void voxelFilterRgb(PointTRGBPtr input, PointTRGBPtr output, float leafSi
     voxel->setInputCloud(input);
     voxel->setLeafSize(leafSize, leafSize, leafSize);
     voxel->filter(*output);
+}
+
+static void removeBrightBackgroundRgb(PointTRGBPtr input, PointTRGBPtr output, float whiteLumaThreshold)
+{
+    if (whiteLumaThreshold <= 0.0f || whiteLumaThreshold >= 255.0f)
+    {
+        pcl::copyPointCloud(*input, *output);
+        return;
+    }
+
+    output->points.reserve(input->points.size());
+    for (size_t i = 0; i < input->points.size(); ++i)
+    {
+        const pcl::PointXYZRGB& point = input->points[i];
+        float luma = 0.299f * point.r + 0.587f * point.g + 0.114f * point.b;
+        int channelMax = std::max(static_cast<int>(point.r), std::max(static_cast<int>(point.g), static_cast<int>(point.b)));
+        int channelMin = std::min(static_cast<int>(point.r), std::min(static_cast<int>(point.g), static_cast<int>(point.b)));
+        bool brightNeutral = luma > whiteLumaThreshold && (channelMax - channelMin) < 45;
+        bool brightBlueBackground = luma > (whiteLumaThreshold - 8.0f) &&
+            point.b > point.r + 18 &&
+            point.g > point.r + 6;
+
+        if (brightNeutral || brightBlueBackground)
+        {
+            continue;
+        }
+        output->points.push_back(point);
+    }
+
+    output->width = static_cast<unsigned int>(output->points.size());
+    output->height = 1;
+    output->is_dense = false;
+}
+
+static void keepForegroundDepthLayerRgb(PointTRGBPtr input, PointTRGBPtr output, float zQuantile)
+{
+    if (zQuantile <= 0.0f || zQuantile >= 0.95f || input->points.empty())
+    {
+        pcl::copyPointCloud(*input, *output);
+        return;
+    }
+
+    vector<float> zValues;
+    zValues.reserve(input->points.size());
+    for (size_t i = 0; i < input->points.size(); ++i)
+    {
+        if (pcl::isFinite(input->points[i]))
+        {
+            zValues.push_back(input->points[i].z);
+        }
+    }
+
+    if (zValues.empty())
+    {
+        pcl::copyPointCloud(*input, *output);
+        return;
+    }
+
+    size_t quantileIndex = static_cast<size_t>(zQuantile * static_cast<float>(zValues.size() - 1));
+    std::nth_element(zValues.begin(), zValues.begin() + quantileIndex, zValues.end());
+    float minForegroundZ = zValues[quantileIndex];
+
+    output->points.reserve(input->points.size());
+    for (size_t i = 0; i < input->points.size(); ++i)
+    {
+        const pcl::PointXYZRGB& point = input->points[i];
+        if (pcl::isFinite(point) && point.z >= minForegroundZ)
+        {
+            output->points.push_back(point);
+        }
+    }
+
+    output->width = static_cast<unsigned int>(output->points.size());
+    output->height = 1;
+    output->is_dense = false;
+}
+
+static void radiusOutlierFilterRgb(PointTRGBPtr input,
+                                   PointTRGBPtr output,
+                                   float radius,
+                                   int minNeighbors)
+{
+    if (radius <= 0.0f || minNeighbors <= 0)
+    {
+        pcl::copyPointCloud(*input, *output);
+        return;
+    }
+
+    pcl::RadiusOutlierRemoval<pcl::PointXYZRGB>* filter =
+        new pcl::RadiusOutlierRemoval<pcl::PointXYZRGB>();
+    filter->setInputCloud(input);
+    filter->setRadiusSearch(radius);
+    filter->setMinNeighborsInRadius(minNeighbors);
+    filter->filter(*output);
+}
+
+static void keepLargestClusterRgb(PointTRGBPtr input,
+                                  PointTRGBPtr output,
+                                  float clusterTolerance,
+                                  int minClusterPoints)
+{
+    if (clusterTolerance <= 0.0f || input->points.empty())
+    {
+        pcl::copyPointCloud(*input, *output);
+        return;
+    }
+
+    pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZRGB>());
+    tree->setInputCloud(input);
+
+    vector<pcl::PointIndices> clusters;
+    pcl::EuclideanClusterExtraction<pcl::PointXYZRGB>* extractor =
+        new pcl::EuclideanClusterExtraction<pcl::PointXYZRGB>();
+    extractor->setClusterTolerance(clusterTolerance);
+    extractor->setMinClusterSize(minClusterPoints);
+    extractor->setMaxClusterSize(static_cast<int>(input->points.size()));
+    extractor->setSearchMethod(tree);
+    extractor->setInputCloud(input);
+    extractor->extract(clusters);
+
+    if (clusters.empty())
+    {
+        cout << "Warning: No cluster found after merge cleanup; keeping filtered cloud." << endl;
+        pcl::copyPointCloud(*input, *output);
+        return;
+    }
+
+    size_t bestIndex = 0;
+    for (size_t i = 1; i < clusters.size(); ++i)
+    {
+        if (clusters[i].indices.size() > clusters[bestIndex].indices.size())
+        {
+            bestIndex = i;
+        }
+    }
+
+    output->points.reserve(clusters[bestIndex].indices.size());
+    for (size_t i = 0; i < clusters[bestIndex].indices.size(); ++i)
+    {
+        output->points.push_back(input->points[clusters[bestIndex].indices[i]]);
+    }
+    output->width = static_cast<unsigned int>(output->points.size());
+    output->height = 1;
+    output->is_dense = false;
+
+    cout << "    Merge cleanup clusters: " << clusters.size()
+         << ", kept largest cluster points: " << output->points.size() << endl;
+}
+
+static PointTRGBPtr cleanMergedCloud(PointTRGBPtr input, const MergeConfig& config)
+{
+    PointTRGBPtr colorFiltered = makeRgbCloudForCommandLifetime();
+    removeBrightBackgroundRgb(input, colorFiltered, config.whiteLumaThreshold);
+    cout << "    Merge cleanup color filter: " << input->points.size()
+         << " -> " << colorFiltered->points.size() << endl;
+
+    PointTRGBPtr depthFiltered = makeRgbCloudForCommandLifetime();
+    keepForegroundDepthLayerRgb(colorFiltered, depthFiltered, config.foregroundZQuantile);
+    cout << "    Merge cleanup foreground depth filter: " << colorFiltered->points.size()
+         << " -> " << depthFiltered->points.size() << endl;
+
+    PointTRGBPtr radiusFiltered = makeRgbCloudForCommandLifetime();
+    radiusOutlierFilterRgb(
+        depthFiltered,
+        radiusFiltered,
+        config.radiusOutlierRadius,
+        config.radiusOutlierMinNeighbors);
+    cout << "    Merge cleanup radius filter: " << depthFiltered->points.size()
+         << " -> " << radiusFiltered->points.size() << endl;
+
+    PointTRGBPtr clustered = makeRgbCloudForCommandLifetime();
+    keepLargestClusterRgb(
+        radiusFiltered,
+        clustered,
+        config.clusterTolerance,
+        config.minClusterPoints);
+    return clustered;
 }
 
 static PointTRGBPtr mergeWithTransformedRgbCloud(PointTRGBPtr target,
@@ -1003,6 +1225,10 @@ void mergeFunc(const string& dir, const string& config)
         views.push_back(view);
         cout << "    Merged point count: " << mergedCloud->points.size() << endl;
     }
+
+    cout << "\nCleaning merged cloud before saving..." << endl;
+    mergedCloud = cleanMergedCloud(mergedCloud, mergeConfig);
+    cout << "Cleaned merged point count: " << mergedCloud->points.size() << endl;
 
     string mergedPath = FileLibrary::getInstance()->combineFilePath(dir, MERGED_POINT_CLOUD_FILE);
     if (pcl::io::savePLYFile(mergedPath, *mergedCloud) != 0)

@@ -68,10 +68,10 @@ modelMoveHandler::modelMoveHandler(osgViewer::Viewer *viewer, osg::Group *pgroup
 
     //osg::Vec3d eye(2.655249, -600, -10), center(2.655249, 0, -10), up(0, 0, 1);
     osg::Vec3d eye(0,0,0), center(0,0,0);
-    osg::Vec3d up = normalizedOrDefault(m_cameraConfig.upDirection, osg::Vec3d(0, 0, 1));
+    osg::Vec3d up = normalizedOrDefault(m_cameraConfig.upDirection, osg::Vec3d(0, 1, 0));
 
     //修改相机参数
-    osg::Vec3d moveEve = normalizedOrDefault(m_cameraConfig.eyeDirection, osg::Vec3d(0, -1, 0));
+    osg::Vec3d moveEve = normalizedOrDefault(m_cameraConfig.eyeDirection, osg::Vec3d(0, 0, 1));
 
     osg::Vec3d lookCenter = m_modelcenter + m_cameraConfig.centerOffset;
     osg::Vec3d eyepoint = lookCenter + moveEve * viewDistance;
@@ -193,12 +193,12 @@ void modelMoveHandler::init(const  string &type, float angle){
     //else
     if (type == "obj") //初始化模型位置
     {
-        //initModelXLocation(45);
-        //initModelXLocation(-40);
-
-        rotateX(m_cameraConfig.hasInitialRotateXDeg ? static_cast<float>(m_cameraConfig.initialRotateXDeg) : angle / 2);
-        //rotateX(20);
-        rotateZ(m_cameraConfig.hasInitialRotateZDeg ? static_cast<float>(m_cameraConfig.initialRotateZDeg) : -angle / 2);
+        if (m_cameraConfig.hasInitialRotateXDeg) {
+            rotateX(static_cast<float>(m_cameraConfig.initialRotateXDeg));
+        }
+        if (m_cameraConfig.hasInitialRotateZDeg) {
+            rotateZ(static_cast<float>(m_cameraConfig.initialRotateZDeg));
+        }
 
     }
 
@@ -246,9 +246,9 @@ bool modelMoveHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIAction
 
                                                //return 0;
 
-                                               rotateZ(-m_angle/2);
+                                               rotateY(-m_angle/2);
                                                rotateX(-m_per_angle);
-                                               rotateZ(-m_angle/2);
+                                               rotateY(-m_angle/2);
                                                m_rotate = 0;
                                                cout << "m_height:" << m_height << endl;
                                                m_height++;
@@ -256,7 +256,7 @@ bool modelMoveHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIAction
                                            }
 
                                            //rotateXModel();
-                                           rotateZ(m_per_angle);
+                                           rotateY(m_per_angle);
                                            m_rotate += 1.0;
 
                                            //保存图片
@@ -347,6 +347,14 @@ bool modelMoveHandler::rotateX(float angle){
     //以当前视点为中心旋转
     //m_mt->setMatrix(m_mt->getMatrix() *osg::Matrixd::rotate(osg::DegreesToRadians(angle), 1, 0, 0));//旋转
 
+    return true;
+};
+
+bool modelMoveHandler::rotateY(float angle){
+    osg::Vec3d centermodel = m_mt->getBound().center();
+    m_mt->setMatrix(m_mt->getMatrix()*osg::Matrixd::translate(-centermodel)
+        *osg::Matrixd::rotate(-1*osg::DegreesToRadians(angle), 0, 1, 0)
+        *osg::Matrixd::translate(centermodel));
     return true;
 };
 

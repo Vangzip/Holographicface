@@ -47,6 +47,9 @@ void writePipelineLog(
         log << "result_code=" << resultCode << "\n";
         log << "wall_seconds=" << formatSeconds(wallSeconds) << "\n";
         log << "measured_stage_seconds=" << formatSeconds(totalTimingSeconds(timings)) << "\n";
+        log << "\n[input]\n";
+        log << "mode=" << pipelineInputModeName(config.inputMode) << "\n";
+        log << "directory=" << config.inputDirectory.string() << "\n";
         log << "\n[result_persistence]\n";
         log << "timestamp=" << config.resultTimestamp << "\n";
         log << "mesh.selected=" << (config.saveSettings.mesh ? "true" : "false") << "\n";

@@ -38,10 +38,21 @@ private:
     QString sourcePath_;
 };
 
+struct PrintImageFolderLoadResult {
+    PrintImageSet images;
+    int gridRows = 0;
+    int gridColumns = 0;
+    QString gridWarning;
+
+    bool hasInferredGrid() const { return gridRows > 0 && gridColumns > 0; }
+};
+
 PrintImageSet makePrintImageSetFromElementalMemory(const ElementalMemoryResult& result,
     QString* errorMessage = nullptr);
 PrintImageSet makePrintImageSetFromElementalMemory(
     std::shared_ptr<const ElementalMemoryResult> result,
     QString* errorMessage = nullptr);
+PrintImageFolderLoadResult loadPrintImagesFromFolderWithGridInfo(
+    const QString& folderPath, QString* errorMessage = nullptr);
 PrintImageSet loadPrintImagesFromFolder(const QString& folderPath,
     QString* errorMessage = nullptr);

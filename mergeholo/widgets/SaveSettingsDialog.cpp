@@ -3,79 +3,21 @@
 #include "ui_SaveSettingsDialog.h"
 
 #include <QCloseEvent>
-#include <QPainter>
-#include <QProxyStyle>
-#include <QStyle>
-#include <QStyleOption>
-
-namespace {
-
-class CircularCheckBoxStyle : public QProxyStyle
-{
-public:
-    int pixelMetric(
-        PixelMetric metric,
-        const QStyleOption* option,
-        const QWidget* widget) const override
-    {
-        if (metric == PM_IndicatorWidth || metric == PM_IndicatorHeight) {
-            return 24;
-        }
-        return QProxyStyle::pixelMetric(metric, option, widget);
-    }
-
-    void drawPrimitive(
-        PrimitiveElement element,
-        const QStyleOption* option,
-        QPainter* painter,
-        const QWidget* widget) const override
-    {
-        if (element != PE_IndicatorCheckBox) {
-            QProxyStyle::drawPrimitive(element, option, painter, widget);
-            return;
-        }
-
-        painter->save();
-        painter->setRenderHint(QPainter::Antialiasing, true);
-        const bool enabled = option->state.testFlag(State_Enabled);
-        const QColor color = enabled ? QColor(18, 18, 18) : QColor(145, 145, 145);
-        painter->setPen(QPen(color, 3));
-        painter->setBrush(Qt::white);
-        const QRectF outer = option->rect.adjusted(3.0, 3.0, -3.0, -3.0);
-        painter->drawEllipse(outer);
-
-        if (option->state.testFlag(State_On)) {
-            painter->setPen(Qt::NoPen);
-            painter->setBrush(color);
-            const QRectF inner = outer.adjusted(5.0, 5.0, -5.0, -5.0);
-            painter->drawEllipse(inner);
-        }
-        painter->restore();
-    }
-};
-
-} // namespace
+#include <QDialogButtonBox>
+#include <QPushButton>
 
 SaveSettingsDialog::SaveSettingsDialog(QWidget* parent)
     : QDialog(parent)
     , ui_(new Ui::SaveSettingsDialog)
 {
     ui_->setupUi(this);
-    setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
     setWindowModality(Qt::ApplicationModal);
 
-    CircularCheckBoxStyle* checkBoxStyle = new CircularCheckBoxStyle;
-    checkBoxStyle->setParent(this);
-    ui_->meshCheckBox->setStyle(checkBoxStyle);
-    ui_->multiviewCheckBox->setStyle(checkBoxStyle);
-    ui_->elementalCheckBox->setStyle(checkBoxStyle);
+    ui_->buttonBox->button(QDialogButtonBox::Ok)->setText(QString::fromUtf8("确定"));
+    ui_->buttonBox->button(QDialogButtonBox::Cancel)->setText(QString::fromUtf8("取消"));
 
-    ui_->closeButton->setIcon(style()->standardIcon(QStyle::SP_TitleBarCloseButton));
-    ui_->closeButton->setToolTip(QString::fromUtf8("关闭"));
-
-    connect(ui_->confirmButton, &QPushButton::clicked, this, &QDialog::accept);
-    connect(ui_->cancelButton, &QPushButton::clicked, this, &SaveSettingsDialog::reject);
-    connect(ui_->closeButton, &QToolButton::clicked, this, &SaveSettingsDialog::reject);
+    connect(ui_->buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(ui_->buttonBox, &QDialogButtonBox::rejected, this, &SaveSettingsDialog::reject);
 }
 
 SaveSettingsDialog::~SaveSettingsDialog() = default;

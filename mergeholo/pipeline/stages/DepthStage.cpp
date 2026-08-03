@@ -1,7 +1,10 @@
 #include "DepthStage.h"
 
 #include "depth_io.h"
+#include "ExternalDepthOrientation.h"
 #include "FileLibrary.h"
+
+#include <opencv2/imgcodecs.hpp>
 
 #include <filesystem>
 #include <iostream>
@@ -90,6 +93,33 @@ int runDepthStage(const HoloConfig& config, const CliOptions& options, DepthMemo
             memoryResult->cloud = depth.depthToPointCloudColor(depthFile, rgbFile, config.depthConfig.string());
             if (!memoryResult->hasCloud()) {
                 ++failed;
+            }
+            else if (config.inputMode == PipelineInputMode::RgbDepth) {
+                const cv::Mat externalDepth = cv::imread(depthFile, cv::IMREAD_UNCHANGED);
+                const ExternalDepthOrientationResult orientation =
+                    normalizeExternalDepthPointCloudAxes(externalDepth, memoryResult->cloud.get());
+                if (orientation.horizontalDetermined) {
+                    std::cout << "[depth] external XYZ horizontal orientation: "
+                              << (orientation.flippedPointCloudX ? "flipped point-cloud X" : "kept")
+                              << ", correlation=" << orientation.columnToPointCloudXCorrelation
+                              << std::endl;
+                }
+                else {
+                    std::cerr << "[depth][warning] external XYZ horizontal orientation "
+                              << "could not be determined; point-cloud X was kept."
+                              << std::endl;
+                }
+                if (orientation.verticalDetermined) {
+                    std::cout << "[depth] external XYZ vertical orientation: "
+                              << (orientation.flippedPointCloudY ? "flipped point-cloud Y" : "kept")
+                              << ", correlation=" << orientation.rowToPointCloudYCorrelation
+                              << std::endl;
+                }
+                else {
+                    std::cerr << "[depth][warning] external XYZ vertical orientation "
+                              << "could not be determined; point-cloud Y was kept."
+                              << std::endl;
+                }
             }
             continue;
         }

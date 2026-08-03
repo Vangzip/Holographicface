@@ -28,13 +28,8 @@ public:
     MultiviewBatchStats renderAll();
 
 private:
-    void rotateZ(double degrees);
-    void rotateX(double degrees);
-    void advanceRow();
-
     osgViewer::Viewer* viewer_;
     osg::MatrixTransform* modelTransform_;
-    osg::Vec3d rotationCenter_;
     MultiviewRenderPlan plan_;
     MemoryFrameSink* sink_;
 };

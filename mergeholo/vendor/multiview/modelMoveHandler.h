@@ -99,6 +99,8 @@ public:
 
     bool rotateX(float);
 
+    bool rotateY(float);
+
     osg::MatrixTransform* modelTransform() const;
  //
 	//bool initModelZLocation(float angle);

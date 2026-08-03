@@ -35,7 +35,7 @@ The selected directory must contain exactly one same-basename pair:
 - `<name>_mesh.ply`
 - `<name>.jpg`
 
-The polygon mesh is loaded into a `MeshMemoryResult`, using the JPEG as its texture source. Depth and mesh generation are skipped. The current all-memory optimization then feeds the mesh directly to multiview rendering, followed by elemental generation.
+The PLY must be a polygon mesh with RGB or RGBA vertex colors, matching the current in-memory mesh renderer. The paired JPEG must be decodable and is retained as the companion source path, but it is not treated as a UV texture because the generated PLY format has no texture coordinates. Depth and mesh generation are skipped. The current all-memory optimization then feeds the colored mesh directly to multiview rendering, followed by elemental generation.
 
 ### Multiview
 

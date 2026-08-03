@@ -45,6 +45,10 @@ if ($mergeFunc -notmatch 'estimateTransformToMerged') {
     $failures += 'mergeFunc should estimate and record per-view transforms.'
 }
 
+if ($mergeFunc -notmatch 'cleanMergedCloud') {
+    $failures += 'mergeFunc should clean the fused cloud before mesh generation.'
+}
+
 if ($meshFunc -match 'getAllSubFiles\s*\([^;]*"_rgb\.ply"') {
     $failures += 'meshFunc must not scan per-view *_rgb.ply files.'
 }

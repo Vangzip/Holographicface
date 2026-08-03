@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <stdexcept>
+#include <iostream>
+#include <GL/gl.h>
 
 namespace {
 double secondsBetween(std::chrono::high_resolution_clock::time_point start,
@@ -114,6 +116,15 @@ MultiviewBatchStats MultiviewBatchRenderer::renderAll() {
     if (!viewer_->isRealized()) {
         viewer_->realize();
     }
+
+    const GLubyte* vendor = glGetString(GL_VENDOR);
+    const GLubyte* renderer = glGetString(GL_RENDERER);
+    const GLubyte* version = glGetString(GL_VERSION);
+
+    std::cout << "GL_VENDOR   = " << (vendor ? (const char*)vendor : "null") << std::endl;
+    std::cout << "GL_RENDERER = " << (renderer ? (const char*)renderer : "null") << std::endl;
+    std::cout << "GL_VERSION  = " << (version ? (const char*)version : "null") << std::endl;
+
     rotationCenter_ = modelTransform_->getBound().center();
 
     osg::ref_ptr<MemoryCaptureDrawCallback> captureCallback =

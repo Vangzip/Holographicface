@@ -1,12 +1,28 @@
 #include "multiviewBatchRenderer.h"
+#include "multiviewCameraOrbit.h"
 
 #include <chrono>
+#include <cmath>
 #include <stdexcept>
 
 namespace {
 double secondsBetween(std::chrono::high_resolution_clock::time_point start,
                       std::chrono::high_resolution_clock::time_point end) {
     return std::chrono::duration<double>(end - start).count();
+}
+
+osg::Matrixd orbitViewMatrix(const osg::Vec3d& center,
+                             const osg::Vec3d& eyeDirection,
+                             const osg::Vec3d& up,
+                             const osg::Vec3d& right,
+                             double distance,
+                             const MultiviewOrbitAngles& angles)
+{
+    const double yaw = osg::DegreesToRadians(angles.yawDegrees);
+    const double pitch = osg::DegreesToRadians(angles.pitchDegrees);
+    const osg::Vec3d horizontal = eyeDirection * std::cos(yaw) + right * std::sin(yaw);
+    const osg::Vec3d offset = horizontal * std::cos(pitch) + up * std::sin(pitch);
+    return osg::Matrixd::lookAt(center + offset * distance, center, up);
 }
 
 class MemoryCaptureDrawCallback : public osg::Camera::DrawCallback {
@@ -93,7 +109,6 @@ MultiviewBatchRenderer::MultiviewBatchRenderer(osgViewer::Viewer* viewer,
                                                MemoryFrameSink* sink)
     : viewer_(viewer),
       modelTransform_(modelTransform),
-      rotationCenter_(),
       plan_(plan),
       sink_(sink) {
     if (viewer_ == nullptr) {
@@ -114,29 +129,62 @@ MultiviewBatchStats MultiviewBatchRenderer::renderAll() {
     if (!viewer_->isRealized()) {
         viewer_->realize();
     }
-    rotationCenter_ = modelTransform_->getBound().center();
+    const osg::Matrixd originalViewMatrix = viewer_->getCamera()->getViewMatrix();
+    osg::Vec3d eye;
+    osg::Vec3d viewCenter;
+    osg::Vec3d up;
+    viewer_->getCamera()->getViewMatrixAsLookAt(eye, viewCenter, up);
+    const osg::Vec3d orbitCenter = modelTransform_->getBound().center();
+    osg::Vec3d eyeDirection = eye - orbitCenter;
+    const double distance = eyeDirection.length();
+    if (distance <= 0.000001 || up.normalize() <= 0.000001) {
+        throw std::runtime_error("invalid multiview camera basis");
+    }
+    eyeDirection /= distance;
+    osg::Vec3d right = up ^ eyeDirection;
+    if (right.normalize() <= 0.000001) {
+        throw std::runtime_error("multiview camera up is parallel to its eye direction");
+    }
+    up = eyeDirection ^ right;
+    up.normalize();
 
     osg::ref_ptr<MemoryCaptureDrawCallback> captureCallback =
         new MemoryCaptureDrawCallback(plan_.resolution());
+    osg::ref_ptr<osg::Camera::DrawCallback> originalPostDrawCallback =
+        viewer_->getCamera()->getPostDrawCallback();
     viewer_->getCamera()->setPostDrawCallback(captureCallback.get());
 
     std::uint64_t frameIndex = 0;
-    for (int row = 0; row < plan_.samplesPerAxis(); ++row) {
-        if (row > 0) {
-            advanceRow();
+    const auto restoreViewerState = [&]() {
+        captureCallback->setTarget(nullptr);
+        viewer_->getCamera()->setPostDrawCallback(originalPostDrawCallback.get());
+        viewer_->getCamera()->setViewMatrix(originalViewMatrix);
+    };
+
+    try {
+        for (int row = 0; row < plan_.samplesPerAxis(); ++row) {
+            for (int column = 0; column < plan_.samplesPerAxis(); ++column) {
+                const MultiviewOrbitAngles angles = multiviewOrbitAngles(
+                    plan_.angle(),
+                    plan_.samplesPerAxis(),
+                    plan_.stepDegrees(),
+                    row,
+                    column);
+                viewer_->getCamera()->setViewMatrix(
+                    orbitViewMatrix(orbitCenter, eyeDirection, up, right, distance, angles));
+                captureCallback->setTarget(sink_->frameData(frameIndex));
+
+                const auto renderStart = std::chrono::high_resolution_clock::now();
+                viewer_->frame();
+                const auto renderEnd = std::chrono::high_resolution_clock::now();
+
+                stats.renderSeconds += secondsBetween(renderStart, renderEnd);
+                ++frameIndex;
+            }
         }
-
-        for (int column = 0; column < plan_.samplesPerAxis(); ++column) {
-            rotateZ(plan_.stepDegrees());
-            captureCallback->setTarget(sink_->frameData(frameIndex));
-
-            const auto renderStart = std::chrono::high_resolution_clock::now();
-            viewer_->frame();
-            const auto renderEnd = std::chrono::high_resolution_clock::now();
-
-            stats.renderSeconds += secondsBetween(renderStart, renderEnd);
-            ++frameIndex;
-        }
+    } catch (...) {
+        restoreViewerState();
+        throw;
     }
 
     const auto totalEnd = std::chrono::high_resolution_clock::now();
@@ -153,27 +201,6 @@ MultiviewBatchStats MultiviewBatchRenderer::renderAll() {
         stats.renderSeconds = 0.0;
     }
     stats.totalSeconds = secondsBetween(totalStart, totalEnd);
-    captureCallback->setTarget(nullptr);
-    viewer_->getCamera()->setPostDrawCallback(NULL);
+    restoreViewerState();
     return stats;
-}
-
-void MultiviewBatchRenderer::rotateZ(double degrees) {
-    modelTransform_->setMatrix(modelTransform_->getMatrix() *
-                               osg::Matrixd::translate(-rotationCenter_) *
-                               osg::Matrixd::rotate(-osg::DegreesToRadians(degrees), 0, 0, 1) *
-                               osg::Matrixd::translate(rotationCenter_));
-}
-
-void MultiviewBatchRenderer::rotateX(double degrees) {
-    modelTransform_->setMatrix(modelTransform_->getMatrix() *
-                               osg::Matrixd::translate(-rotationCenter_) *
-                               osg::Matrixd::rotate(osg::DegreesToRadians(degrees), 1, 0, 0) *
-                               osg::Matrixd::translate(rotationCenter_));
-}
-
-void MultiviewBatchRenderer::advanceRow() {
-    rotateZ(-static_cast<double>(plan_.angle()) / 2.0);
-    rotateX(-plan_.stepDegrees());
-    rotateZ(-static_cast<double>(plan_.angle()) / 2.0);
 }

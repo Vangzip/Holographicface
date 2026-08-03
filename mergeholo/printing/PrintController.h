@@ -34,6 +34,8 @@ public slots:
     virtual void moveYNegative(double millimeters, const PrintAxisConfig& config) = 0;
     virtual void moveYPositive(double millimeters, const PrintAxisConfig& config) = 0;
     virtual void stopManualMotion() = 0;
+    virtual void setLogicalOrigin() = 0;
+    virtual void returnToLogicalOrigin() = 0;
     virtual void start(const Print9030Config& config, const PrintImageSet& images) = 0;
     virtual void pause() = 0;
     virtual void resume() = 0;
@@ -67,6 +69,8 @@ public slots:
     void moveYNegative(double millimeters, const PrintAxisConfig& config) override;
     void moveYPositive(double millimeters, const PrintAxisConfig& config) override;
     void stopManualMotion() override;
+    void setLogicalOrigin() override;
+    void returnToLogicalOrigin() override;
     void start(const Print9030Config& config, const PrintImageSet& images) override;
     void pause() override;
     void resume() override;

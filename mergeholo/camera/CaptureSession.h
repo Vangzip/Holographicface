@@ -1,10 +1,12 @@
 #pragma once
 
+#include "ProcessingSettings.h"
+
 #include <QString>
 
 struct CaptureSessionOptions {
     QString saveRoot;
-    QString cameraConfigPath;
+    CameraCaptureSettings cameraSettings;
     int minFreeSpaceGb = 50;
     int saveIntervalMs = 100;
     int maxFrames = 0;

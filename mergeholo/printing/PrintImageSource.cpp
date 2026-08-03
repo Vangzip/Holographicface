@@ -4,7 +4,10 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QImageReader>
+#include <QRegularExpression>
+#include <QSet>
 
+#include <algorithm>
 #include <limits>
 
 namespace {
@@ -47,6 +50,45 @@ bool decodeFrame(const QString& path, PrintFrame* destination, QString* errorMes
             bgr.constScanLine(row), static_cast<size_t>(frame.stride));
     }
     *destination = std::move(frame);
+    return true;
+}
+
+struct FolderImageEntry {
+    QFileInfo info;
+    int row = 0;
+    int column = 0;
+};
+
+bool inferGridOrder(QVector<FolderImageEntry>* entries, int* rows, int* columns)
+{
+    if (!entries || entries->isEmpty() || !rows || !columns) return false;
+    const QRegularExpression namePattern(QStringLiteral("^(\\d{3})(\\d{3})$"));
+    QSet<quint64> cells;
+    int maxRow = 0;
+    int maxColumn = 0;
+    for (FolderImageEntry& entry : *entries) {
+        const QRegularExpressionMatch match =
+            namePattern.match(entry.info.completeBaseName());
+        if (!match.hasMatch()) return false;
+        entry.row = match.captured(1).toInt();
+        entry.column = match.captured(2).toInt();
+        if (entry.row <= 0 || entry.column <= 0) return false;
+        const quint64 cell = (static_cast<quint64>(entry.row) << 32)
+            | static_cast<quint32>(entry.column);
+        if (cells.contains(cell)) return false;
+        cells.insert(cell);
+        maxRow = qMax(maxRow, entry.row);
+        maxColumn = qMax(maxColumn, entry.column);
+    }
+    const qint64 expectedCount = static_cast<qint64>(maxRow) * maxColumn;
+    if (expectedCount != entries->size()) return false;
+    std::sort(entries->begin(), entries->end(),
+        [](const FolderImageEntry& left, const FolderImageEntry& right) {
+            return left.row == right.row ? left.column < right.column
+                                         : left.row < right.row;
+        });
+    *rows = maxRow;
+    *columns = maxColumn;
     return true;
 }
 
@@ -167,30 +209,45 @@ PrintImageSet makePrintImageSetFromElementalMemory(
     return makePrintImageSetFromElementalMemory(*result, errorMessage);
 }
 
-PrintImageSet loadPrintImagesFromFolder(const QString& folderPath,
+PrintImageFolderLoadResult loadPrintImagesFromFolderWithGridInfo(const QString& folderPath,
     QString* errorMessage)
 {
     clearError(errorMessage);
+    PrintImageFolderLoadResult result;
     const QFileInfo info(folderPath);
     if (folderPath.isEmpty() || !info.isDir()) {
         setError(errorMessage, "Image folder does not exist: " + folderPath);
-        return {};
+        return result;
     }
     QDir dir(info.absoluteFilePath());
     const QStringList filters = {"*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tif", "*.tiff"};
-    const QFileInfoList entries = dir.entryInfoList(filters,
+    const QFileInfoList fileEntries = dir.entryInfoList(filters,
         QDir::Files | QDir::Readable, QDir::Name | QDir::IgnoreCase);
+    QVector<FolderImageEntry> entries;
+    entries.reserve(fileEntries.size());
+    for (const QFileInfo& entry : fileEntries) entries.append({entry});
+    if (entries.isEmpty()) {
+        setError(errorMessage, "Image folder has no supported images: " + folderPath);
+        return result;
+    }
+    if (!inferGridOrder(&entries, &result.gridRows, &result.gridColumns)) {
+        result.gridWarning = QStringLiteral(
+            "Image names do not form a complete RRRCCC grid; keep manual row and column values.");
+    }
     QVector<PrintFrame> frames;
     frames.reserve(entries.size());
-    for (const QFileInfo& entry : entries) {
+    for (const FolderImageEntry& entry : entries) {
         PrintFrame frame;
-        if (!decodeFrame(entry.absoluteFilePath(), &frame, errorMessage)) return {};
+        if (!decodeFrame(entry.info.absoluteFilePath(), &frame, errorMessage)) return {};
         frames.append(std::move(frame));
     }
-    if (frames.isEmpty()) {
-        setError(errorMessage, "Image folder has no supported images: " + folderPath);
-        return {};
-    }
-    return PrintImageSet::fromFrames(frames, errorMessage,
+    result.images = PrintImageSet::fromFrames(frames, errorMessage,
         PrintImageSourceType::Folder, dir.absolutePath());
+    return result;
+}
+
+PrintImageSet loadPrintImagesFromFolder(const QString& folderPath,
+    QString* errorMessage)
+{
+    return loadPrintImagesFromFolderWithGridInfo(folderPath, errorMessage).images;
 }

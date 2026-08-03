@@ -11,6 +11,7 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QSpinBox>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include <limits>
 
@@ -107,6 +108,10 @@ Print9030Dialog::Print9030Dialog(const QString& projectRoot,
         });
     connect(ui_->manualStopButton, &QPushButton::clicked,
         controller_, &IPrintController::stopManualMotion);
+    connect(ui_->setOriginButton, &QPushButton::clicked,
+        controller_, &IPrintController::setLogicalOrigin);
+    connect(ui_->returnOriginButton, &QPushButton::clicked,
+        controller_, &IPrintController::returnToLogicalOrigin);
     connect(ui_->startButton, &QPushButton::clicked, this, [this] { startPrint(); });
     connect(ui_->pauseButton, &QPushButton::clicked, controller_, &IPrintController::pause);
     connect(ui_->resumeButton, &QPushButton::clicked, controller_, &IPrintController::resume);
@@ -114,6 +119,8 @@ Print9030Dialog::Print9030Dialog(const QString& projectRoot,
     connect(ui_->closeButton, &QPushButton::clicked, this, [this] { requestClose(); });
     connect(ui_->memorySourceRadio, &QRadioButton::toggled, this, [this] { updateSourceSummary(); });
     connect(ui_->folderSourceRadio, &QRadioButton::toggled, this, [this] { updateSourceSummary(); });
+    connect(&folderLoadWatcher_, &QFutureWatcher<FolderLoadCompletion>::finished,
+        this, &Print9030Dialog::applyFolderLoadResult);
 
     connect(controller_, &IPrintController::stateChanged, this, &Print9030Dialog::applyState);
     connect(controller_, &IPrintController::statusChanged, ui_->statusLabel, &QLabel::setText);
@@ -159,10 +166,55 @@ void Print9030Dialog::setElementalMemoryResult(std::shared_ptr<const ElementalMe
 void Print9030Dialog::setManualImageFolder(const QString& folderPath)
 {
     ui_->folderPathEdit->setText(QDir::toNativeSeparators(folderPath));
-    QString error;
-    folderImages_ = loadPrintImagesFromFolder(folderPath, &error);
-    if (folderImages_.isValid()) ui_->folderSourceRadio->setChecked(true);
-    else if (!error.isEmpty()) ui_->errorDetailLabel->setText(error);
+    if (folderPath.trimmed().isEmpty()) {
+        ++folderLoadRequestId_;
+        folderLoading_ = false;
+        folderImages_ = {};
+        updateSourceSummary();
+        return;
+    }
+    beginFolderLoad(folderPath);
+}
+
+void Print9030Dialog::beginFolderLoad(const QString& folderPath)
+{
+    const quint64 requestId = ++folderLoadRequestId_;
+    folderLoading_ = true;
+    folderImages_ = {};
+    ui_->folderSourceRadio->setChecked(true);
+    ui_->previewLabel->setPixmap(QPixmap());
+    ui_->previewLabel->setText(QStringLiteral("正在加载图像..."));
+    ui_->errorDetailLabel->setText(QString());
+    updateSourceSummary();
+
+    folderLoadWatcher_.setFuture(QtConcurrent::run([folderPath, requestId] {
+        FolderLoadCompletion completion;
+        completion.source = loadPrintImagesFromFolderWithGridInfo(
+            folderPath, &completion.errorMessage);
+        completion.requestId = requestId;
+        return completion;
+    }));
+}
+
+void Print9030Dialog::applyFolderLoadResult()
+{
+    const FolderLoadCompletion completion = folderLoadWatcher_.result();
+    if (completion.requestId != folderLoadRequestId_) return;
+
+    folderLoading_ = false;
+    if (completion.source.images.isValid()) {
+        folderImages_ = completion.source.images;
+        ui_->folderSourceRadio->setChecked(true);
+        if (completion.source.hasInferredGrid()) {
+            ui_->gridRowsSpin->setValue(completion.source.gridRows);
+            ui_->gridColumnsSpin->setValue(completion.source.gridColumns);
+        }
+        ui_->errorDetailLabel->setText(completion.source.gridWarning);
+    } else {
+        folderImages_ = {};
+        ui_->errorDetailLabel->setText(completion.errorMessage.isEmpty()
+                ? QStringLiteral("图像文件夹加载失败。") : completion.errorMessage);
+    }
     updateSourceSummary();
 }
 
@@ -178,12 +230,15 @@ void Print9030Dialog::applyState(PrintUiState state)
 
     ui_->connectHomeButton->setEnabled(state == PrintUiState::Disconnected || state == PrintUiState::Fault);
     ui_->disconnectButton->setEnabled(ready || state == PrintUiState::Fault);
-    ui_->startButton->setEnabled(ready && source.isValid());
+    ui_->startButton->setEnabled(ready && source.isValid() && !folderLoading_);
     ui_->pauseButton->setEnabled(printing);
     ui_->resumeButton->setEnabled(paused);
     ui_->cancelButton->setEnabled(printing || paused);
     ui_->manualMotionGroup->setEnabled(ready);
-    ui_->sourceGroup->setEnabled(!locked);
+    ui_->setOriginButton->setEnabled(ready);
+    ui_->returnOriginButton->setEnabled(ready);
+    ui_->sourceGroup->setEnabled(!locked && !folderLoading_);
+    ui_->previewButton->setEnabled(!folderLoading_ && source.isValid());
     ui_->configTabs->setEnabled(!locked);
     ui_->closeButton->setEnabled(!stopping);
 
@@ -250,7 +305,8 @@ void Print9030Dialog::updateConfigFromUi()
 void Print9030Dialog::updateSourceSummary()
 {
     const PrintImageSet& active = ui_->folderSourceRadio->isChecked() ? folderImages_ : memoryImages_;
-    ui_->sourceSummaryLabel->setText(sourceText(active));
+    ui_->sourceSummaryLabel->setText(folderLoading_ && ui_->folderSourceRadio->isChecked()
+            ? QStringLiteral("文件夹加载中...") : sourceText(active));
     applyState(*stateStorage_);
 }
 

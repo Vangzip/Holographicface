@@ -6,6 +6,7 @@
 
 #include <QCoreApplication>
 #include <QDebug>
+#include <QHash>
 #include <QSet>
 #include <QStringList>
 
@@ -43,9 +44,14 @@ public:
     short masterAxisCount = 2;
     short emergency = 0;
     unsigned int forcedAxisBits = 0;
+    bool currentPositionWritesUpdatePlanned = false;
     short lastPtpAxis = -1;
     int lastPtpTarget = 0;
     double lastProfileVelocity = 0;
+    QHash<short, int> plannedPositions;
+    QHash<short, int> returningBusyPolls;
+    QHash<short, int> currentPositionSetCounts;
+    QHash<short, int> syncPositionCounts;
 
     int result(const QString& operation) const
     {
@@ -195,6 +201,11 @@ public:
             events << QString("backoff:%1:%2").arg(axis).arg(target);
             return result(QString("backoff%1").arg(axis));
         }
+        if (target == 0 && returningBusyPolls.contains(axis)) {
+            returningAxes.insert(axis);
+        } else {
+            plannedPositions.insert(axis, target);
+        }
         return result("ptp");
     }
 
@@ -227,9 +238,20 @@ public:
         if (result("axis_status") != 0) {
             return result("axis_status");
         }
-        *status = (enabledAxes.contains(axis) ? kServoOn : 0)
+        unsigned int bits = (enabledAxes.contains(axis) ? kServoOn : 0)
             | (homingAxes.contains(axis) ? kNegativeLimit : 0)
             | forcedAxisBits;
+        if (returningAxes.contains(axis)) {
+            int remaining = returningBusyPolls.value(axis);
+            if (remaining > 0) {
+                returningBusyPolls.insert(axis, remaining - 1);
+                bits |= kBusy;
+            } else {
+                returningAxes.remove(axis);
+                plannedPositions.insert(axis, 0);
+            }
+        }
+        *status = bits;
         return 0;
     }
 
@@ -244,8 +266,7 @@ public:
     int plannedPosition(unsigned int cardIndex, short axis, int* position) override
     {
         Q_UNUSED(cardIndex);
-        Q_UNUSED(axis);
-        *position = 0;
+        *position = plannedPositions.value(axis);
         return result("planned");
     }
 
@@ -259,7 +280,10 @@ public:
     int setCurrentPosition(unsigned int cardIndex, short axis, double position) override
     {
         Q_UNUSED(cardIndex);
-        Q_UNUSED(position);
+        ++currentPositionSetCounts[axis];
+        if (currentPositionWritesUpdatePlanned) {
+            plannedPositions.insert(axis, qRound(position));
+        }
         if (!zeroedAxes.contains(axis)) {
             events << QString("zero:%1").arg(axis);
             zeroedAxes.insert(axis);
@@ -270,7 +294,7 @@ public:
     int syncPosition(unsigned int cardIndex, short axis) override
     {
         Q_UNUSED(cardIndex);
-        Q_UNUSED(axis);
+        ++syncPositionCounts[axis];
         return result("sync");
     }
 
@@ -289,6 +313,16 @@ public:
 private:
     QSet<short> homingAxes;
     QSet<short> zeroedAxes;
+    QSet<short> returningAxes;
+};
+
+class AdvancingClock final : public IImc60gClock {
+public:
+    qint64 nowMs() const override { return nowMs_; }
+    void sleepMs(unsigned long milliseconds) override { nowMs_ += milliseconds; }
+
+private:
+    qint64 nowMs_ = 0;
 };
 
 void expectSafeShutdown(const RecordingImc60gApi& api)
@@ -497,6 +531,105 @@ void testPrintReadinessUsesLiveHardwareState()
         "a busy axis must fail stopped readiness");
 }
 
+void testSlowXReturnUsesItsOwnMotionBudget()
+{
+    RecordingImc60gApi api;
+    AdvancingClock clock;
+    api.plannedPositions.insert(1, 149000);
+    api.returningBusyPolls.insert(1, 15000);
+    Imc60gMotionController controller(&api, PrintHardwareProfile(), &clock);
+    QString error;
+    expect(controller.connectAndHome(&error), "fixture must connect: " + error);
+    expect(controller.beginPrint(&error), "fixture must acquire print ownership: " + error);
+    PrintAxisConfig axisX;
+    axisX.subdivision = 40;
+    axisX.resolution = 50;
+    axisX.speedOfMovement = 5000;
+    axisX.acceleratedVelocity = 50000;
+    axisX.startSpeed = 500;
+    axisX.stopSpeed = 500;
+    axisX.maxDistance = 150.0;
+    PrintAxisConfig axisY = axisX;
+    axisY.speedOfMovement = 60000;
+    axisY.acceleratedVelocity = 150000;
+    axisY.startSpeed = 0;
+    axisY.stopSpeed = 0;
+    expect(controller.returnToLogicalZero(axisX, axisY, 9666, &error),
+        "slow X zero return must outlive the Y-derived legacy timeout: " + error);
+}
+
+void testReadyStateOriginReturnTemporarilyOwnsPrintMotion()
+{
+    RecordingImc60gApi api;
+    Imc60gMotionController controller(&api, PrintHardwareProfile());
+    QString error;
+    expect(controller.connectAndHome(&error), "fixture must connect: " + error);
+    api.plannedPositions.insert(1, 12000);
+    api.plannedPositions.insert(0, -34000);
+
+    PrintAxisConfig axisX;
+    axisX.subdivision = 40;
+    axisX.resolution = 50;
+    axisX.speedOfMovement = 5000;
+    axisX.acceleratedVelocity = 50000;
+    axisX.startSpeed = 500;
+    axisX.stopSpeed = 500;
+    PrintAxisConfig axisY = axisX;
+
+    expect(controller.returnToLogicalZeroWhenReady(axisX, axisY, 5000, &error),
+        "ready-state logical origin return must move both axes: " + error);
+    expect(api.plannedPositions.value(1) == 0 && api.plannedPositions.value(0) == 0,
+        "ready-state logical origin return must target mapped X/Y zero");
+    expect(controller.isReadyForPrint(),
+        "ready-state logical origin return must release print motion ownership");
+}
+
+void testMappedPositionsAndLogicalOrigin()
+{
+    RecordingImc60gApi api;
+    Imc60gMotionController controller(&api, PrintHardwareProfile());
+    QString error;
+    expect(controller.connectAndHome(&error), "fixture must connect: " + error);
+
+    api.plannedPositions.insert(1, 12000);
+    api.plannedPositions.insert(0, -34000);
+    api.currentPositionWritesUpdatePlanned = true;
+    int xPulses = 0;
+    int yPulses = 0;
+    expect(controller.readMappedPlannedPositions(&xPulses, &yPulses, &error),
+        "mapped planned-position read must succeed: " + error);
+    expect(xPulses == 12000 && yPulses == -34000,
+        "mapped planned-position read must preserve Axis1/X and Axis0/Y mapping");
+
+    api.stoppedAxes.clear();
+    const int xSetBefore = api.currentPositionSetCounts.value(1);
+    const int ySetBefore = api.currentPositionSetCounts.value(0);
+    const int xSyncBefore = api.syncPositionCounts.value(1);
+    const int ySyncBefore = api.syncPositionCounts.value(0);
+    expect(controller.setCurrentPositionAsLogicalOrigin(&error),
+        "setting logical origin must succeed: " + error);
+    expect(api.stoppedAxes.contains(1) && api.stoppedAxes.contains(0),
+        "setting logical origin must stop both mapped axes");
+    expect(api.currentPositionSetCounts.value(1) == xSetBefore + 2
+            && api.currentPositionSetCounts.value(0) == ySetBefore + 2,
+        "setting logical origin must zero each mapped axis twice around synchronization");
+    expect(api.syncPositionCounts.value(1) == xSyncBefore + 1
+            && api.syncPositionCounts.value(0) == ySyncBefore + 1,
+        "setting logical origin must synchronize both mapped axes");
+    expect(controller.readMappedPlannedPositions(&xPulses, &yPulses, &error)
+            && xPulses == 0 && yPulses == 0,
+        "setting logical origin must make both mapped positions zero");
+
+    expect(controller.beginPrint(&error), "fixture must acquire print ownership: " + error);
+    const int xSetWhilePrinting = api.currentPositionSetCounts.value(1);
+    const int ySetWhilePrinting = api.currentPositionSetCounts.value(0);
+    expect(!controller.setCurrentPositionAsLogicalOrigin(&error),
+        "setting logical origin must be rejected while print ownership is active");
+    expect(api.currentPositionSetCounts.value(1) == xSetWhilePrinting
+            && api.currentPositionSetCounts.value(0) == ySetWhilePrinting,
+        "rejected active-print origin request must not alter either axis coordinate");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -511,6 +644,9 @@ int main(int argc, char** argv)
     testSdkOwnershipIsExclusive();
     testSnapshotsAndExplicitStops();
     testPrintReadinessUsesLiveHardwareState();
+    testSlowXReturnUsesItsOwnMotionBudget();
+    testReadyStateOriginReturnTemporarilyOwnsPrintMotion();
+    testMappedPositionsAndLogicalOrigin();
     qInfo() << "All IMC60G motion tests passed.";
     return 0;
 }

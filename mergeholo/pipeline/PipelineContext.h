@@ -3,12 +3,15 @@
 #include "elemental/ElementalMemoryResult.h"
 #include "ModelMoveCameraConfig.h"
 #include "multiview/MultiviewMemoryResult.h"
+#include "PipelineInput.h"
 #include "ResultSaveSettings.h"
 
 #include <filesystem>
 #include <string>
 
 struct HoloConfig {
+    PipelineInputMode inputMode = PipelineInputMode::Camera;
+    std::filesystem::path inputDirectory;
     std::filesystem::path depthInputDir;
     std::filesystem::path depthConfig;
     std::filesystem::path meshConfig;
@@ -35,8 +38,8 @@ struct HoloConfig {
     int viewNameDigits = 3;
     int jpgQuality = 100;
     int elementalWriterThreads = 0;
-    bool elementalFlipSourceY = true;
-    bool elementalFlipViewRows = true;
+    bool elementalFlipSourceY = false;
+    bool elementalFlipViewRows = false;
     ModelMoveCameraConfig multiviewCamera;
 
     bool runDepthPointCloud = true;

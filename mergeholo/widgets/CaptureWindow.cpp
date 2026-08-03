@@ -1,13 +1,20 @@
 #include "CaptureWindow.h"
 
+#include "CaptureOrientation.h"
+#include "DepthMeshModelMemory.h"
 #include "HoloPipeline.h"
+#include "Print9030Dialog.h"
+#include "ProcessingSettingsDialog.h"
+#include "elemental/ElementalMemoryResult.h"
 #include "ui_CaptureWindow.h"
 
 #include <QApplication>
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QCloseEvent>
+#include <QDateTime>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
@@ -16,6 +23,7 @@
 #include <QPushButton>
 #include <QPixmap>
 #include <QSizePolicy>
+#include <QStringList>
 #include <QTextStream>
 #include <QTimer>
 
@@ -149,14 +157,48 @@ QString forwardSlashes(const QString& path)
     return QDir::fromNativeSeparators(path);
 }
 
+QString pathToQString(const std::filesystem::path& path)
+{
+#ifdef _WIN32
+    return QString::fromStdWString(path.wstring());
+#else
+    return QString::fromStdString(path.string());
+#endif
+}
+
+bool sameInputSelection(const PipelineInputSelection& left, const PipelineInputSelection& right)
+{
+    return left.mode == right.mode && left.directory == right.directory;
+}
+
+bool sameCameraSettings(const CameraCaptureSettings& left, const CameraCaptureSettings& right)
+{
+    return left.configDirectory == right.configDirectory
+        && left.exposureMode == right.exposureMode
+        && left.exposureValue == right.exposureValue
+        && left.frameRate == right.frameRate
+        && left.cameraInterface == right.cameraInterface
+        && left.cameraType == right.cameraType
+        && left.cameraId == right.cameraId
+        && left.gpuId == right.gpuId
+        && left.missedFrameThreshold == right.missedFrameThreshold
+        && left.rotation == right.rotation;
+}
+
 } // namespace
 
 CaptureWindow::CaptureWindow(const QString& projectRoot, const QString& cameraConfigPath, QWidget* parent)
     : QMainWindow(parent)
     , projectRoot_(QDir(projectRoot).absolutePath())
-    , cameraConfigPath_(cameraConfigPath)
+    , settingsPaths_(ProcessingSettingsPaths::fromProjectRoot(projectRoot_))
+    , settings_(defaultProcessingSettings(projectRoot_, cameraConfigPath))
 {
     buildUi();
+    QString settingsError;
+    if (!loadProcessingSettings(settingsPaths_, &settings_, &settingsError)) {
+        QMessageBox::warning(this, QString::fromUtf8("读取设置失败"),
+            QString::fromUtf8("将使用内置默认值。\n") + settingsError);
+    }
     setState(State::Starting);
     QTimer::singleShot(0, this, [this] { startCamera(); });
 }
@@ -185,13 +227,7 @@ void CaptureWindow::buildUi()
     captureButton_ = ui_->captureButton;
     confirmButton_ = ui_->confirmButton;
     retakeButton_ = ui_->retakeButton;
-
-    const QList<QPushButton*> buttons = { captureButton_, confirmButton_, retakeButton_ };
-    for (QPushButton* button : buttons) {
-        button->setStyleSheet(
-            "QPushButton { background: #ffffff; border: 2px solid #111111; font-size: 16px; }"
-            "QPushButton:disabled { color: #888888; border-color: #888888; background: #f2f2f2; }");
-    }
+    settingsButton_ = ui_->settingsButton;
 
     frameTimer_ = new QTimer(this);
     frameTimer_->setInterval(30);
@@ -199,31 +235,20 @@ void CaptureWindow::buildUi()
     connect(captureButton_, &QPushButton::clicked, this, [this] { captureFrame(); });
     connect(confirmButton_, &QPushButton::clicked, this, [this] { startProcessing(); });
     connect(retakeButton_, &QPushButton::clicked, this, [this] { resetCapture(); });
+    connect(settingsButton_, &QPushButton::clicked, this, [this] { openProcessingSettings(); });
 }
 
 void CaptureWindow::startCamera()
 {
     releaseCamera();
+    if (settings_.input.isExternal()) {
+        setState(State::Frozen);
+        return;
+    }
     setState(State::Starting);
     setProgress(0, "正在初始化相机");
 
-    LightFieldCapture::HoloInData config;
-    config.iHoloExposeMode = 1;
-    config.iHoloExposeVal = 15000;
-    config.iHoloId = 0;
-    config.dHoloFrameRate = 6.0;
-    config.iHoloMissThreshold = 100;
-    config.bIsReadTeamptureBySerial = false;
-    config.strSerialPort = "";
-    config.iSerialBaudRate = 9600;
-    config.iSerialDataBits = 8;
-    config.iSerialStopBits = 1;
-    config.iSerialParity = 0;
-    config.strParseCfgPath = QDir::toNativeSeparators(cameraConfigPath_).toStdString();
-    std::replace(config.strParseCfgPath.begin(), config.strParseCfgPath.end(), '\\', '/');
-    config.iGpuId = 0;
-    config.strCamSeri = "571";
-    config.strCamType = "Indigo";
+    LightFieldCapture::HoloInData config = makeCameraInput(settings_.camera);
 
     capture_ = std::make_unique<LightFieldCapture>();
     if (!capture_->initialize(&config)) {
@@ -232,7 +257,7 @@ void CaptureWindow::startCamera()
         setState(State::Error);
         setProgress(0, "相机初始化失败");
         QMessageBox::warning(this, "相机初始化失败",
-            "无法初始化相机，请检查相机连接和配置目录:\n" + cameraConfigPath_);
+            "无法初始化相机，请检查相机连接和配置目录:\n" + settings_.camera.configDirectory);
         return;
     }
 
@@ -330,17 +355,32 @@ void CaptureWindow::resetCapture()
 
 void CaptureWindow::startProcessing()
 {
-    if (frozenRgb_.empty() || frozenDepthForPipeline_.empty()) {
+    if (!settings_.input.isExternal()
+        && (frozenRgb_.empty() || frozenDepthForPipeline_.empty())) {
+        return;
+    }
+
+    PipelineInputFiles selectedFiles;
+    QString errorMessage;
+    if (!resolveSelectedInput(&selectedFiles, &errorMessage)) {
+        QMessageBox::warning(this, QString::fromUtf8("输入设置无效"), errorMessage);
         return;
     }
 
     setState(State::Processing);
+    {
+        std::lock_guard<std::mutex> lock(elementalResultMutex_);
+        elementalResult_.reset();
+        resultSaveReport_.reset();
+    }
+    activeResultTimestamp_ = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz");
     confirmTimer_.restart();
     setProgress(1, "保存当前帧");
     releaseCamera();
 
-    QString errorMessage;
-    if (!preparePipelineInput(&errorMessage) || !writePipelineConfig(&errorMessage)) {
+    const bool prepared = settings_.input.isExternal()
+        || preparePipelineInput(&errorMessage);
+    if (!prepared || !writePipelineConfig(&errorMessage)) {
         setState(State::Frozen);
         QMessageBox::critical(this, "准备处理失败", errorMessage);
         return;
@@ -349,12 +389,166 @@ void CaptureWindow::startProcessing()
     startPipelineThread();
 }
 
+void CaptureWindow::openProcessingSettings()
+{
+    const ProcessingSettings previous = settings_;
+    bool cameraReinitialized = false;
+    ProcessingSettingsDialog dialog(this);
+    dialog.setSettings(settings_);
+    dialog.setBusy(state_ == State::Processing || state_ == State::Starting);
+    connect(&dialog, &ProcessingSettingsDialog::printRequested,
+        this, [this, &dialog] {
+            dialog.hide();
+            openPrintSettings();
+            dialog.show();
+        });
+    connect(&dialog, &ProcessingSettingsDialog::cameraTestRequested,
+        this, [this, &dialog](const CameraCaptureSettings& camera) {
+            QString message;
+            const bool success = testCameraConnection(camera, &message);
+            dialog.setCameraTestResult(success, message);
+        });
+    connect(&dialog, &ProcessingSettingsDialog::cameraReinitializeRequested,
+        this, [this, &cameraReinitialized](const CameraCaptureSettings& camera) {
+            settings_.camera = camera;
+            cameraReinitialized = true;
+            startCamera();
+        });
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const ProcessingSettings candidate = dialog.settings();
+    QString errorMessage;
+    if (!saveProcessingSettings(settingsPaths_, candidate, &errorMessage)) {
+        QMessageBox::warning(this, QString::fromUtf8("保存设置失败"), errorMessage);
+        return;
+    }
+    settings_ = candidate;
+
+    if (!sameInputSelection(previous.input, settings_.input)) {
+        if (settings_.input.isExternal()) {
+            if (!applySelectedInput(&errorMessage)) {
+                settings_.input.clear();
+                QMessageBox::warning(this, QString::fromUtf8("输入设置无效"), errorMessage);
+                startCamera();
+            }
+        }
+        else {
+            clearInputSettingsAndResumeCamera();
+        }
+    }
+    else if (!cameraReinitialized && !settings_.input.isExternal()
+        && !sameCameraSettings(previous.camera, settings_.camera)) {
+        startCamera();
+    }
+}
+
+bool CaptureWindow::testCameraConnection(
+    const CameraCaptureSettings& camera,
+    QString* message)
+{
+    const State previousState = state_;
+    releaseCamera();
+
+    LightFieldCapture testCapture;
+    LightFieldCapture::HoloInData config = makeCameraInput(camera);
+    bool success = testCapture.initialize(&config);
+    QString detail;
+    if (!success) {
+        detail = QString::fromUtf8("相机初始化失败，请检查连接、接口和标定方案");
+    }
+    else {
+        QElapsedTimer timeout;
+        timeout.start();
+        while (timeout.elapsed() < 5000) {
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            if (testCapture.hasError()) {
+                success = false;
+                detail = QString::fromStdString(testCapture.lastError());
+                break;
+            }
+            LightFieldCapture::HoloOutData frame;
+            bool receivedFrame = false;
+            while (testCapture.GetHoloOutData(frame)) {
+                receivedFrame = true;
+            }
+            if (receivedFrame && !frame.img2d.empty() && !frame.img3d.empty()) {
+                success = true;
+                detail = QString::fromUtf8("相机连接正常，已收到有效画面");
+                break;
+            }
+            success = false;
+            QThread::msleep(10);
+        }
+        if (!success && detail.isEmpty()) {
+            detail = QString::fromUtf8("相机已初始化，但 5 秒内未收到有效画面");
+        }
+        testCapture.release();
+    }
+
+    if (previousState == State::Live || previousState == State::Frozen) {
+        startCamera();
+        if (previousState == State::Frozen && capture_) {
+            frameTimer_->stop();
+            setPreviewImages(frozenRgb_, frozenDepthDisplay_);
+            setState(State::Frozen);
+        }
+    }
+    else {
+        setState(previousState);
+    }
+    if (message) {
+        *message = detail;
+    }
+    return success;
+}
+
+void CaptureWindow::openPrintSettings()
+{
+    std::shared_ptr<const ElementalMemoryResult> result;
+    {
+        std::lock_guard<std::mutex> lock(elementalResultMutex_);
+        result = elementalResult_;
+    }
+    Print9030Dialog dialog(projectRoot_, this);
+    dialog.setElementalMemoryResult(std::move(result));
+    dialog.exec();
+}
+
+void CaptureWindow::showResultSaveWarnings()
+{
+    std::shared_ptr<ResultSaveReport> report;
+    {
+        std::lock_guard<std::mutex> lock(elementalResultMutex_);
+        report = std::move(resultSaveReport_);
+    }
+    if (!report || !report->hasWarnings()) {
+        return;
+    }
+
+    QStringList warningDetails;
+    for (const ResultSaveWarning& warning : report->warnings()) {
+        const QString outputDirectory = QDir::toNativeSeparators(
+            QString::fromStdWString(warning.outputDirectory.wstring()));
+        warningDetails.append(
+            QString::fromUtf8("%1\n目录：%2\n原因：%3")
+                .arg(QString::fromStdString(warning.resultType))
+                .arg(outputDirectory)
+                .arg(QString::fromLocal8Bit(warning.message.c_str())));
+    }
+
+    QMessageBox::warning(
+        this,
+        QString::fromUtf8("部分结果保存失败"),
+        QString::fromUtf8("打印数据仍可正常使用。以下可选结果未能完整保存：\n\n")
+            + warningDetails.join("\n\n"));
+}
+
 bool CaptureWindow::preparePipelineInput(QString* errorMessage)
 {
-    if (!removeDirectoryIfExists(inputRoot())
-        || !removeDirectoryIfExists(QDir(outputRoot()).filePath("multiview"))
-        || !removeDirectoryIfExists(QDir(outputRoot()).filePath("elemental"))) {
-        *errorMessage = "无法清理旧输出目录:\n" + outputRoot();
+    if (!removeDirectoryIfExists(inputRoot())) {
+        *errorMessage = "无法清理旧输入目录:\n" + inputRoot();
         return false;
     }
     if (!QDir().mkpath(inputRoot())) {
@@ -384,6 +578,91 @@ bool CaptureWindow::preparePipelineInput(QString* errorMessage)
     return true;
 }
 
+bool CaptureWindow::resolveSelectedInput(
+    PipelineInputFiles* files,
+    QString* errorMessage) const
+{
+    if (settings_.input.mode == PipelineInputMode::Multiview) {
+        // The dialog already validated the full grid. The worker validates it
+        // again, off the UI thread, immediately before elemental processing.
+        if (files) {
+            *files = PipelineInputFiles{};
+            files->multiviewDirectory = settings_.input.directory;
+        }
+        return true;
+    }
+
+    std::string validationError;
+    if (!resolvePipelineInput(
+            settings_.input, MultiviewInputSpec{}, files, &validationError)) {
+        if (errorMessage) {
+            *errorMessage = QString::fromUtf8(validationError.c_str());
+        }
+        return false;
+    }
+    return true;
+}
+
+bool CaptureWindow::applySelectedInput(QString* errorMessage)
+{
+    PipelineInputFiles files;
+    if (!resolveSelectedInput(&files, errorMessage)) {
+        return false;
+    }
+    if (settings_.input.mode == PipelineInputMode::Mesh) {
+        MeshMemoryResult meshInput;
+        std::string validationError;
+        if (!loadPipelineMeshInput(files, &meshInput, &validationError)) {
+            if (errorMessage) {
+                *errorMessage = QString::fromUtf8(validationError.c_str());
+            }
+            return false;
+        }
+    }
+
+    releaseCamera();
+    hasLiveFrame_ = false;
+    latestRgb_.release();
+    latestDepthForPipeline_.release();
+    latestDepthDisplay_.release();
+    frozenRgb_.release();
+    frozenDepthForPipeline_.release();
+    frozenDepthDisplay_.release();
+
+    if (settings_.input.mode == PipelineInputMode::RgbDepth) {
+        frozenRgb_ = cv::imread(files.rgbPath.string(), cv::IMREAD_COLOR);
+        frozenDepthForPipeline_ = cv::imread(files.depthPath.string(), cv::IMREAD_UNCHANGED);
+        if (frozenRgb_.empty() || frozenDepthForPipeline_.empty()) {
+            if (errorMessage) {
+                *errorMessage = QString::fromUtf8("无法读取所选 RGB 或深度图文件。");
+            }
+            return false;
+        }
+        frozenDepthDisplay_ = frozenDepthForPipeline_.clone();
+        setPreviewImages(frozenRgb_, frozenDepthDisplay_);
+        setProgress(0, QString::fromUtf8("已选择 RGB、深度图输入，点击确认开始处理"));
+    }
+    else {
+        setPreviewImages(cv::Mat(), cv::Mat());
+        const QString sourceName = settings_.input.mode == PipelineInputMode::Mesh
+            ? QStringLiteral("mesh") : QStringLiteral("multiview");
+        setProgress(0, QString::fromUtf8("已选择 %1 输入，点击确认开始处理").arg(sourceName));
+    }
+
+    setState(State::Frozen);
+    return true;
+}
+
+void CaptureWindow::clearInputSettingsAndResumeCamera()
+{
+    settings_.input.clear();
+    frozenRgb_.release();
+    frozenDepthForPipeline_.release();
+    frozenDepthDisplay_.release();
+    setPreviewImages(cv::Mat(), cv::Mat());
+    startCamera();
+}
+
 bool CaptureWindow::writePipelineConfig(QString* errorMessage)
 {
     if (!QDir().mkpath(outputRoot())) {
@@ -399,11 +678,41 @@ bool CaptureWindow::writePipelineConfig(QString* errorMessage)
     }
 
     QString configText = QString::fromUtf8(templateFile.readAll());
-    configText.replace("{{depth_input_dir}}", forwardSlashes(inputRoot()));
+    const QString selectedDirectory = settings_.input.isExternal()
+        ? cleanPath(pathToQString(settings_.input.directory)) : QString();
+    const QString depthInputDirectory = settings_.input.mode == PipelineInputMode::RgbDepth
+        ? selectedDirectory : inputRoot();
+    configText.replace("{{input_mode}}",
+        QString::fromStdString(pipelineInputModeName(settings_.input.mode)));
+    configText.replace("{{input_dir}}", forwardSlashes(selectedDirectory));
+    configText.replace("{{depth_input_dir}}", forwardSlashes(depthInputDirectory));
     configText.replace("{{depth_config}}", forwardSlashes(QDir(projectRoot_).filePath("config/depth_to_pointcloud_config.cfg")));
     configText.replace("{{mesh_config}}", forwardSlashes(QDir(projectRoot_).filePath("config/mesh_config.cfg")));
     configText.replace("{{output_root}}", forwardSlashes(outputRoot()));
     configText.replace("{{log_file}}", forwardSlashes(pipelineLogPath()));
+    configText.replace("{{save_mesh_result}}", settings_.saveResults.mesh ? "true" : "false");
+    configText.replace("{{save_multiview_result}}", settings_.saveResults.multiview ? "true" : "false");
+    configText.replace("{{save_elemental_result}}", settings_.saveResults.elemental ? "true" : "false");
+    configText.replace("{{result_timestamp}}", activeResultTimestamp_);
+    const PipelineUiSettings& pipeline = settings_.pipeline;
+    configText.replace("{{multiview_camera_distance_scale}}",
+        QString::number(distanceScaleFromSubjectSize(pipeline.subjectSize), 'g', 15));
+    configText.replace("{{multiview_camera_center_offset_x}}", QString::number(pipeline.centerX, 'g', 15));
+    configText.replace("{{multiview_camera_center_offset_y}}", QString::number(pipeline.centerY, 'g', 15));
+    configText.replace("{{multiview_camera_center_offset_z}}", QString::number(pipeline.centerZ, 'g', 15));
+    configText.replace("{{multiview_initial_rotate_x_deg}}", QString::number(pipeline.rotateXDeg, 'g', 15));
+    configText.replace("{{multiview_initial_rotate_z_deg}}", QString::number(pipeline.rotateZDeg, 'g', 15));
+    configText.replace("{{multiview_capture_flip_vertical}}", pipeline.captureFlipVertical ? "true" : "false");
+    configText.replace("{{multiview_angle}}", QString::number(pipeline.multiviewAngle));
+    configText.replace("{{multiview_per}}", QString::number(pipeline.multiviewPer));
+    configText.replace("{{multiview_resolution}}", QString::number(pipeline.multiviewResolution));
+    configText.replace("{{multiview_atlas_size}}", QString::number(pipeline.atlasSize));
+    configText.replace("{{target_rows}}", QString::number(pipeline.targetRows));
+    configText.replace("{{target_cols}}", QString::number(pipeline.targetCols));
+    configText.replace("{{jpg_quality}}", QString::number(pipeline.jpgQuality));
+    configText.replace("{{elemental_writer_threads}}", QString::number(pipeline.writerThreads));
+    configText.replace("{{elemental_flip_source_y}}", pipeline.elementalFlipSourceY ? "true" : "false");
+    configText.replace("{{elemental_flip_view_rows}}", pipeline.elementalFlipViewRows ? "true" : "false");
 
     QFile file(pipelineConfigPath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
@@ -432,6 +741,8 @@ void CaptureWindow::startPipelineThread()
 
     QThread* thread = QThread::create([this, appPath, configPath] {
         try {
+            auto elementalResult = std::make_shared<ElementalMemoryResult>();
+            auto saveReport = std::make_shared<ResultSaveReport>();
             const QByteArray appArg = QFile::encodeName(appPath);
             const QByteArray configArg = QFile::encodeName(configPath);
             QByteArray configName("--config");
@@ -445,7 +756,13 @@ void CaptureWindow::startPipelineThread()
             argv.push_back(stageName.data());
             argv.push_back(stageArg.data());
 
-            const int exitCode = runHoloPipelineCli(static_cast<int>(argv.size()), argv.data());
+            const int exitCode = runHoloPipelineCliWithResult(
+                static_cast<int>(argv.size()), argv.data(), elementalResult.get(), saveReport.get());
+            if (exitCode == 0) {
+                std::lock_guard<std::mutex> lock(elementalResultMutex_);
+                elementalResult_ = std::move(elementalResult);
+                resultSaveReport_ = std::move(saveReport);
+            }
             pipelineExitCode_.store(exitCode);
             pipelineNormalExit_.store(true);
         }
@@ -491,8 +808,9 @@ void CaptureWindow::finishPipelineRun(int exitCode, bool normalExit)
 
     if (normalExit && exitCode == 0) {
         setState(State::Done);
-        setProgress(100, "处理完成，结果已保存到 " + QDir::toNativeSeparators(outputRoot()));
-        QMessageBox::information(this, "处理完成", "结果已保存到:\n" + QDir::toNativeSeparators(outputRoot()));
+        setProgress(100, "处理完成，打印数据已就绪");
+        openPrintSettings();
+        showResultSaveWarnings();
         return;
     }
 
@@ -509,10 +827,12 @@ void CaptureWindow::setState(State state)
     const bool live = state == State::Live;
     const bool frozen = state == State::Frozen;
     const bool doneOrError = state == State::Done || state == State::Error;
+    const bool externalInput = settings_.input.isExternal();
 
-    captureButton_->setEnabled(live && hasLiveFrame_ && !processing);
+    captureButton_->setEnabled(!externalInput && live && hasLiveFrame_ && !processing);
     confirmButton_->setEnabled(frozen && !processing);
-    retakeButton_->setEnabled((frozen || doneOrError) && !processing);
+    retakeButton_->setEnabled(!externalInput && (frozen || doneOrError) && !processing);
+    settingsButton_->setEnabled(!processing && state != State::Starting);
 
     if (state == State::Starting) {
         captureButton_->setEnabled(false);
@@ -560,7 +880,7 @@ void CaptureWindow::renderLabel(QLabel* label, const QImage& image, const QStrin
 
 QString CaptureWindow::outputRoot() const
 {
-    return cleanPath(QDir(projectRoot_).filePath("output"));
+    return cleanPath(settings_.pipeline.outputRoot);
 }
 
 QString CaptureWindow::inputRoot() const

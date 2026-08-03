@@ -4,14 +4,19 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QImage>
 #include <QLabel>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QThread>
 
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 
 namespace {
@@ -42,6 +47,8 @@ public:
     void moveYPositive(double, const PrintAxisConfig& config) override
     { lastMoveConfig = config; commands.append("moveYPositive"); }
     void stopManualMotion() override { commands.append("stopManualMotion"); }
+    void setLogicalOrigin() override { commands.append("setLogicalOrigin"); }
+    void returnToLogicalOrigin() override { commands.append("returnToLogicalOrigin"); }
     void start(const Print9030Config& config, const PrintImageSet&) override
     {
         startedConfig = config;
@@ -53,6 +60,7 @@ public:
 
     void publishState(PrintUiState state) { emit stateChanged(state); }
     void publishError(const QString& detail) { emit errorChanged(detail); }
+    void publishPositions(double x, double y) { emit positionsChanged(x, y); }
     void publishSafeStopCompleted() { emit safeStopCompleted(); }
 };
 
@@ -61,6 +69,17 @@ QPushButton* button(Print9030Dialog& dialog, const char* name)
     QPushButton* result = dialog.findChild<QPushButton*>(name);
     expect(result != nullptr, name);
     return result;
+}
+
+bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 5000)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (!predicate() && timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        QThread::msleep(1);
+    }
+    return predicate();
 }
 
 void testOpeningIsHardwareSilentAndExplicitConnectOwnsStartup()
@@ -140,6 +159,35 @@ void testRetainedButtonsMapOnceAndStatesGateCommands()
     for (PrintUiState state : states) controller.publishState(state);
 }
 
+void testOriginControlsDispatchRenderPositionsAndGateWithState()
+{
+    QTemporaryDir root;
+    RecordingPrintController controller;
+    Print9030Dialog dialog(root.path(), &controller);
+
+    controller.publishState(PrintUiState::Ready);
+    expect(button(dialog, "setOriginButton")->isEnabled(),
+        "set origin is enabled only when ready");
+    expect(button(dialog, "returnOriginButton")->isEnabled(),
+        "return origin is enabled only when ready");
+    button(dialog, "setOriginButton")->click();
+    button(dialog, "returnOriginButton")->click();
+    expect(controller.commands == QStringList({"setLogicalOrigin", "returnToLogicalOrigin"}),
+        "origin controls must dispatch exactly once");
+
+    controller.publishState(PrintUiState::Printing);
+    expect(!button(dialog, "setOriginButton")->isEnabled()
+            && !button(dialog, "returnOriginButton")->isEnabled(),
+        "origin controls must be locked during printing");
+
+    controller.publishPositions(1.234, -5.678);
+    QLabel* xLabel = dialog.findChild<QLabel*>("xPositionLabel");
+    QLabel* yLabel = dialog.findChild<QLabel*>("yPositionLabel");
+    expect(xLabel && xLabel->text() == "X: 1.234 mm"
+            && yLabel && yLabel->text() == "Y: -5.678 mm",
+        "position signals must render three decimal millimeter values");
+}
+
 void testValidSourceAndFieldsRoundTripIntoStart()
 {
     QTemporaryDir root;
@@ -153,6 +201,8 @@ void testValidSourceAndFieldsRoundTripIntoStart()
     Print9030Dialog dialog(root.path(), &controller);
     dialog.setManualImageFolder(root.path());
     controller.publishState(PrintUiState::Ready);
+    expect(waitUntil([&] { return button(dialog, "previewButton")->isEnabled(); }),
+        "manual image folder must finish loading");
     expect(button(dialog, "startButton")->isEnabled(),
         "start is enabled only for Ready with a valid source");
 
@@ -200,6 +250,107 @@ void testValidSourceAndFieldsRoundTripIntoStart()
     }
 }
 
+void testFolderGridMetadataOrdersRrrCccFrames()
+{
+    QTemporaryDir root;
+    expect(root.isValid(), "temporary folder must exist");
+    struct Fixture {
+        const char* name;
+        int red;
+    };
+    const Fixture fixtures[] = {
+        {"002003.bmp", 23}, {"001002.bmp", 12}, {"002001.bmp", 21},
+        {"001001.bmp", 11}, {"002002.bmp", 22}, {"001003.bmp", 13}
+    };
+    for (const Fixture& fixture : fixtures) {
+        QImage image(1, 1, QImage::Format_RGB32);
+        image.fill(qRgb(fixture.red, 0, 0));
+        expect(image.save(QDir(root.path()).filePath(fixture.name)),
+            "grid fixture image must save");
+    }
+
+    QString error;
+    const PrintImageFolderLoadResult result =
+        loadPrintImagesFromFolderWithGridInfo(root.path(), &error);
+    expect(error.isEmpty() && result.images.isValid(), "RRRCCC folder must load");
+    expect(result.hasInferredGrid() && result.gridRows == 2 && result.gridColumns == 3,
+        "RRRCCC folder must infer its complete grid dimensions");
+    const int expectedRed[] = {11, 12, 13, 21, 22, 23};
+    for (int index = 0; index < 6; ++index) {
+        PrintFrame frame;
+        expect(result.images.copyFrame(index, &frame, &error) && frame.isValid(),
+            "inferred grid frame must be available");
+        expect(static_cast<unsigned char>(frame.pixels.at(2)) == expectedRed[index],
+            "inferred grid frames must be row-major");
+    }
+}
+
+void testFolderGridMetadataLeavesManualDimensionsForOrdinaryNames()
+{
+    QTemporaryDir root;
+    expect(root.isValid(), "temporary folder must exist");
+    QImage image(1, 1, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    expect(image.save(QDir(root.path()).filePath("front.bmp")),
+        "ordinary fixture image must save");
+    expect(image.save(QDir(root.path()).filePath("back.bmp")),
+        "ordinary fixture image must save");
+
+    QString error;
+    const PrintImageFolderLoadResult result =
+        loadPrintImagesFromFolderWithGridInfo(root.path(), &error);
+    expect(error.isEmpty() && result.images.isValid(), "ordinary folder must load");
+    expect(!result.hasInferredGrid() && !result.gridWarning.isEmpty(),
+        "ordinary folder names must leave manual grid dimensions in place");
+}
+
+void testManualFolderLoadsAsynchronouslyAndAlignsPrintParameters()
+{
+    QTemporaryDir root;
+    expect(root.isValid(), "temporary folder must exist");
+    const char* names[] = {"002003.bmp", "001002.bmp", "002001.bmp",
+        "001001.bmp", "002002.bmp", "001003.bmp"};
+    for (const char* name : names) {
+        QImage image(1, 1, QImage::Format_RGB32);
+        image.fill(Qt::white);
+        expect(image.save(QDir(root.path()).filePath(QString::fromLatin1(name))),
+            "dialog grid fixture image must save");
+    }
+
+    RecordingPrintController controller;
+    Print9030Dialog dialog(root.path(), &controller);
+    dialog.show();
+    controller.publishState(PrintUiState::Ready);
+    QCoreApplication::processEvents();
+    dialog.setManualImageFolder(root.path());
+    expect(!button(dialog, "startButton")->isEnabled(),
+        "Start must stay disabled while a folder is loading");
+    expect(!button(dialog, "previewButton")->isEnabled(),
+        "Preview must stay disabled while a folder is loading");
+    expect(!button(dialog, "browseFolderButton")->isEnabled(),
+        "folder selection must stay disabled while a folder is loading");
+    expect(waitUntil([&] { return button(dialog, "previewButton")->isEnabled(); }),
+        "folder loading must complete through the event loop");
+
+    expect(dialog.findChild<QRadioButton*>("folderSourceRadio")->isChecked(),
+        "completed folder load must select the folder source");
+    expect(dialog.findChild<QSpinBox*>("gridRowsSpin")->value() == 2,
+        "recognized row count must populate the dialog");
+    expect(dialog.findChild<QSpinBox*>("gridColumnsSpin")->value() == 3,
+        "recognized column count must populate the dialog");
+
+    auto* rowSpacing = dialog.findChild<QDoubleSpinBox*>("rowSpacingSpin");
+    auto* columnSpacing = dialog.findChild<QDoubleSpinBox*>("columnSpacingSpin");
+    auto* rows = dialog.findChild<QSpinBox*>("gridRowsSpin");
+    auto* columns = dialog.findChild<QSpinBox*>("gridColumnsSpin");
+    expect(rowSpacing->geometry().x() < columnSpacing->geometry().x()
+            && rowSpacing->geometry().y() == columnSpacing->geometry().y(),
+        "spacing editors must share a row");
+    expect(rows->geometry().x() < columns->geometry().x()
+            && rows->geometry().y() == columns->geometry().y(),
+        "grid-count editors must share a row");
+}
+
 void testCloseDuringPrintWaitsForSafeStopCompletion()
 {
     QTemporaryDir root;
@@ -222,7 +373,11 @@ int main(int argc, char* argv[])
     QApplication application(argc, argv);
     testOpeningIsHardwareSilentAndExplicitConnectOwnsStartup();
     testRetainedButtonsMapOnceAndStatesGateCommands();
+    testOriginControlsDispatchRenderPositionsAndGateWithState();
     testValidSourceAndFieldsRoundTripIntoStart();
+    testFolderGridMetadataOrdersRrrCccFrames();
+    testFolderGridMetadataLeavesManualDimensionsForOrdinaryNames();
+    testManualFolderLoadsAsynchronouslyAndAlignsPrintParameters();
     testCloseDuringPrintWaitsForSafeStopCompletion();
     std::cout << "print 9030 dialog tests passed" << std::endl;
     return 0;

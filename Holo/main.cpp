@@ -73,6 +73,7 @@ struct HoloConfig {
 
 struct CliOptions {
     fs::path configPath;
+    fs::path inputPath;
     std::string stage = "all";
     bool dryRun = false;
     bool showHelp = false;
@@ -293,6 +294,21 @@ bool shouldRunStage(const CliOptions& options, const std::string& stageName) {
     return options.stage == "all" || options.stage == stageName;
 }
 
+fs::path meshOutputPath(const HoloConfig& config, const fs::path& inputPath) {
+    std::string baseName = inputPath.filename().string();
+    const std::string suffix = "_rgb.ply";
+    const std::string lowerName = lower(baseName);
+    if (lowerName.size() >= suffix.size()
+        && lowerName.compare(lowerName.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        baseName = baseName.substr(0, baseName.size() - suffix.size());
+    }
+    else {
+        baseName = inputPath.stem().string();
+    }
+
+    return config.depthInputDir / (baseName + "_mesh.ply");
+}
+
 struct StageTiming {
     std::string name;
     double seconds;
@@ -429,6 +445,56 @@ void printTimingSummary(const std::vector<StageTiming>& timings) {
     std::cout << "[timing] total measured: " << formatSeconds(total) << "s" << std::endl;
 }
 
+void printMultiviewTimingBucket(
+    const std::string& label,
+    const MultiviewTimingBucket& bucket,
+    double totalFrameSeconds) {
+    if (bucket.count == 0) {
+        std::cout << "[multiview]   " << std::left << std::setw(18) << label << std::right
+                  << " count=0" << std::endl;
+        return;
+    }
+
+    const double percent = totalFrameSeconds > 0.0
+        ? bucket.totalSeconds * 100.0 / totalFrameSeconds
+        : 0.0;
+    std::cout << "[multiview]   " << std::left << std::setw(18) << label << std::right
+              << " count=" << bucket.count
+              << ", total=" << formatSeconds(bucket.totalSeconds) << "s"
+              << ", avg=" << formatSeconds(bucket.averageSeconds()) << "s"
+              << ", max=" << formatSeconds(bucket.maxSeconds) << "s"
+              << ", frame%=" << std::fixed << std::setprecision(1) << percent
+              << std::endl;
+}
+
+void printMultiviewTimingSummary(const MultiviewTimingStats& stats) {
+    const double frameTotal = stats.viewerFrame.totalSeconds;
+    const double measuredInsideFrame =
+        stats.readPixels.totalSeconds
+        + stats.rotate.totalSeconds
+        + stats.rowTransition.totalSeconds
+        + stats.imageCopy.totalSeconds
+        + stats.flipVertical.totalSeconds
+        + stats.imageWrite.totalSeconds;
+    const double otherFrameSeconds = std::max(0.0, frameTotal - measuredInsideFrame);
+    const double otherPercent = frameTotal > 0.0 ? otherFrameSeconds * 100.0 / frameTotal : 0.0;
+
+    std::cout << "[multiview] timing detail" << std::endl;
+    std::cout << "[multiview]   saved images=" << stats.savedImages
+              << ", skipped frame events=" << stats.skippedFrames << std::endl;
+    printMultiviewTimingBucket("viewer_frame", stats.viewerFrame, frameTotal);
+    printMultiviewTimingBucket("readPixels", stats.readPixels, frameTotal);
+    printMultiviewTimingBucket("rotate", stats.rotate, frameTotal);
+    printMultiviewTimingBucket("row_transition", stats.rowTransition, frameTotal);
+    printMultiviewTimingBucket("image_copy", stats.imageCopy, frameTotal);
+    printMultiviewTimingBucket("flip_vertical", stats.flipVertical, frameTotal);
+    printMultiviewTimingBucket("image_write_jpg", stats.imageWrite, frameTotal);
+    std::cout << "[multiview]   " << std::left << std::setw(18) << "other_frame_work" << std::right
+              << " total=" << formatSeconds(otherFrameSeconds) << "s"
+              << ", frame%=" << std::fixed << std::setprecision(1) << otherPercent
+              << std::endl;
+}
+
 int runDepthStage(const HoloConfig& config, const CliOptions& options) {
     if (!requireExists(config.depthInputDir, "depth_input_dir")
         || !requireExists(config.depthConfig, "depth_config")) {
@@ -475,35 +541,73 @@ int runDepthStage(const HoloConfig& config, const CliOptions& options) {
     return failed == 0 ? 0 : 1;
 }
 
+int runSingleMeshInput(
+    const HoloConfig& config,
+    const fs::path& inputPath,
+    bool dryRun,
+    const std::string& label) {
+    if (!requireExists(inputPath, label + " input")
+        || !requireExists(config.meshConfig, "mesh_config")) {
+        return 1;
+    }
+
+    const fs::path outputPath = meshOutputPath(config, inputPath);
+    if (dryRun) {
+        std::cout << "[" << label << "] " << inputPath.string()
+                  << " -> " << outputPath.string() << std::endl;
+        return 0;
+    }
+
+    ConverPointCloud converter;
+    std::cout << "[" << label << "] " << inputPath.string() << std::endl;
+    const bool ok = converter.meshAPI(
+        inputPath.string(),
+        config.meshConfig.string(),
+        config.depthInputDir.string());
+    if (!ok) {
+        return 1;
+    }
+    if (!fs::exists(outputPath)) {
+        std::cerr << "[" << label << "] expected output was not created: "
+                  << outputPath.string() << std::endl;
+        return 1;
+    }
+    return 0;
+}
+
+int runMeshOneStage(const HoloConfig& config, const CliOptions& options) {
+    if (options.inputPath.empty()) {
+        std::cerr << "[mesh-one] --input is required." << std::endl;
+        return 1;
+    }
+
+    return runSingleMeshInput(config, options.inputPath, options.dryRun, "mesh-one");
+}
+
 int runMeshStage(const HoloConfig& config, const CliOptions& options) {
     if (!requireExists(config.depthInputDir, "depth_input_dir")
         || !requireExists(config.meshConfig, "mesh_config")) {
         return 1;
     }
 
-    if (options.dryRun) {
-        std::cout << "[mesh] scan " << config.depthInputDir.string()
-                  << " and write *_mesh.ply with " << config.meshConfig.string() << std::endl;
-        return 0;
-    }
-
-    std::list<std::string> files;
-    FileLibrary::getInstance()->getAllSubFiles(config.depthInputDir.string(), files, false, true, false, "_rgb.ply");
-    if (files.empty()) {
-        std::cerr << "[mesh] no *_rgb.ply files found in " << config.depthInputDir.string() << std::endl;
-        return 1;
-    }
-
-    ConverPointCloud converter;
-    int failed = 0;
-    for (const std::string& plyFile : files) {
-        std::cout << "[mesh] " << plyFile << std::endl;
-        if (!converter.meshAPI(plyFile, config.meshConfig.string(), config.depthInputDir.string())) {
-            ++failed;
+    fs::path inputPath = options.inputPath;
+    if (inputPath.empty()) {
+        std::list<std::string> files;
+        FileLibrary::getInstance()->getAllSubFiles(config.depthInputDir.string(), files, false, true, false, "_rgb.ply");
+        if (files.empty()) {
+            std::cerr << "[mesh] no *_rgb.ply files found in "
+                      << config.depthInputDir.string() << std::endl;
+            return 1;
         }
+        if (files.size() > 1) {
+            std::cerr << "[mesh] found " << files.size()
+                      << " *_rgb.ply files; pass --input to choose one." << std::endl;
+            return 1;
+        }
+        inputPath = files.front();
     }
 
-    return failed == 0 ? 0 : 1;
+    return runSingleMeshInput(config, inputPath, options.dryRun, "mesh");
 }
 
 int runModelStage(const HoloConfig& config, const CliOptions& options) {
@@ -617,8 +721,12 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
         return 1;
     }
 
+    const auto createOutputStart = std::chrono::steady_clock::now();
     fs::create_directories(config.multiviewOutDir);
+    std::cout << "[multiview] setup create output dir: "
+              << formatSeconds(elapsedSeconds(createOutputStart)) << "s" << std::endl;
 
+    const auto viewerSetupStart = std::chrono::steady_clock::now();
     osg::ref_ptr<osgViewer::Viewer> viewer = new osgViewer::Viewer;
     viewer->addEventHandler(new osgGA::StateSetManipulator(viewer->getCamera()->getOrCreateStateSet()));
     viewer->addEventHandler(new osgViewer::ThreadingHandler);
@@ -629,23 +737,36 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
     viewer->addEventHandler(new osgViewer::ScreenCaptureHandler);
     viewer->setCameraManipulator(NULL);
     viewer->getCamera()->setClearColor(osg::Vec4f(0.3f, 0.3f, 0.3f, 1.0f));
+    std::cout << "[multiview] setup viewer handlers: "
+              << formatSeconds(elapsedSeconds(viewerSetupStart)) << "s" << std::endl;
 
+    const auto graphicsStart = std::chrono::steady_clock::now();
     if (!setMasterViewerGraphicsContext(viewer.get(), 100, 100, config.multiviewResolution, config.multiviewResolution)) {
         return 1;
     }
+    std::cout << "[multiview] setup graphics context: "
+              << formatSeconds(elapsedSeconds(graphicsStart)) << "s" << std::endl;
 
+    MultiviewTimingStats timingStats;
     osg::ref_ptr<osg::Image> image = new osg::Image;
-    viewer->getCamera()->setPostDrawCallback(new CaptureDrawCallback(image, static_cast<float>(config.multiviewResolution)));
+    viewer->getCamera()->setPostDrawCallback(new CaptureDrawCallback(
+        image,
+        static_cast<float>(config.multiviewResolution),
+        &timingStats));
 
     osg::StateSet* state = viewer->getCamera()->getOrCreateStateSet();
     state->setMode(GL_LIGHTING, osg::StateAttribute::OFF | osg::StateAttribute::PROTECTED);
 
+    const auto readObjStart = std::chrono::steady_clock::now();
     osg::ref_ptr<osg::Node> node = osgDB::readNodeFile(config.meshObj.string());
     if (!node.valid()) {
         std::cerr << "[multiview] cannot read OBJ: " << config.meshObj.string() << std::endl;
         return 1;
     }
+    std::cout << "[multiview] setup read OBJ: "
+              << formatSeconds(elapsedSeconds(readObjStart)) << "s" << std::endl;
 
+    const auto sceneSetupStart = std::chrono::steady_clock::now();
     osg::ref_ptr<osg::Group> group = new osg::Group;
     group->addChild(node.get());
 
@@ -653,12 +774,21 @@ int runMultiviewStage(HoloConfig& config, const CliOptions& options) {
     modelMoveHandler* handler = new modelMoveHandler(
         viewer.get(), group.get(), outDir, image.get(), config.modelType,
         static_cast<float>(config.multiviewAngle), static_cast<float>(config.multiviewPer),
-        config.multiviewCamera);
+        config.multiviewCamera,
+        &timingStats);
     viewer->addEventHandler(handler);
+    std::cout << "[multiview] setup scene and handler: "
+              << formatSeconds(elapsedSeconds(sceneSetupStart)) << "s" << std::endl;
 
+    const auto frameLoopStart = std::chrono::steady_clock::now();
     while (!viewer->done()) {
+        const auto frameStart = std::chrono::steady_clock::now();
         viewer->frame();
+        timingStats.addViewerFrame(elapsedSeconds(frameStart));
     }
+    std::cout << "[multiview] frame loop wall time: "
+              << formatSeconds(elapsedSeconds(frameLoopStart)) << "s" << std::endl;
+    printMultiviewTimingSummary(timingStats);
 
     return handler->isComplete() ? 0 : 1;
 }
@@ -915,7 +1045,8 @@ int runElementalStage(const HoloConfig& config, const CliOptions& options) {
 void printUsage() {
     std::cout << "Holo pipeline\n"
               << "Usage:\n"
-              << "  Holo.exe --config holo_config.ini [--stage all|depth|mesh|model|multiview|elemental] [--dry-run]\n\n"
+              << "  Holo.exe --config holo_config.ini [--stage all|depth|mesh|mesh-one|model|multiview|elemental] [--input file] [--dry-run]\n\n"
+              << "  mesh processes one PLY. Pass --input when depth_input_dir has multiple *_rgb.ply files.\n\n"
               << "Default target setup:\n"
               << "  output_root=output => relative output base directory\n"
               << "  multiview_angle=90, multiview_per=3 => 270x270 view images\n"
@@ -937,6 +1068,9 @@ CliOptions parseCli(int argc, char* argv[]) {
         else if (arg == "--config" && i + 1 < argc) {
             options.configPath = argv[++i];
         }
+        else if (arg == "--input" && i + 1 < argc) {
+            options.inputPath = argv[++i];
+        }
         else if (arg == "--stage" && i + 1 < argc) {
             options.stage = lower(argv[++i]);
         }
@@ -950,6 +1084,11 @@ int runPipeline(HoloConfig& config, const CliOptions& options) {
         printTimingSummary(timings);
         return code;
     };
+
+    if (options.stage == "mesh-one") {
+        const int code = runTimedStage("mesh-one", [&] { return runMeshOneStage(config, options); }, timings);
+        return finish(code);
+    }
 
     if (shouldRunStage(options, "depth") && config.runDepthPointCloud) {
         const int code = runTimedStage("depth", [&] { return runDepthStage(config, options); }, timings);
@@ -998,7 +1137,6 @@ int main(int argc, char* argv[]) {
         std::cerr << "\n[error] Config file not found: " << configPath.string() << std::endl;
         return 1;
     }
-
     try {
         HoloConfig config;
         applyConfig(config, configPath);

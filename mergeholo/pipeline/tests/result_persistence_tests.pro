@@ -19,7 +19,9 @@ SOURCES += \
     test_result_persistence.cpp \
     ../elemental/ElementalMemoryTransform.cpp \
     ../elemental/ElementalProcessor.cpp \
+    ../ExternalDepthOrientation.cpp \
     ../PipelineConfig.cpp \
+    ../PipelineInput.cpp \
     ../PipelineTiming.cpp \
     ../ResultPersistence.cpp \
     ../../vendor/multiview/memoryAtlasPageSink.cpp \
@@ -30,6 +32,8 @@ SOURCES += \
 HEADERS += \
     ../PipelineConfig.h \
     ../PipelineContext.h \
+    ../ExternalDepthOrientation.h \
+    ../PipelineInput.h \
     ../ResultPersistence.h \
     ../ResultSaveSettings.h
 

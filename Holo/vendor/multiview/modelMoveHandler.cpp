@@ -16,11 +16,12 @@ osg::Vec3d normalizedOrDefault(const osg::Vec3d& value, const osg::Vec3d& fallba
 
 } // namespace
 
-modelMoveHandler::modelMoveHandler(osgViewer::Viewer *viewer, osg::Group *pgroup, string &out, osg::Image *pimage, const  string &type, float angle, float per, const ModelMoveCameraConfig& cameraConfig){
+modelMoveHandler::modelMoveHandler(osgViewer::Viewer *viewer, osg::Group *pgroup, string &out, osg::Image *pimage, const  string &type, float angle, float per, const ModelMoveCameraConfig& cameraConfig, MultiviewTimingStats* timingStats){
     m_pImage = pimage;
     m_mt = new osg::MatrixTransform;
     m_strOutDir = out;
     m_cameraConfig = cameraConfig;
+    m_timingStats = timingStats;
     double viewDistance = 0;
     m_mt->addChild(pgroup);
     double radius = m_mt->getBound().radius();
@@ -222,9 +223,13 @@ bool modelMoveHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIAction
 										   }
                                            // Every two frames, write one image.
                                            const int captureFrameInterval = 2;
-										   m_frame++;
+                                           m_frame++;
                                            if (m_frame < captureFrameInterval)
                                            {
+                                               if (m_timingStats != nullptr)
+                                               {
+                                                   m_timingStats->addSkippedFrame();
+                                               }
                                                return false;
                                            }
                                            m_frame = 0;
@@ -246,9 +251,14 @@ bool modelMoveHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIAction
 
                                                //return 0;
 
+                                               const auto rowStart = std::chrono::steady_clock::now();
                                                rotateZ(-m_angle/2);
                                                rotateX(-m_per_angle);
                                                rotateZ(-m_angle/2);
+                                               if (m_timingStats != nullptr)
+                                               {
+                                                   m_timingStats->addRowTransition(multiviewElapsedSeconds(rowStart));
+                                               }
                                                m_rotate = 0;
                                                cout << "m_height:" << m_height << endl;
                                                m_height++;
@@ -256,7 +266,12 @@ bool modelMoveHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIAction
                                            }
 
                                            //rotateXModel();
+                                           const auto rotateStart = std::chrono::steady_clock::now();
                                            rotateZ(m_per_angle);
+                                           if (m_timingStats != nullptr)
+                                           {
+                                               m_timingStats->addRotate(multiviewElapsedSeconds(rotateStart));
+                                           }
                                            m_rotate += 1.0;
 
                                            //保存图片
@@ -293,12 +308,35 @@ bool modelMoveHandler::handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIAction
                                            //ss >> filedir;
 
 										   //cout << filedir << endl;
+                                           const auto copyStart = std::chrono::steady_clock::now();
                                            osg::ref_ptr<osg::Image> outputImage = new osg::Image(*m_pImage, osg::CopyOp::DEEP_COPY_ALL);
+                                           if (m_timingStats != nullptr)
+                                           {
+                                               m_timingStats->addImageCopy(multiviewElapsedSeconds(copyStart));
+                                           }
                                            if (m_cameraConfig.captureFlipVertical)
                                            {
+                                               const auto flipStart = std::chrono::steady_clock::now();
                                                outputImage->flipVertical();
+                                               if (m_timingStats != nullptr)
+                                               {
+                                                   m_timingStats->addFlip(multiviewElapsedSeconds(flipStart));
+                                               }
                                            }
-                                           osgDB::writeImageFile(*outputImage, filedir);//图片写入到当前程序目录下
+                                           const auto writeStart = std::chrono::steady_clock::now();
+                                           const bool wroteImage = osgDB::writeImageFile(*outputImage, filedir);//图片写入到当前程序目录下
+                                           if (m_timingStats != nullptr)
+                                           {
+                                               m_timingStats->addImageWrite(multiviewElapsedSeconds(writeStart));
+                                               if (wroteImage)
+                                               {
+                                                   m_timingStats->addSavedImage();
+                                               }
+                                           }
+                                           if (!wroteImage)
+                                           {
+                                               cout << "[multiview] failed to write image: " << filedir << endl;
+                                           }
                                            num++;
 
     }break;

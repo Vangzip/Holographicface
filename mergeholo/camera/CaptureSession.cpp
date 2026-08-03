@@ -111,7 +111,7 @@ int runCaptureSession(const CaptureSessionOptions& options)
 
     qDebug() << "=== MergeHolo camera capture ===";
     qDebug() << "Save root:" << saveRoot;
-    qDebug() << "Camera config:" << options.cameraConfigPath;
+    qDebug() << "Camera config:" << options.cameraSettings.configDirectory;
     qDebug() << "Min free space:" << options.minFreeSpaceGb << "GB";
     qDebug() << "Save interval:" << options.saveIntervalMs << "ms";
     qDebug() << "Max frames:" << options.maxFrames;
@@ -123,23 +123,7 @@ int runCaptureSession(const CaptureSessionOptions& options)
     }
 
     LightFieldCapture capture;
-    LightFieldCapture::HoloInData config;
-    config.iHoloExposeMode = 1;
-    config.iHoloExposeVal = 15000;
-    config.iHoloId = 0;
-    config.dHoloFrameRate = 6.0;
-    config.iHoloMissThreshold = 100;
-    config.bIsReadTeamptureBySerial = false;
-    config.strSerialPort = "";
-    config.iSerialBaudRate = 9600;
-    config.iSerialDataBits = 8;
-    config.iSerialStopBits = 1;
-    config.iSerialParity = 0;
-    config.strParseCfgPath = QDir::toNativeSeparators(options.cameraConfigPath).toStdString();
-    std::replace(config.strParseCfgPath.begin(), config.strParseCfgPath.end(), '\\', '/');
-    config.iGpuId = 0;
-    config.strCamSeri = "571";
-    config.strCamType = "Indigo";
+    LightFieldCapture::HoloInData config = makeCameraInput(options.cameraSettings);
 
     if (!capture.initialize(&config)) {
         qDebug() << "Camera initialization failed.";

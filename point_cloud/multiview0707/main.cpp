@@ -4,6 +4,7 @@
 #include "memoryFrameSink.h"
 #include "multiviewBatchRenderer.h"
 #include "multiviewRenderPlan.h"
+#include "multiviewMemoryDump.h"
 #include "multiviewGraphicsConfig.h"
 #include <chrono>
 #include <exception>
@@ -87,7 +88,7 @@ int main(int argc, char *argv[]){
     const auto programStart = std::chrono::high_resolution_clock::now();
 
     string dir, file, type, outdir, help, outputMode;
-    int angle = 0, row = 0, resolution = 0;
+    int angle = 0, row = 0, resolution = 0, dumpMemory = 1;
     if (parser(argc, argv, "-h", help) >= 0)
     {
         cout << "-file: model path" << endl;;
@@ -96,6 +97,7 @@ int main(int argc, char *argv[]){
         cout << "-outdir:  out dir  " << endl;;
         cout << "-pre: samples per degree, alias of -per" << endl;;
         cout << "-output: memory or legacy-jpg" << endl;;
+        cout << "-dump-memory: 1 writes memory frames to -outdir after memory render, 0 disables dump" << endl;;
         return 0;
     }
 
@@ -135,9 +137,18 @@ int main(int argc, char *argv[]){
     {
         outputMode = "memory";
     }
+    if (parser(argc, argv, "-dump-memory", dumpMemory) >= 0)
+    {
+
+    }
     if (outputMode != "memory" && outputMode != "legacy-jpg")
     {
         cout << "invalid output mode = " << outputMode << endl;
+        return 1;
+    }
+    if (dumpMemory != 0 && dumpMemory != 1)
+    {
+        cout << "invalid dump-memory = " << dumpMemory << endl;
         return 1;
     }
     if (angle <= 0 || row <= 0 || resolution <= 0)
@@ -329,6 +340,14 @@ int main(int argc, char *argv[]){
             const auto renderCallStart = std::chrono::high_resolution_clock::now();
             MultiviewBatchStats stats = renderer.renderAll();
             const auto renderCallEnd = std::chrono::high_resolution_clock::now();
+            const bool renderComplete = stats.framesRendered == plan.frameCount() &&
+                                        stats.framesCaptured == plan.frameCount() &&
+                                        stats.bytesCaptured == plan.totalBytes();
+            MultiviewMemoryDumpStats dumpStats = {};
+            if (dumpMemory != 0 && renderComplete)
+            {
+                dumpStats = dumpMultiviewMemoryFrames(plan, sink, outdir);
+            }
             const auto endToEndEnd = std::chrono::high_resolution_clock::now();
         const std::chrono::duration<double> endToEndElapsed = endToEndEnd - endToEndStart;
         const std::chrono::duration<double> processElapsed = endToEndEnd - processStart;
@@ -341,6 +360,11 @@ int main(int argc, char *argv[]){
         cout << "multiview_memory_allocate_seconds=" << std::chrono::duration<double>(sinkEnd - sinkStart).count() << endl;
         cout << "multiview_renderer_setup_seconds=" << std::chrono::duration<double>(rendererSetupEnd - rendererSetupStart).count() << endl;
         cout << "multiview_render_call_seconds=" << std::chrono::duration<double>(renderCallEnd - renderCallStart).count() << endl;
+        cout << "multiview_dump_enabled=" << dumpMemory << endl;
+        cout << "multiview_dump_directory=" << outdir << endl;
+        cout << "multiview_dump_frames_written=" << dumpStats.framesWritten << endl;
+        cout << "multiview_dump_write_errors=" << dumpStats.writeErrors << endl;
+        cout << "multiview_dump_seconds=" << dumpStats.seconds << endl;
         cout << "multiview_graphics_pbuffer=" << graphicsConfig.pbuffer << endl;
             cout << "multiview_graphics_double_buffer=" << graphicsConfig.doubleBuffer << endl;
             cout << "multiview_graphics_vsync=" << graphicsConfig.vsync << endl;
@@ -355,9 +379,9 @@ int main(int argc, char *argv[]){
         cout << "multiview_end_to_end_seconds=" << endToEndElapsed.count() << endl;
         cout << "multiview_process_seconds=" << processElapsed.count() << endl;
 
-            if (stats.framesRendered != plan.frameCount() ||
-                stats.framesCaptured != plan.frameCount() ||
-                stats.bytesCaptured != plan.totalBytes())
+            if (!renderComplete ||
+                (dumpMemory != 0 &&
+                 (dumpStats.framesWritten != plan.frameCount() || dumpStats.writeErrors != 0)))
             {
                 return 1;
             }

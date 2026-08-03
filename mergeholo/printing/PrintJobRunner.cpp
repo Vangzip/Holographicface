@@ -368,6 +368,11 @@ bool PrintJobRunner::finishAndCleanup(bool success, const QString& message,
     const bool safelyCancelled = !success && cancelRequested_.load() && safe;
     setState((finalSuccess || safelyCancelled)
             ? PrintJobState::Ready : PrintJobState::Fault);
+    if (!success && cancelRequested_.load(std::memory_order_acquire)) {
+        emit progressChanged(0, safe
+                ? QStringLiteral("Print job cancelled; cleanup verified.")
+                : QStringLiteral("Print job cancelled; cleanup requires attention."));
+    }
     if (errorMessage) *errorMessage = finalSuccess ? QString() : finalMessage;
     emit finished(finalSuccess, finalMessage);
     return finalSuccess;

@@ -6,16 +6,91 @@
 #include "Base.h"
 #include <FileLibrary.h>
 
+#include <chrono>
+#include <cstdint>
+#include <mutex>
+
+
+struct MultiviewTimingBucket
+{
+    std::int64_t count = 0;
+    double totalSeconds = 0.0;
+    double maxSeconds = 0.0;
+
+    void add(double seconds)
+    {
+        ++count;
+        totalSeconds += seconds;
+        if (seconds > maxSeconds)
+        {
+            maxSeconds = seconds;
+        }
+    }
+
+    double averageSeconds() const
+    {
+        return count > 0 ? totalSeconds / static_cast<double>(count) : 0.0;
+    }
+};
+
+struct MultiviewTimingStats
+{
+    void addViewerFrame(double seconds) { add(viewerFrame, seconds); }
+    void addReadPixels(double seconds) { add(readPixels, seconds); }
+    void addRotate(double seconds) { add(rotate, seconds); }
+    void addRowTransition(double seconds) { add(rowTransition, seconds); }
+    void addImageCopy(double seconds) { add(imageCopy, seconds); }
+    void addFlip(double seconds) { add(flipVertical, seconds); }
+    void addImageWrite(double seconds) { add(imageWrite, seconds); }
+
+    void addSkippedFrame()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        ++skippedFrames;
+    }
+
+    void addSavedImage()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        ++savedImages;
+    }
+
+    MultiviewTimingBucket viewerFrame;
+    MultiviewTimingBucket readPixels;
+    MultiviewTimingBucket rotate;
+    MultiviewTimingBucket rowTransition;
+    MultiviewTimingBucket imageCopy;
+    MultiviewTimingBucket flipVertical;
+    MultiviewTimingBucket imageWrite;
+    std::int64_t skippedFrames = 0;
+    std::int64_t savedImages = 0;
+
+private:
+    void add(MultiviewTimingBucket& bucket, double seconds)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        bucket.add(seconds);
+    }
+
+    std::mutex mutex;
+};
+
+
+inline double multiviewElapsedSeconds(std::chrono::steady_clock::time_point start)
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
 
 
 
 //得到抓图
 struct CaptureDrawCallback : public osg::Camera::DrawCallback
 {
-    CaptureDrawCallback(osg::ref_ptr<osg::Image> image, float resolution)
+    CaptureDrawCallback(osg::ref_ptr<osg::Image> image, float resolution, MultiviewTimingStats* timingStats = nullptr)
     {
         _image = image;
         m_resolution = resolution;
+        m_timingStats = timingStats;
         _image->allocateImage(resolution, resolution, 1, GL_RGB, GL_UNSIGNED_BYTE);
     }
 
@@ -34,7 +109,12 @@ struct CaptureDrawCallback : public osg::Camera::DrawCallback
         _image->setInternalTextureFormat(GL_RGB);
 
         //读取像素信息抓图
+        const auto readStart = std::chrono::steady_clock::now();
         _image->readPixels(0, 0, m_resolution, m_resolution, GL_RGB, GL_UNSIGNED_BYTE);
+        if (m_timingStats != nullptr)
+        {
+            m_timingStats->addReadPixels(multiviewElapsedSeconds(readStart));
+        }
         //_image->readPixels(0,0, width, height, GL_RGB, GL_UNSIGNED_BYTE);
 #endif
 
@@ -61,6 +141,7 @@ struct CaptureDrawCallback : public osg::Camera::DrawCallback
 
     osg::ref_ptr<osg::Image> _image;
     float m_resolution;
+    MultiviewTimingStats* m_timingStats;
 };
 
 
@@ -101,7 +182,7 @@ protected:
 class  modelMoveHandler :public osgGA::GUIEventHandler
 {
 public:
-    modelMoveHandler(osgViewer::Viewer *viewer, osg::Group *pgroup, string &nodepath, osg::Image *pimage, const  string &type, float, float, const ModelMoveCameraConfig&);
+    modelMoveHandler(osgViewer::Viewer *viewer, osg::Group *pgroup, string &nodepath, osg::Image *pimage, const  string &type, float, float, const ModelMoveCameraConfig&, MultiviewTimingStats* timingStats = nullptr);
 
     void init(const  string &type, float);
 
@@ -132,6 +213,7 @@ private:
     int m_frame;
     bool m_complete;
     ModelMoveCameraConfig m_cameraConfig;
+    MultiviewTimingStats* m_timingStats;
 
     osgViewer::Viewer *viewer;
 	osg::Vec3d m_modelcenter;

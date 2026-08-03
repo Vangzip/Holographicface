@@ -2,7 +2,9 @@
 #include "CaptureImport.h"
 #include "CaptureSession.h"
 #include "HoloPipeline.h"
+#include "NativeUiStyle.h"
 #include "PrintHardwareProfile.h"
+#include "ProcessingSettingsStore.h"
 
 #include <QApplication>
 #include <QCryptographicHash>
@@ -259,7 +261,15 @@ CaptureSessionOptions captureOptionsFromArgs(const QStringList& args)
 {
     CaptureSessionOptions options;
     options.saveRoot = optionValue(args, "--save-dir", defaultCaptureRoot());
-    options.cameraConfigPath = optionValue(args, "--camera-config", defaultCameraConfig());
+    ProcessingSettings settings = defaultProcessingSettings(projectRoot(), defaultCameraConfig());
+    QString settingsError;
+    if (!loadProcessingSettings(
+            ProcessingSettingsPaths::fromProjectRoot(projectRoot()), &settings, &settingsError)) {
+        qWarning() << "Cannot load unified camera settings:" << settingsError;
+    }
+    options.cameraSettings = settings.camera;
+    options.cameraSettings.configDirectory = optionValue(
+        args, "--camera-config", options.cameraSettings.configDirectory);
     options.minFreeSpaceGb = intOption(args, "--min-free-gb", options.minFreeSpaceGb);
     options.saveIntervalMs = intOption(args, "--save-interval-ms", options.saveIntervalMs);
     options.maxFrames = intOption(args, "--max-frames", options.maxFrames);
@@ -273,6 +283,7 @@ CaptureSessionOptions captureOptionsFromArgs(const QStringList& args)
 int main(int argc, char* argv[])
 {
     QApplication app(argc, argv);
+    applyNativeWindowsUiStyle(app);
     logImc60gStartupDiagnostics();
     const QStringList args = app.arguments();
 

@@ -8,6 +8,7 @@
 #include "MultiviewStage.h"
 #include "PipelineConfig.h"
 #include "PipelineContext.h"
+#include "PipelineInput.h"
 #include "PipelineLogger.h"
 #include "PipelineTiming.h"
 #include "ResultPersistence.h"
@@ -47,11 +48,19 @@ int runPipeline(
     saveReport.clear();
     bool skippedModelForMemoryMultiview = false;
 
-    const bool runDepth = shouldRunStage(options, "depth") && config.runDepthPointCloud;
-    const bool runMesh = shouldRunStage(options, "mesh") && config.runMesh;
-    const bool runModel = shouldRunStage(options, "model") && config.runTexturedModel;
-    const bool willRunMultiview = shouldRunStage(options, "multiview") && config.runMultiview;
-    const bool useDepthMemory = runDepth && runMesh && options.inputPath.empty();
+    const PipelineRunPlan inputPlan = makePipelineRunPlan(config.inputMode);
+    const bool runDepth = shouldRunStage(options, "depth")
+        && config.runDepthPointCloud && inputPlan.depth;
+    const bool runMesh = shouldRunStage(options, "mesh")
+        && config.runMesh && inputPlan.mesh;
+    const bool runModel = shouldRunStage(options, "model")
+        && config.runTexturedModel && inputPlan.model;
+    const bool willRunMultiview = shouldRunStage(options, "multiview")
+        && config.runMultiview && inputPlan.multiview;
+    const bool runElemental = shouldRunStage(options, "elemental")
+        && config.runElemental && inputPlan.elemental;
+    const bool useDepthMemory = runDepth
+        && (inputPlan.readOnlySource || (runMesh && options.inputPath.empty()));
     const bool useMeshForModel = useDepthMemory && runModel;
     const bool useMeshMemory = useDepthMemory && (runModel || willRunMultiview);
 
@@ -79,6 +88,35 @@ int runPipeline(
         const int code = runTimedStage("mesh-one", [&] { return runMeshOneStage(config, options); }, timings);
         return finish(code);
     }
+
+    PipelineInputSelection inputSelection;
+    inputSelection.mode = config.inputMode;
+    inputSelection.directory = config.inputDirectory;
+    MultiviewInputSpec inputSpec;
+    inputSpec.viewRows = config.viewRows;
+    inputSpec.viewCols = config.viewCols;
+    inputSpec.viewNameDigits = config.viewNameDigits;
+    inputSpec.viewWidth = config.multiviewResolution;
+    inputSpec.viewHeight = config.multiviewResolution;
+    PipelineInputFiles inputFiles;
+    std::string inputError;
+    if (!resolvePipelineInput(inputSelection, inputSpec, &inputFiles, &inputError)) {
+        std::cerr << "[input] " << inputError << std::endl;
+        return finish(1);
+    }
+    if (config.inputMode == PipelineInputMode::RgbDepth) {
+        config.depthInputDir = inputFiles.depthPath.parent_path();
+    }
+    if (inputPlan.preloadMesh && willRunMultiview
+        && !loadPipelineMeshInput(inputFiles, &meshMemory, &inputError)) {
+        std::cerr << "[input] " << inputError << std::endl;
+        return finish(1);
+    }
+    std::cout << "[input] mode=" << pipelineInputModeName(config.inputMode);
+    if (inputSelection.isExternal()) {
+        std::cout << ", directory=" << config.inputDirectory.string();
+    }
+    std::cout << std::endl;
 
     if (runDepth) {
         const int code = runTimedStage("depth", [&] {
@@ -154,7 +192,7 @@ int runPipeline(
         meshMemory.clear();
     }
 
-    if (shouldRunStage(options, "elemental") && config.runElemental) {
+    if (runElemental) {
         const int code = runTimedStage("elemental", [&] {
             if (elementalMemory.hasResult()) {
                 std::cout << "[elemental] output already materialized by direct atlas path." << std::endl;

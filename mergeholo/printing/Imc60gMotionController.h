@@ -54,6 +54,9 @@ public:
         QString* errorMessage = nullptr);
     bool readSnapshot(PrintHardwareProfile::LogicalAxis logicalAxis,
         Imc60gAxisSnapshot* snapshot, QString* errorMessage = nullptr);
+    bool readMappedPlannedPositions(int* xPulses, int* yPulses,
+        QString* errorMessage = nullptr);
+    bool setCurrentPositionAsLogicalOrigin(QString* errorMessage = nullptr);
     bool isReadyForPrint() const;
     void setPrintActive(bool active);
 
@@ -73,6 +76,9 @@ public:
     bool returnToLogicalZero(const PrintAxisConfig& xConfig,
         const PrintAxisConfig& yConfig, int timeoutMs,
         QString* errorMessage = nullptr) override;
+    bool returnToLogicalZeroWhenReady(const PrintAxisConfig& xConfig,
+        const PrintAxisConfig& yConfig, int timeoutMs,
+        QString* errorMessage = nullptr);
     bool verifyLogicalZero(QString* errorMessage = nullptr) override;
 
 private:

@@ -1,14 +1,30 @@
 #include "multiviewAtlasRenderer.h"
+#include "multiviewCameraOrbit.h"
 
 #include <osg/Scissor>
 
 #include <chrono>
+#include <cmath>
 #include <stdexcept>
 
 namespace {
 double secondsBetween(std::chrono::high_resolution_clock::time_point start,
                       std::chrono::high_resolution_clock::time_point end) {
     return std::chrono::duration<double>(end - start).count();
+}
+
+osg::Matrixd orbitViewMatrix(const osg::Vec3d& center,
+                             const osg::Vec3d& eyeDirection,
+                             const osg::Vec3d& up,
+                             const osg::Vec3d& right,
+                             double distance,
+                             const MultiviewOrbitAngles& angles)
+{
+    const double yaw = osg::DegreesToRadians(angles.yawDegrees);
+    const double pitch = osg::DegreesToRadians(angles.pitchDegrees);
+    const osg::Vec3d horizontal = eyeDirection * std::cos(yaw) + right * std::sin(yaw);
+    const osg::Vec3d offset = horizontal * std::cos(pitch) + up * std::sin(pitch);
+    return osg::Matrixd::lookAt(center + offset * distance, center, up);
 }
 
 class AtlasCaptureDrawCallback : public osg::Camera::DrawCallback {
@@ -65,21 +81,30 @@ public:
         glPixelStorei(GL_PACK_SKIP_ROWS, 0);
         glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
 
-        const auto readStart = std::chrono::high_resolution_clock::now();
-        unsigned char* pageBuffer = sink_->pageData(pageIndex_);
-        glReadPixels(0,
-                     0,
-                     atlasPlan_.pageWidth(),
-                     atlasPlan_.pageHeight(),
-                     GL_RGB,
-                     GL_UNSIGNED_BYTE,
-                     pageBuffer);
-        const auto readEnd = std::chrono::high_resolution_clock::now();
+        const auto restorePackState = [&]() {
+            glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
+            glPixelStorei(GL_PACK_ROW_LENGTH, previousPackRowLength);
+            glPixelStorei(GL_PACK_SKIP_ROWS, previousPackSkipRows);
+            glPixelStorei(GL_PACK_SKIP_PIXELS, previousPackSkipPixels);
+        };
 
-        glPixelStorei(GL_PACK_ALIGNMENT, previousPackAlignment);
-        glPixelStorei(GL_PACK_ROW_LENGTH, previousPackRowLength);
-        glPixelStorei(GL_PACK_SKIP_ROWS, previousPackSkipRows);
-        glPixelStorei(GL_PACK_SKIP_PIXELS, previousPackSkipPixels);
+        const auto readStart = std::chrono::high_resolution_clock::now();
+        std::chrono::high_resolution_clock::time_point readEnd;
+        try {
+            unsigned char* pageBuffer = sink_->pageData(pageIndex_);
+            glReadPixels(0,
+                         0,
+                         atlasPlan_.pageWidth(),
+                         atlasPlan_.pageHeight(),
+                         GL_RGB,
+                         GL_UNSIGNED_BYTE,
+                         pageBuffer);
+            readEnd = std::chrono::high_resolution_clock::now();
+        } catch (...) {
+            restorePackState();
+            throw;
+        }
+        restorePackState();
 
         if (glGetError() != GL_NO_ERROR) {
             ++readbackErrors_;
@@ -119,8 +144,7 @@ MultiviewAtlasRenderer::MultiviewAtlasRenderer(osgViewer::Viewer* viewer,
       modelTransform_(modelTransform),
       renderPlan_(renderPlan),
       atlasPlan_(atlasPlan),
-      sink_(sink),
-      rotationCenter_() {
+      sink_(sink) {
     if (viewer_ == nullptr) {
         throw std::invalid_argument("viewer must not be null");
     }
@@ -140,28 +164,38 @@ MultiviewAtlasStats MultiviewAtlasRenderer::renderAll() {
         viewer_->realize();
     }
 
-    rotationCenter_ = modelTransform_->getBound().center();
-    buildFrameMatrices();
+    buildFrameViewMatrices();
 
     osg::ref_ptr<osg::Node> originalScene = viewer_->getSceneData();
+    osg::ref_ptr<osg::Camera::DrawCallback> originalPostDrawCallback =
+        viewer_->getCamera()->getPostDrawCallback();
     osg::ref_ptr<AtlasCaptureDrawCallback> captureCallback =
         new AtlasCaptureDrawCallback(atlasPlan_, sink_);
     viewer_->getCamera()->setPostDrawCallback(captureCallback.get());
 
-    for (std::uint64_t pageIndex = 0; pageIndex < atlasPlan_.pageCount(); ++pageIndex) {
-        osg::ref_ptr<osg::Group> pageScene = createPageScene(pageIndex);
-        captureCallback->setPage(pageIndex);
-        viewer_->setSceneData(pageScene.get());
+    const auto restoreViewerState = [&]() {
+        viewer_->getCamera()->setPostDrawCallback(originalPostDrawCallback.get());
+        viewer_->setSceneData(originalScene.get());
+    };
 
-        const auto renderStart = std::chrono::high_resolution_clock::now();
-        viewer_->frame();
-        const auto renderEnd = std::chrono::high_resolution_clock::now();
-        stats.renderSeconds += secondsBetween(renderStart, renderEnd);
-        ++stats.pagesRendered;
+    try {
+        for (std::uint64_t pageIndex = 0; pageIndex < atlasPlan_.pageCount(); ++pageIndex) {
+            osg::ref_ptr<osg::Group> pageScene = createPageScene(pageIndex);
+            captureCallback->setPage(pageIndex);
+            viewer_->setSceneData(pageScene.get());
+
+            const auto renderStart = std::chrono::high_resolution_clock::now();
+            viewer_->frame();
+            const auto renderEnd = std::chrono::high_resolution_clock::now();
+            stats.renderSeconds += secondsBetween(renderStart, renderEnd);
+            ++stats.pagesRendered;
+        }
+    } catch (...) {
+        restoreViewerState();
+        throw;
     }
 
-    viewer_->getCamera()->setPostDrawCallback(NULL);
-    viewer_->setSceneData(originalScene.get());
+    restoreViewerState();
 
     const auto totalEnd = std::chrono::high_resolution_clock::now();
     stats.pageReadbacks = captureCallback->pageReadbacks();
@@ -181,44 +215,46 @@ MultiviewAtlasStats MultiviewAtlasRenderer::renderAll() {
     return stats;
 }
 
-osg::Matrixd MultiviewAtlasRenderer::rotateZ(const osg::Matrixd& matrix,
-                                             double degrees) const {
-    return matrix *
-           osg::Matrixd::translate(-rotationCenter_) *
-           osg::Matrixd::rotate(-osg::DegreesToRadians(degrees), 0, 0, 1) *
-           osg::Matrixd::translate(rotationCenter_);
-}
+void MultiviewAtlasRenderer::buildFrameViewMatrices() {
+    frameViewMatrices_.clear();
+    frameViewMatrices_.reserve(static_cast<std::size_t>(renderPlan_.frameCount()));
 
-osg::Matrixd MultiviewAtlasRenderer::rotateX(const osg::Matrixd& matrix,
-                                             double degrees) const {
-    return matrix *
-           osg::Matrixd::translate(-rotationCenter_) *
-           osg::Matrixd::rotate(osg::DegreesToRadians(degrees), 1, 0, 0) *
-           osg::Matrixd::translate(rotationCenter_);
-}
+    osg::Vec3d eye;
+    osg::Vec3d viewCenter;
+    osg::Vec3d up;
+    viewer_->getCamera()->getViewMatrixAsLookAt(eye, viewCenter, up);
+    const osg::Vec3d orbitCenter = modelTransform_->getBound().center();
+    osg::Vec3d eyeDirection = eye - orbitCenter;
+    const double distance = eyeDirection.length();
+    if (distance <= 0.000001 || up.normalize() <= 0.000001) {
+        throw std::runtime_error("invalid multiview camera basis");
+    }
+    eyeDirection /= distance;
+    osg::Vec3d right = up ^ eyeDirection;
+    if (right.normalize() <= 0.000001) {
+        throw std::runtime_error("multiview camera up is parallel to its eye direction");
+    }
+    up = eyeDirection ^ right;
+    up.normalize();
 
-void MultiviewAtlasRenderer::buildFrameMatrices() {
-    frameMatrices_.clear();
-    frameMatrices_.reserve(static_cast<std::size_t>(renderPlan_.frameCount()));
-
-    osg::Matrixd matrix = modelTransform_->getMatrix();
     for (int row = 0; row < renderPlan_.samplesPerAxis(); ++row) {
-        if (row > 0) {
-            matrix = rotateZ(matrix, -static_cast<double>(renderPlan_.angle()) / 2.0);
-            matrix = rotateX(matrix, -renderPlan_.stepDegrees());
-            matrix = rotateZ(matrix, -static_cast<double>(renderPlan_.angle()) / 2.0);
-        }
-
         for (int column = 0; column < renderPlan_.samplesPerAxis(); ++column) {
-            matrix = rotateZ(matrix, renderPlan_.stepDegrees());
-            frameMatrices_.push_back(matrix);
+            const MultiviewOrbitAngles angles = multiviewOrbitAngles(
+                renderPlan_.angle(),
+                renderPlan_.samplesPerAxis(),
+                renderPlan_.stepDegrees(),
+                row,
+                column);
+            frameViewMatrices_.push_back(
+                orbitViewMatrix(orbitCenter, eyeDirection, up, right, distance, angles));
         }
     }
 }
 
 osg::Camera* MultiviewAtlasRenderer::createTileCamera(
     const MultiviewAtlasTile& tile,
-    const osg::Matrixd& modelMatrix) const {
+    const osg::Matrixd& modelMatrix,
+    const osg::Matrixd& viewMatrix) const {
     osg::ref_ptr<osg::Camera> camera = new osg::Camera;
     camera->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
     camera->setRenderOrder(osg::Camera::NESTED_RENDER);
@@ -226,7 +262,7 @@ osg::Camera* MultiviewAtlasRenderer::createTileCamera(
                                           tile.y,
                                           atlasPlan_.tileSize(),
                                           atlasPlan_.tileSize()));
-    camera->setViewMatrix(viewer_->getCamera()->getViewMatrix());
+    camera->setViewMatrix(viewMatrix);
     camera->setProjectionMatrix(viewer_->getCamera()->getProjectionMatrix());
     camera->setClearColor(viewer_->getCamera()->getClearColor());
     camera->setClearMask(GL_DEPTH_BUFFER_BIT);
@@ -251,7 +287,10 @@ osg::Group* MultiviewAtlasRenderer::createPageScene(std::uint64_t pageIndex) con
     for (std::uint64_t i = 0; i < framesOnPage; ++i) {
         const std::uint64_t frameIndex = firstFrame + i;
         const MultiviewAtlasTile tile = atlasPlan_.tileForFrame(frameIndex);
-        pageRoot->addChild(createTileCamera(tile, frameMatrices_[static_cast<std::size_t>(frameIndex)]));
+        pageRoot->addChild(createTileCamera(
+            tile,
+            modelTransform_->getMatrix(),
+            frameViewMatrices_[static_cast<std::size_t>(frameIndex)]));
     }
 
     return pageRoot.release();

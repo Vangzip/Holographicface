@@ -1,5 +1,6 @@
 #include "../PrintHardwarePreflight.h"
 #include "../PrintJobRunner.h"
+#include "../PrintPositionSampler.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -524,8 +525,11 @@ void testCancelDuringPresentDoesNotAdvanceAnotherVBlank()
     presenter.trace = &trace;
     preflight.trace = &trace;
     PrintJobRunner runner(motion, exposure, presenter, preflight);
+    QVector<int> progress;
     QObject::connect(&runner, &PrintJobRunner::frameAdvanced,
         [&trace](int, int, int logicalFrame) { trace.append("frame:" + QString::number(logicalFrame)); });
+    QObject::connect(&runner, &PrintJobRunner::progressChanged,
+        [&progress](int value, const QString&) { progress.append(value); });
     presenter.onPresent = [&] {
         std::thread caller([&] { runner.cancel(); });
         caller.join();
@@ -542,6 +546,34 @@ void testCancelDuringPresentDoesNotAdvanceAnotherVBlank()
         "cancel must execute common safe cleanup");
     expect(runner.state() == PrintJobState::Ready,
         "safely cancelled connected hardware may return Ready");
+    expect(!progress.isEmpty() && progress.last() == 0,
+        "completed cancellation cleanup must reset progress to zero");
+}
+
+void testCancelledCleanupFailureStillResetsProgress()
+{
+    RecordingMotion motion;
+    RecordingExposure exposure;
+    RecordingPresenter presenter;
+    RecordingPreflight preflight;
+    motion.readiness = readyMotion();
+    exposure.readiness = readyExposure();
+    presenter.readiness = readyPresenter();
+    preflight.result.ok = true;
+    motion.returnZeroOk = false;
+    PrintJobRunner runner(motion, exposure, presenter, preflight);
+    QVector<int> progress;
+    QObject::connect(&runner, &PrintJobRunner::progressChanged,
+        [&progress](int value, const QString&) { progress.append(value); });
+    presenter.onPresent = [&] { runner.cancel(); };
+
+    QString error;
+    expect(!runner.start(makeJob(1, 2), &error),
+        "cancelled job with failed zero return must not report success");
+    expect(runner.state() == PrintJobState::Fault,
+        "failed cancellation cleanup must remain Fault");
+    expect(!progress.isEmpty() && progress.last() == 0,
+        "failed cancellation cleanup must still reset progress to zero");
 }
 
 void testPausedCancelIsDrainedOnlyOnOwnerThread()
@@ -707,6 +739,31 @@ void testIllegalRepeatedCommandsAndDestructionAreBounded()
         "destroying an idle runner must not claim or perform job cleanup");
 }
 
+void testPrintPositionSamplingAndConversion()
+{
+    PrintPositionSampler sampler(100);
+    expect(sampler.isDue(0), "first printing position sample must be due");
+    expect(!sampler.isDue(99), "printing position sample must be throttled below 100 ms");
+    expect(sampler.isDue(100), "printing position sample must be due at 100 ms");
+
+    PrintAxisConfig xAxis;
+    xAxis.subdivision = 40;
+    xAxis.resolution = 50;
+    PrintAxisConfig yAxis;
+    yAxis.subdivision = 20;
+    yAxis.resolution = 25;
+    QPointF millimeters;
+    expect(PrintPositionSampler::toMillimeters(12000, -34000, xAxis, yAxis,
+            &millimeters),
+        "valid planned pulses must convert to millimeters");
+    expect(millimeters == QPointF(6.0, -68.0),
+        "planned-position conversion must preserve axis signs and scales");
+
+    yAxis.resolution = 0;
+    expect(!PrintPositionSampler::toMillimeters(1, 1, xAxis, yAxis, &millimeters),
+        "invalid pulse scale must reject position conversion");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -720,11 +777,13 @@ int main(int argc, char** argv)
     testInvalidTargetScalesFailBeforeRounding();
     testPauseResumeRechecksAndDoesNotDuplicateFrames();
     testCancelDuringPresentDoesNotAdvanceAnotherVBlank();
+    testCancelledCleanupFailureStillResetsProgress();
     testPausedCancelIsDrainedOnlyOnOwnerThread();
     testCleanupAggregatesFailuresAndStillShutsPresenterDown();
     testEveryEngineOperationFailureUsesCommonCleanup();
     testEveryTerminalCleanupFailureIsUnsafe();
     testIllegalRepeatedCommandsAndDestructionAreBounded();
+    testPrintPositionSamplingAndConversion();
     qInfo() << "V2 print engine core tests passed";
     return 0;
 }

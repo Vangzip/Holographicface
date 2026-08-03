@@ -1,4 +1,4 @@
-QT += core gui widgets
+QT += core gui widgets concurrent
 
 CONFIG += c++17 console
 TARGET = mergeholo
@@ -9,6 +9,7 @@ DEFINES += _SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING
 
 SOURCES += \
     apps/mergeholo_main.cpp \
+    camera/CaptureOrientation.cpp \
     camera/CaptureSession.cpp \
     camera/LightFieldCapture.cpp \
     printing/Imc60gApi.cpp \
@@ -17,13 +18,17 @@ SOURCES += \
     printing/PrintHardwarePreflight.cpp \
     printing/PrintFrame.cpp \
     printing/Sv660nExposureController.cpp \
+    printing/V2D3DFramePresenter.cpp \
     printing/V2PrintTiming.cpp \
     printing/PrintConfig.cpp \
+    printing/PrintPositionSampler.cpp \
     printing/PrintImageSource.cpp \
     printing/PrintJobRunner.cpp \
     printing/PrintController.cpp \
     printing/SecondScreenSelection.cpp \
-    printing/V2D3DFramePresenter.cpp \
+    settings/KeyValueConfig.cpp \
+    settings/ProcessingSettings.cpp \
+    settings/ProcessingSettingsStore.cpp \
     vendor/base/FileLibrary.cpp \
     vendor/base/Logger.cpp \
     vendor/multiview/memoryAtlasPageSink.cpp \
@@ -40,9 +45,14 @@ SOURCES += \
     vendor/point_cloud/src/OdmTexturing.cpp \
     vendor/point_cloud/src/poissonmesh.cpp \
     widgets/CaptureWindow.cpp \
-    widgets/Print9030Dialog.cpp
+    widgets/InputSettingsDialog.cpp \
+    widgets/NativeUiStyle.cpp \
+    widgets/Print9030Dialog.cpp \
+    widgets/ProcessingSettingsDialog.cpp \
+    widgets/SaveSettingsDialog.cpp
 
 HEADERS += \
+    camera/CaptureOrientation.h \
     camera/CaptureSession.h \
     camera/FrameChangeDetector.hpp \
     camera/JpICamera.h \
@@ -55,24 +65,29 @@ HEADERS += \
     printing/Imc60gMotionController.h \
     printing/IExposureController.h \
     printing/Sv660nExposureController.h \
-    printing/V2PrintTiming.h \
     printing/IPrintFramePresenter.h \
     printing/IMotionController.h \
     printing/IVBlankWaiter.h \
+    printing/V2PrintTiming.h \
+    printing/V2D3DFramePresenter.h \
     printing/PrintConfig.h \
+    printing/PrintPositionSampler.h \
     printing/PrintHardwarePreflight.h \
     printing/PrintFrame.h \
     printing/PrintImageSource.h \
     printing/PrintJobRunner.h \
     printing/PrintController.h \
     printing/SecondScreenSelection.h \
-    printing/V2D3DFramePresenter.h \
+    settings/KeyValueConfig.h \
+    settings/ProcessingSettings.h \
+    settings/ProcessingSettingsStore.h \
     vendor/base/base.h \
     vendor/base/FileLibrary.h \
     vendor/base/Logger.hpp \
     vendor/multiview/ModelMoveCameraConfig.h \
     vendor/multiview/memoryAtlasPageSink.h \
     vendor/multiview/memoryFrameSink.h \
+    vendor/multiview/multiviewCameraOrbit.h \
     vendor/multiview/multiviewAtlasPlan.h \
     vendor/multiview/multiviewAtlasRenderer.h \
     vendor/multiview/multiviewBatchRenderer.h \
@@ -85,16 +100,24 @@ HEADERS += \
     vendor/point_cloud/include/OdmTexturing.hpp \
     vendor/point_cloud/include/poissonmesh.hpp \
     widgets/CaptureWindow.h \
-    widgets/Print9030Dialog.h
+    widgets/InputSettingsDialog.h \
+    widgets/NativeUiStyle.h \
+    widgets/Print9030Dialog.h \
+    widgets/ProcessingSettingsDialog.h \
+    widgets/SaveSettingsDialog.h
 
 FORMS += \
     ui/CaptureWindow.ui \
-    ui/Print9030Dialog.ui
+    ui/InputSettingsDialog.ui \
+    ui/Print9030Dialog.ui \
+    ui/ProcessingSettingsDialog.ui \
+    ui/SaveSettingsDialog.ui
 
 INCLUDEPATH += \
     apps \
     camera \
     printing \
+    settings \
     widgets \
     vendor/base \
     vendor/multiview \

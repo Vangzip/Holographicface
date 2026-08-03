@@ -170,6 +170,7 @@ xcopy /Y /D /S /I "$(MSBuildProjectDirectory)\..\..\OSG365\bin\osgPlugins-3.6.5\
     <ClInclude Include="modelMoveHandler.h" />
     <ClInclude Include="multiviewBatchRenderer.h" />
     <ClInclude Include="multiviewGraphicsConfig.h" />
+    <ClInclude Include="multiviewMemoryDump.h" />
     <ClInclude Include="multiviewRenderPlan.h" />
     <ClInclude Include="SELibrary.h" />
   </ItemGroup>
@@ -179,6 +180,7 @@ xcopy /Y /D /S /I "$(MSBuildProjectDirectory)\..\..\OSG365\bin\osgPlugins-3.6.5\
     <ClCompile Include="modelMoveHandler.cpp" />
     <ClCompile Include="multiviewBatchRenderer.cpp" />
     <ClCompile Include="multiviewGraphicsConfig.cpp" />
+    <ClCompile Include="multiviewMemoryDump.cpp" />
     <ClCompile Include="multiviewRenderPlan.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="..\base\FileLibrary.cpp" />

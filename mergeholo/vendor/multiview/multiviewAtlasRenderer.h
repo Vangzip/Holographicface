@@ -33,11 +33,10 @@ public:
     MultiviewAtlasStats renderAll();
 
 private:
-    osg::Matrixd rotateZ(const osg::Matrixd& matrix, double degrees) const;
-    osg::Matrixd rotateX(const osg::Matrixd& matrix, double degrees) const;
-    void buildFrameMatrices();
+    void buildFrameViewMatrices();
     osg::Camera* createTileCamera(const MultiviewAtlasTile& tile,
-                                  const osg::Matrixd& modelMatrix) const;
+                                  const osg::Matrixd& modelMatrix,
+                                  const osg::Matrixd& viewMatrix) const;
     osg::Group* createPageScene(std::uint64_t pageIndex) const;
 
     osgViewer::Viewer* viewer_;
@@ -45,8 +44,7 @@ private:
     MultiviewRenderPlan renderPlan_;
     MultiviewAtlasPlan atlasPlan_;
     MemoryAtlasPageSink* sink_;
-    osg::Vec3d rotationCenter_;
-    std::vector<osg::Matrixd> frameMatrices_;
+    std::vector<osg::Matrixd> frameViewMatrices_;
 };
 
 #endif

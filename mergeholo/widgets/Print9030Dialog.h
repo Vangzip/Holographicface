@@ -5,6 +5,7 @@
 #include "elemental/ElementalMemoryResult.h"
 
 #include <QDialog>
+#include <QFutureWatcher>
 #include <QString>
 
 #include <memory>
@@ -34,11 +35,19 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
+    struct FolderLoadCompletion {
+        PrintImageFolderLoadResult source;
+        QString errorMessage;
+        quint64 requestId = 0;
+    };
+
     void loadConfig();
     void saveConfigFromUi();
     void populateUiFromConfig();
     void updateConfigFromUi();
     void updateSourceSummary();
+    void beginFolderLoad(const QString& folderPath);
+    void applyFolderLoadResult();
     void showPreview();
     void browseFolder();
     void startPrint();
@@ -53,6 +62,9 @@ private:
     Print9030Config config_;
     PrintImageSet memoryImages_;
     PrintImageSet folderImages_;
+    QFutureWatcher<FolderLoadCompletion> folderLoadWatcher_;
+    quint64 folderLoadRequestId_ = 0;
+    bool folderLoading_ = false;
     IPrintController* controller_ = nullptr;
     bool ownsController_ = false;
     bool pendingClose_ = false;

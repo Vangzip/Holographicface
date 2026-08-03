@@ -9,15 +9,29 @@ win32:QMAKE_CXXFLAGS += /source-charset:utf-8 /execution-charset:utf-8
 
 INCLUDEPATH += \
     .. \
-    ../../pipeline
+    ../../pipeline \
+    ../../vendor/multiview
 
 SOURCES += \
     test_save_settings_dialog.cpp \
-    ../SaveSettingsDialog.cpp
+    ../InputSettingsDialog.cpp \
+    ../NativeUiStyle.cpp \
+    ../SaveSettingsDialog.cpp \
+    ../../pipeline/PipelineInput.cpp
 
 HEADERS += \
+    ../NativeUiStyle.h \
+    ../InputSettingsDialog.h \
     ../SaveSettingsDialog.h \
+    ../../pipeline/DepthMeshModelMemory.h \
+    ../../pipeline/PipelineInput.h \
     ../../pipeline/ResultSaveSettings.h
 
 FORMS += \
+    ../../ui/InputSettingsDialog.ui \
     ../../ui/SaveSettingsDialog.ui
+
+include(../../Pri/opencv.pri)
+include(../../Pri/holo_pipeline.pri)
+
+LIBS += -lpcl_io -lpcl_io_ply -lpcl_common

@@ -464,51 +464,51 @@ inventory until a caller is added or they are deliberately retired.
 
 | Source | Type or module entries | Role and direct project dependency |
 | --- | --- | --- |
-| `CommonAlgorithm.hpp` | `CCommonAlgorithm`, `Algo` | Header-only generic algorithm/container helpers; base for `CCommonString`. |
-| `CommonMacro.h` | `MessageBoxType`, `QThreadPtr`, macros | Qt/message/logging compatibility macros; references unavailable legacy dialog/logger headers. |
-| `CommonOpencvOperate.hpp` | free-function module | OpenCV convenience operations; external OpenCV boundary. |
-| `CommonString.hpp` | `CCommonString` | String/file conversion helpers built on `CCommonAlgorithm`. |
-| `DataQueue.hpp` | `CDataQueue<T>` | Legacy queue wrapper built on `threadsafe_queue`. |
-| `dataStructure.h` | `H264Frame`, `stHeadElement`, `stH264Head`, `stAudioData` | H.264/audio packet structures. |
-| `FFMpegOpt.hpp` | `CFFMpeg264Opt`, `FrameTail` | H.264 encode/decode helper; depends on retained FFmpeg compatibility layer. |
-| `GpsAlgorithm.hpp` | `SaveGpsOpt` | GPS record helper namespace/module. |
-| `JpCameraInterface.h` | `IJpCameraInterface`, `camera_op_traits`, `_struct_camera_frame` | Generic OpenCV camera-frame interface. |
-| `JpCameraMgr.hpp` | `CJpCameraMgrInterface<CNT>`, `CJpCameraMgr<CNT>` | Legacy camera manager; depends on missing predecessor `AppConfig`/database headers. |
-| `JPColorTable.hpp` | `CColorTable` | Image color-table helper. |
-| `JpCTime.hpp` | `period_traits`, `CJpCTime<T>`, `CJpCTimeMs`, `CJpCTimeUs`, `CJpCTimeSecond`, `JpCtime` | Clock, period, timeout, and formatting helpers. |
-| `JpFFMpegDecoder.hpp` | `JpFFMpegDecoder`, `DecodeContext` | FFmpeg decoder adapter; depends on a predecessor decoder interface not present here. |
-| `NewTec.hpp` | `nonesuch`, `detector`, `is_detected`, `detected_t`, `is_template_of`, `is_all_of`, `is_one_of` | C++ detection-idiom templates and member-detection macros. |
-| `PointcloudFunction.hpp`, `PointcloudOperate.hpp` | free-function modules | Legacy PCL registration and point-cloud convenience functions. |
-| `PrjSetting.hpp` | `CInfoMgrBase`, `CSettingInfo` | Legacy project-settings manager. |
-| `QImageCVMat.hpp` | conversion module | Qt `QImage` and OpenCV `cv::Mat` conversion helpers. |
-| `RigidTrans3D.hpp` | `TRigidTrans3D` | Rigid 3D transform structure. |
-| `Setting.hpp` | `CInfoMgrBase`, `CSettingInfo` | Alternate legacy settings manager using `Singleton`; overlaps `PrjSetting.hpp`. |
-| `Singleton.hpp` | `Singleton<T>` | Header-only singleton wrapper. |
-| `StructDef.h` | `stCameraParam`, `stSteoroParam`, `stDispalyCard`, `stRGBD` | Camera/stereo/display/RGBD parameter structures. |
-| `DatabaseInterface/DbCommonHeader.h` | aggregation module | Shared database include/namespace setup. |
-| `DatabaseInterface/DbInterface.hpp` | `CDbInterface` | Abstract SQL/database interface for entity access. |
-| `DatabaseInterface/DbLogicBase.hpp` | `CDbLogicBase` | Templated database business-logic base over `CDbInterface`. |
-| `DatabaseInterface/EntityBase.hpp` | `CEntityBase` | Base entity mapping/serialization contract. |
-| `DatabaseInterface/RecordsetMgr.hpp` | `CRecordsetMgr` | Database result-set manager. |
-| `DbMgr.hpp` | `CDbMgr<T>` | Database manager wrapper used by the Qt database adapter. |
-| `DbEntity/EntityCalibSetting.hpp` | `CEntityCalibSetting` | Calibration-settings entity derived from `CEntityBase`. |
-| `DbEntity/EntityExtrinsic.hpp` | `CEntityExtrinsic` | Extrinsic-calibration entity derived from `CEntityBase`. |
-| `DbEntity/EntityIntrinsic.hpp` | `CEntityIntrinsic` | Intrinsic-calibration entity derived from `CEntityBase`. |
-| `DbEntity/EntityUser.hpp` | `CEntityUser` | User entity derived from `CEntityBase`. |
-| `DbEntity/DatabaseEntityHeader.h` | aggregation module | Includes calibration/user entity declarations. |
-| `DbEntity/EntityImpl/EntityCamera.hpp` | `CEntityCamera` | Camera entity derived from `CEntityBase`. |
-| `DbEntity/EntityImpl/EntityCameraGroup.hpp` | `CEntityCameraGroup` | Camera-group entity derived from `CEntityBase`. |
-| `DbEntity/EntityImpl/EntityCommon.hpp` | `CEntityCommon` | Common-key/value entity derived from `CEntityBase`. |
-| `DbEntity/EntityImpl/EntityImage.hpp` | `CEntityImage` | Image entity derived from `CEntityBase`. |
-| `DbEntity/EntityImpl/EntityRtMatrix.hpp` | `CEntityRtMatrix` | Rigid-transform matrix entity derived from `CEntityBase`. |
-| `DbEntity/EntityImpl/Entitysqlitesequence.hpp` | `CEntitysqlitesequence` | SQLite sequence entity derived from `CEntityBase`. |
-| `QtCommon/CommonQtCtrlOperate.hpp` | `CCommonQtCtrlOperate`, `CQtCtrlOpt` | Qt widget-control convenience operations. |
-| `QtCommon/QtDbMgr.hpp` | `CQtDbMgr` | Qt-specialized database manager over `CDbMgr<CDbLogic>`. |
-| `QtCommon/qtfileoperate.hpp` | `CQtFileOperate` | Qt file-system utility wrapper. |
-| `QtCommon/qtstring.hpp` | `CQtString` | Qt string helper built on `CCommonString`. |
-| `QtCommon/SettingMgr.hpp` | `CSettingMgr` | Legacy Qt settings manager. |
-| `QtCommon/TabManager.hpp` | `CMainpageManager<T>`, `CButtonMenuManager`, `CTabManager` | Qt page/button/tab navigation managers. |
-| `QtCommon/TimeOut.hpp` | `CTimeout`, `CWaitCondition<T>`, `COnlyWait`, `CWait30S`, `CWait10S`, `CWaitForever`, `CWaitNone` | Compile-time timeout/wait helpers. |
+| `camera/CommonFiles/CommonAlgorithm.hpp` | `CCommonAlgorithm`, `Algo` | Header-only generic algorithm/container helpers; base for `CCommonString`. |
+| `camera/CommonFiles/CommonMacro.h` | `MessageBoxType`, `QThreadPtr`, macros | Qt/message/logging compatibility macros; references unavailable legacy dialog/logger headers. |
+| `camera/CommonFiles/CommonOpencvOperate.hpp` | free-function module | OpenCV convenience operations; external OpenCV boundary. |
+| `camera/CommonFiles/CommonString.hpp` | `CCommonString` | String/file conversion helpers built on `CCommonAlgorithm`. |
+| `camera/CommonFiles/DataQueue.hpp` | `CDataQueue<T>` | Legacy queue wrapper built on `threadsafe_queue`. |
+| `camera/CommonFiles/dataStructure.h` | `H264Frame`, `stHeadElement`, `stH264Head`, `stAudioData` | H.264/audio packet structures. |
+| `camera/CommonFiles/FFMpegOpt.hpp` | `CFFMpeg264Opt`, `FrameTail` | H.264 encode/decode helper; depends on retained FFmpeg compatibility layer. |
+| `camera/CommonFiles/GpsAlgorithm.hpp` | `SaveGpsOpt` | GPS record helper namespace/module. |
+| `camera/CommonFiles/JpCameraInterface.h` | `IJpCameraInterface`, `camera_op_traits`, `_struct_camera_frame` | Generic OpenCV camera-frame interface. |
+| `camera/CommonFiles/JpCameraMgr.hpp` | `CJpCameraMgrInterface<CNT>`, `CJpCameraMgr<CNT>` | Legacy camera manager; depends on missing predecessor `AppConfig`/database headers. |
+| `camera/CommonFiles/JPColorTable.hpp` | `CColorTable` | Image color-table helper. |
+| `camera/CommonFiles/JpCTime.hpp` | `period_traits`, `CJpCTime<T>`, `CJpCTimeMs`, `CJpCTimeUs`, `CJpCTimeSecond`, `JpCtime` | Clock, period, timeout, and formatting helpers. |
+| `camera/CommonFiles/JpFFMpegDecoder.hpp` | `JpFFMpegDecoder`, `DecodeContext` | FFmpeg decoder adapter; depends on a predecessor decoder interface not present here. |
+| `camera/CommonFiles/NewTec.hpp` | `nonesuch`, `detector`, `is_detected`, `detected_t`, `is_template_of`, `is_all_of`, `is_one_of` | C++ detection-idiom templates and member-detection macros. |
+| `camera/CommonFiles/PointcloudFunction.hpp`, `camera/CommonFiles/PointcloudOperate.hpp` | free-function modules | Legacy PCL registration and point-cloud convenience functions. |
+| `camera/CommonFiles/PrjSetting.hpp` | `CInfoMgrBase`, `CSettingInfo` | Legacy project-settings manager. |
+| `camera/CommonFiles/QImageCVMat.hpp` | conversion module | Qt `QImage` and OpenCV `cv::Mat` conversion helpers. |
+| `camera/CommonFiles/RigidTrans3D.hpp` | `TRigidTrans3D` | Rigid 3D transform structure. |
+| `camera/CommonFiles/Setting.hpp` | `CInfoMgrBase`, `CSettingInfo` | Alternate legacy settings manager using `Singleton`; overlaps `PrjSetting.hpp`. |
+| `camera/CommonFiles/Singleton.hpp` | `Singleton<T>` | Header-only singleton wrapper. |
+| `camera/CommonFiles/StructDef.h` | `stCameraParam`, `stSteoroParam`, `stDispalyCard`, `stRGBD` | Camera/stereo/display/RGBD parameter structures. |
+| `camera/CommonFiles/DatabaseInterface/DbCommonHeader.h` | aggregation module | Shared database include/namespace setup. |
+| `camera/CommonFiles/DatabaseInterface/DbInterface.hpp` | `CDbInterface` | Abstract SQL/database interface for entity access. |
+| `camera/CommonFiles/DatabaseInterface/DbLogicBase.hpp` | `CDbLogicBase` | Templated database business-logic base over `CDbInterface`. |
+| `camera/CommonFiles/DatabaseInterface/EntityBase.hpp` | `CEntityBase` | Base entity mapping/serialization contract. |
+| `camera/CommonFiles/DatabaseInterface/RecordsetMgr.hpp` | `CRecordsetMgr` | Database result-set manager. |
+| `camera/CommonFiles/DbMgr.hpp` | `CDbMgr<T>` | Database manager wrapper used by the Qt database adapter. |
+| `camera/CommonFiles/DbEntity/EntityCalibSetting.hpp` | `CEntityCalibSetting` | Calibration-settings entity derived from `CEntityBase`. |
+| `camera/CommonFiles/DbEntity/EntityExtrinsic.hpp` | `CEntityExtrinsic` | Extrinsic-calibration entity derived from `CEntityBase`. |
+| `camera/CommonFiles/DbEntity/EntityIntrinsic.hpp` | `CEntityIntrinsic` | Intrinsic-calibration entity derived from `CEntityBase`. |
+| `camera/CommonFiles/DbEntity/EntityUser.hpp` | `CEntityUser` | User entity derived from `CEntityBase`. |
+| `camera/CommonFiles/DbEntity/DatabaseEntityHeader.h` | aggregation module | Includes calibration/user entity declarations. |
+| `camera/CommonFiles/DbEntity/EntityImpl/EntityCamera.hpp` | `CEntityCamera` | Camera entity derived from `CEntityBase`. |
+| `camera/CommonFiles/DbEntity/EntityImpl/EntityCameraGroup.hpp` | `CEntityCameraGroup` | Camera-group entity derived from `CEntityBase`. |
+| `camera/CommonFiles/DbEntity/EntityImpl/EntityCommon.hpp` | `CEntityCommon` | Common-key/value entity derived from `CEntityBase`. |
+| `camera/CommonFiles/DbEntity/EntityImpl/EntityImage.hpp` | `CEntityImage` | Image entity derived from `CEntityBase`. |
+| `camera/CommonFiles/DbEntity/EntityImpl/EntityRtMatrix.hpp` | `CEntityRtMatrix` | Rigid-transform matrix entity derived from `CEntityBase`. |
+| `camera/CommonFiles/DbEntity/EntityImpl/Entitysqlitesequence.hpp` | `CEntitysqlitesequence` | SQLite sequence entity derived from `CEntityBase`. |
+| `camera/CommonFiles/QtCommon/CommonQtCtrlOperate.hpp` | `CCommonQtCtrlOperate`, `CQtCtrlOpt` | Qt widget-control convenience operations. |
+| `camera/CommonFiles/QtCommon/QtDbMgr.hpp` | `CQtDbMgr` | Qt-specialized database manager over `CDbMgr<CDbLogic>`. |
+| `camera/CommonFiles/QtCommon/qtfileoperate.hpp` | `CQtFileOperate` | Qt file-system utility wrapper. |
+| `camera/CommonFiles/QtCommon/qtstring.hpp` | `CQtString` | Qt string helper built on `CCommonString`. |
+| `camera/CommonFiles/QtCommon/SettingMgr.hpp` | `CSettingMgr` | Legacy Qt settings manager. |
+| `camera/CommonFiles/QtCommon/TabManager.hpp` | `CMainpageManager<T>`, `CButtonMenuManager`, `CTabManager` | Qt page/button/tab navigation managers. |
+| `camera/CommonFiles/QtCommon/TimeOut.hpp` | `CTimeout`, `CWaitCondition<T>`, `COnlyWait`, `CWait30S`, `CWait10S`, `CWaitForever`, `CWaitNone` | Compile-time timeout/wait helpers. |
 
 ## Pipeline
 
@@ -1181,19 +1181,383 @@ build.
 
 ## Maintained Vendor Modules
 
-The maintained vendor type index and Mermaid graphs are maintained in this
-section.
+These directories are named `vendor` for provenance, but their `.cpp` files
+are compiled by `mergeholo.pro` and `PipelineModule.pri`. They are maintained
+application code, not opaque third-party binaries.
+
+### `vendor/base`
+
+#### `base.h` (aggregation module)
+
+Source: `vendor/base/base.h`.
+
+Role: legacy common include/type-alias umbrella for PCL, VTK, OSG, osgEarth,
+OpenCV, Windows, and standard library facilities.
+
+Depends on: PCL/VTK/OSG/osgEarth/OpenCV external headers.
+
+Used by: point-cloud and multiview headers.
+
+Boundary: compilation convenience layer only. It widens dependencies and does
+not own runtime state.
+
+#### `Quate` and `FileLibrary`
+
+Source: `vendor/base/FileLibrary.h`, `vendor/base/FileLibrary.cpp`.
+
+Role: legacy singleton-style filesystem/path/string/time helpers and quaternion
+to Euler conversion.
+
+Depends on: standard/Windows C file APIs.
+
+Used by: depth, mesh, model stages and point-cloud implementation.
+
+Boundary: performs local filesystem access; callers own interpretation of
+returned paths and file lists.
+
+#### `Logger`
+
+Source: `vendor/base/Logger.hpp`, `vendor/base/Logger.cpp`.
+
+Role: buffers stream-style messages and writes them to a file, optionally also
+to console.
+
+Depends on: standard stream/file APIs.
+
+Used by: `OdmTexturing`.
+
+Boundary: owns an in-memory string stream until `printToFile` is called.
+
+### `vendor/point_cloud`
+
+#### `depthImage`
+
+Source: `vendor/point_cloud/include/depth_io.h`,
+`vendor/point_cloud/src/depth_io.cpp`.
+
+Role: parses depth-to-point-cloud parameters, reconstructs colored PCL clouds
+from depth and RGB inputs, and can write PLY output.
+
+Depends on: `base.h`, `FileLibrary`, PCL, OpenCV, and configured depth values.
+
+Used by: `DepthStage`.
+
+Boundary: creates `pcl::PointCloud<PointXYZRGB>` for the in-memory path and
+can persist the logical PLY result for compatibility/output.
+
+#### `ConverPointCloud`
+
+Source: `vendor/point_cloud/include/ConverPointCloud.h`,
+`vendor/point_cloud/src/ConverPointCloud.cpp`.
+
+Role: PCL mesh reconstruction and textured-model facade supporting file and
+in-memory inputs.
+
+Depends on: `OdmTexturing`, `texturemeshPoisson`, `FileLibrary`, PCL/VTK, and
+mesh configuration.
+
+Used by: `MeshStage` and `ModelStage`.
+
+Boundary: `meshAPIFromCloud` accepts/returns PCL geometry without mandatory
+file I/O; legacy `meshAPI`/`modelAPI` retain file-oriented behavior. It
+contains greedy, Poisson, normal-estimation, MLS, and output helpers.
+
+#### `Coords`, `Patch`, `Node`, `OdmTexturing`, and `OdmTexturingException`
+
+Source: `vendor/point_cloud/include/OdmTexturing.hpp`,
+`vendor/point_cloud/src/OdmTexturing.cpp`.
+
+Role: textured mesh/OBJ generation. The three value types model UV patch
+placement; `OdmTexturing` loads mesh/camera data, assigns faces, packs patches,
+creates textures, and writes OBJ/MTL/image output.
+
+Depends on: `modifiedPclFunctions`, `Logger`, `base.h`, PCL texture mapping,
+and source image/camera files.
+
+Used by: `ConverPointCloud::modelAPI*`, hence `ModelStage`.
+
+Boundary: writes model artifacts; exception type carries texturing failures.
+
+#### `modifiedPclFunctions` (module)
+
+Source: `vendor/point_cloud/include/modifiedPclFunctions.hpp`,
+`vendor/point_cloud/src/modifiedPclFunctions.cpp`.
+
+Role: PCL texture-mapping/OBJ export geometry helpers, including UV projection,
+face visibility, and triangle-circle tests.
+
+Depends on: PCL texture mapping.
+
+Used by: `OdmTexturing`.
+
+Boundary: stateless geometry functions; file output is limited to its explicit
+OBJ writer.
+
+#### `texturemeshPoisson`, `cropPoissonMeshToPointCloudHull`, and
+`transferPoissonMeshColors` (module)
+
+Source: `vendor/point_cloud/include/poissonmesh.hpp`,
+`vendor/point_cloud/src/poissonmesh.cpp`.
+
+Role: Poisson mesh postprocessing, hull cropping, and RGB color transfer from
+the source point cloud.
+
+Depends on: `base.h`, `FileLibrary`, PCL, Eigen, OpenCV, and Boost.
+
+Used by: `ConverPointCloud` Poisson reconstruction and mesh tests.
+
+Boundary: accepts PCL geometry and returns transformed PCL meshes; the class
+retains optional source/mesh paths for historical file-oriented operations.
+
+### `vendor/multiview`
+
+#### `ModelMoveCameraConfig` and `MultiviewOrbitAngles`
+
+Source: `vendor/multiview/ModelMoveCameraConfig.h`,
+`vendor/multiview/multiviewCameraOrbit.h`.
+
+Role: camera pose, clipping, initial rotation, vertical-flip options, and one
+row/column's pitch/yaw calculation.
+
+Depends on: OSG vectors and standard exceptions.
+
+Used by: `HoloConfig`, `MultiviewConfig`, `modelMoveHandler`,
+`MultiviewAtlasRenderer`, and camera-orientation tests.
+
+Boundary: pure value/configuration calculations; invalid sampling parameters
+raise `std::out_of_range`.
+
+#### `MultiviewFrame` and `MultiviewRenderPlan`
+
+Source: `vendor/multiview/multiviewRenderPlan.h`,
+`vendor/multiview/multiviewRenderPlan.cpp`.
+
+Role: maps a square angle/per/resolution sampling grid to deterministic frame
+indices, view angles, byte offsets, and total memory size.
+
+Depends on: standard integer/size types.
+
+Used by: atlas plan, sinks, batch/atlas renderers, multiview memory result, and
+elemental transform paths.
+
+Boundary: no rendering or allocation; overflow-safe render-plan arithmetic.
+
+#### `MultiviewAtlasTile` and `MultiviewAtlasPlan`
+
+Source: `vendor/multiview/multiviewAtlasPlan.h`,
+`vendor/multiview/multiviewAtlasPlan.cpp`.
+
+Role: partitions render-plan frames into fixed-size GPU atlas pages and tiles.
+
+Depends on: `MultiviewRenderPlan`.
+
+Used by: atlas sink/renderer, `MultiviewStage`, and direct elemental sink.
+
+Boundary: calculates page/tile memory/layout only; it owns a copy of the
+render plan, not pixel buffers.
+
+#### `MemoryAtlasPageSink` and `MemoryFrameSink`
+
+Source: `vendor/multiview/memoryAtlasPageSink.h`,
+`vendor/multiview/memoryAtlasPageSink.cpp`,
+`vendor/multiview/memoryFrameSink.h`,
+`vendor/multiview/memoryFrameSink.cpp`.
+
+Role: destination contracts/storage for GPU atlas readback. The derived frame
+sink exposes frame-indexed contiguous RGB bytes.
+
+Depends on: atlas/render plans and owned byte arrays.
+
+Used by: `MultiviewAtlasRenderer`, `MultiviewBatchRenderer`,
+`MultiviewStage`, `MultiviewMemoryResult`, and `ElementalProcessor`.
+
+Boundary: sink owns page/frame byte buffers when allocation is requested;
+`ElementalAtlasDirectSink` substitutes a non-frame sink for the experiment.
+
+#### `MultiviewDrawBuffer`, `MultiviewGraphicsConfig`, and
+`makeMultiviewGraphicsConfig` (module)
+
+Source: `vendor/multiview/multiviewGraphicsConfig.h`,
+`vendor/multiview/multiviewGraphicsConfig.cpp`.
+
+Role: describes OSG graphics-context buffer/window/vsync settings for memory
+or display rendering.
+
+Depends on: scalar values only.
+
+Used by: `MultiviewStage`.
+
+Boundary: configuration value only; context construction happens in the stage.
+
+#### `MultiviewBatchStats` and `MultiviewBatchRenderer`
+
+Source: `vendor/multiview/multiviewBatchRenderer.h`,
+`vendor/multiview/multiviewBatchRenderer.cpp`.
+
+Role: legacy per-frame OSG rendering/readback route into `MemoryFrameSink`.
+
+Depends on: OSG `Viewer`/model transform, render plan, and frame sink.
+
+Used by: retained multiview code; atlas rendering is the active stage route.
+
+Boundary: caller owns viewer/model/sink; renderer returns render/readback
+statistics. Private `MemoryCaptureDrawCallback` performs pixel capture.
+
+#### `MultiviewAtlasStats` and `MultiviewAtlasRenderer`
+
+Source: `vendor/multiview/multiviewAtlasRenderer.h`,
+`vendor/multiview/multiviewAtlasRenderer.cpp`.
+
+Role: active page-at-a-time OSG renderer that assigns each view to an atlas
+tile, reads pages back, and publishes sink statistics.
+
+Depends on: OSG, `MultiviewRenderPlan`, `MultiviewAtlasPlan`, and
+`MemoryAtlasPageSink`.
+
+Used by: `MultiviewStage`.
+
+Boundary: caller owns viewer/model/sink; private `AtlasCaptureDrawCallback`
+handles page readback accounting.
+
+#### `CaptureDrawCallback`, `HUDAxis`, and `modelMoveHandler`
+
+Source: `vendor/multiview/modelMoveHandler.h`,
+`vendor/multiview/modelMoveHandler.cpp`.
+
+Role: retained OSG scene helpers: callback readback, HUD camera axis, and model
+transform/camera movement/event handling.
+
+Depends on: `base.h`, `ModelMoveCameraConfig`, `FileLibrary`, OSG/osgGA/osgViewer.
+
+Used by: `MultiviewStage` for the model transform/camera setup; legacy display
+work may use the callback/HUD helpers.
+
+Boundary: manipulates OSG scene graph/viewer state; file-path fields are
+legacy output support rather than the active in-memory pipeline boundary.
+
+### Runtime And Module Dependency Graphs
+
+```mermaid
+flowchart LR
+    Main["apps/mergeholo_main.cpp"] --> UI["widgets/CaptureWindow"]
+    Main --> CliCapture["camera/CaptureSession"]
+    Main --> Import["pipeline/CaptureImport"]
+    Main --> CliPipeline["pipeline/HoloPipeline"]
+    UI --> Settings["settings"]
+    UI --> Capture["camera/LightFieldCapture"]
+    UI --> Pipeline["pipeline/HoloPipeline"]
+    UI --> PrintUI["widgets/Print9030Dialog"]
+    Capture --> JpLF["JpLF v4.1.1 SDK"]
+    CliCapture --> Capture
+    Import --> Pipeline
+    Pipeline --> Depth["DepthStage"] --> PointCloud["vendor/point_cloud"]
+    PointCloud --> Mesh["MeshStage"]
+    Mesh --> Multiview["MultiviewStage"]
+    Multiview --> Render["vendor/multiview"]
+    Render --> Elemental["ElementalStage"]
+    PrintUI --> Controller["printing/PrintController"]
+    Controller --> Runner["PrintJobRunner"]
+    Runner --> Motion["Imc60gMotionController"] --> Imc["IMC60G SDK"]
+    Runner --> Exposure["Sv660nExposureController"] --> Imc
+    Runner --> Present["V2D3DFramePresenter"] --> D3D["Windows D3D/DXGI"]
+```
+
+```mermaid
+flowchart TD
+    Apps["apps"] --> Widgets["widgets"]
+    Apps --> Camera["camera"]
+    Apps --> Pipeline["pipeline"]
+    Apps --> Settings["settings"]
+    Widgets --> Settings
+    Widgets --> Camera
+    Widgets --> Pipeline
+    Widgets --> Printing["printing"]
+    Pipeline --> Base["vendor/base"]
+    Pipeline --> PointCloud["vendor/point_cloud"]
+    Pipeline --> Multiview["vendor/multiview"]
+    Printing --> ImcBoundary["vendor/imc60g SDK boundary"]
+    Camera --> JpLfBoundary["JpLF SDK boundary"]
+    PointCloud --> PclBoundary["PCL, VTK, Eigen, OpenCV"]
+    Multiview --> OsgBoundary["OSG, osgEarth, OpenGL"]
+```
 
 ## External SDK And Library Boundaries
 
-The detailed external boundary index is maintained in this section.
+| Boundary | Project-side owner | Purpose and operational constraint |
+| --- | --- | --- |
+| Qt 5.15 Widgets/Concurrent | `apps`, `widgets`, `settings`, `printing` | UI event loop, forms, threads, concurrent folder load, image/container primitives. Release target is Qt 5.15 MSVC2019 x64. |
+| JpLF v4.1.1 camera SDK | `LightFieldCapture`, `JpICamera.h`, `JpIParse.h`, `mergeholo.pro` | Camera factory/capture/parser ABI. Requires `JP_LF_V4_ROOT` or sibling `holocamera` location plus deployed DLL/config/runtime files. |
+| OpenCV 4.5.0 | camera, capture orientation, frame detection, point cloud modules | Matrix/image processing and camera previews. `Pri/opencv.pri` selects Release/Debug library. |
+| PCL 1.12.1, VTK, Boost, FLANN, OpenNI2, Qhull | point-cloud modules, PCL-to-OSG builder | Depth cloud, reconstruction, mesh/texturing. `Pri/holo_pipeline.pri` fixes the MSVC v142 x64 dependency set. |
+| OSG 3.6.5 and osgEarth/OE32 | multiview modules, `PclMeshOsgBuilder` | Scene graph, off-screen multi-view rendering, atlas readback. Runtime plugins must be deployed. |
+| IMC60G SDK | `IImc60gApi`, `Imc60gApi`, `Pri/imc60g.pri` | x64 card/EtherCAT/axis/SDO calls. Only `Imc60gApi.cpp` calls vendor headers; DLL/lib/header presence is validated at build time. |
+| SV660N exposure behavior | `Sv660nExposureController`, `PrintHardwareProfile` | Uses IMC SDO position compare/DO settings; no separate SDK wrapper. Profile values live in `imc60g_print.ini`. |
+| Windows D3D11/DXGI/D3DCompiler | `V2D3DFramePresenter` | Selected secondary-display presentation and physical vblank diagnostics. Windows-only. |
+| CUDA | `Pri/cuda.pri` | Optional link path. Missing toolkit sets `no_cuda`; current indexed pipeline code does not require CUDA to run. |
+| FFmpeg and Eigen fragments | `Pri/ffmpeg.pri`, `Pri/eigen5.pri`, retained camera/point-cloud headers | Retained local integration fragments. Neither `.pri` is currently included by `mergeholo.pro`; FFmpeg appears only in retained camera compatibility headers. |
+| MSVC v142 x64 runtime | `Pri/common.pri`, `scripts/build.ps1` | Toolset is guarded to VS2019 ABI range. Deployment script copies matching Microsoft CRT DLLs. |
 
 ## Configuration, Scripts, And Tests
 
-The configuration, scripts, and test ownership index is maintained in this
-section.
+### Versioned Runtime Configuration
+
+| File | Owner and role |
+| --- | --- |
+| `config/default_camera.ini` | Default `CameraCaptureSettings` values and camera parser directory; used by `main`/settings fallback. |
+| `config/default_pipeline.ini` | Default CLI/UI pipeline source, output, multiview, elemental, and result-save policy. |
+| `config/ui_pipeline_template.ini` | `CaptureWindow` template expanded with selected settings into a runnable UI pipeline INI. |
+| `config/depth_to_pointcloud_config.cfg` | `depthImage` reconstruction/filter configuration. |
+| `config/mesh_config.cfg` | `ConverPointCloud` reconstruction, normal, and texturing configuration. |
+| `config/print_9030.ini` | User-editable `Print9030Config`: grid, scale, pulse, and axis settings. |
+| `config/imc60g_print.ini` | `PrintHardwareProfile`: card mapping, homing, print pulse geometry, and SV660N SDO profile. |
+| `config/holo_config.merge.ini` | Retained capture-to-pipeline default/compatibility configuration. |
+| `config/holo_config.example.ini` | Example full pipeline configuration. |
+| `config/holo_config.microtest.ini` | Controlled input used by `run_microtest.ps1`. |
+
+### Build, Test, And Acceptance Scripts
+
+| File | Role |
+| --- | --- |
+| `scripts/build.ps1` | qmake/nmake Release or Debug build, compiler fingerprint cleanup, IMC SDK verification, and deployment of Qt/MSVC/camera/PCL/OSG/config runtime dependencies to `00-bin`. It removes obsolete DFJZH runtime DLLs from deployment. |
+| `scripts/run_qmake_test.ps1` | Builds one specified qmake test project under `FF-tmp/qmake-tests`, sets offscreen Qt platform, and executes it. |
+| `scripts/run_microtest.ps1` | Runs deployed executable against microtest configuration, optionally as dry run. |
+| `scripts/test_printing.ps1` | Builds/runs print unit and contract projects, builds the release executable, verifies binary/runtime architecture and deployed print configuration. |
+| `scripts/verify_imc60g_sdk.ps1` | Verifies IMC header/lib/DLL presence, x64 PE architecture, required exports, and optionally deployed DLL hash. |
+| `scripts/run_imc60g_acceptance.ps1` | Operator-gated staged hardware acceptance evidence workflow. It never advances a stage automatically and requires physical safety confirmation/evidence for a pass. |
+
+### Test Project Ownership
+
+| qmake project | Primary verification boundary |
+| --- | --- |
+| `camera/tests/capture_orientation_tests.pro` | RGB/spatial-depth rotation semantics and multiview orientation alignment. |
+| `pipeline/tests/result_persistence_tests.pro` | Input planning, external depth orientation, elemental transform, and best-effort persistence. |
+| `widgets/tests/processing_settings_tests.pro` | Unified settings conversion/persistence and processing dialog signal behavior. |
+| `widgets/tests/save_settings_dialog_tests.pro` | Input/save dialog cancellation and UI style behavior. |
+| `widgets/tests/print9030_dialog_tests.pro` | Print dialog controller wiring, source selection, folder cancellation, and close behavior. |
+| `printing/tests/print_config_tests.pro` | Print configuration/profile loading and validation. |
+| `printing/tests/imc60g_motion_tests.pro` | IMC startup, EtherCAT/servo/homing/motion safety state handling. |
+| `printing/tests/sv660n_exposure_tests.pro` | SDO exposure profile, arm/disarm, polarity, and rollback behavior. |
+| `printing/tests/v2_print_timing_tests.pro` | V2 timing/row cadence plan. |
+| `printing/tests/v2_presenter_contract_tests.pro` | D3D presenter/dispatcher/vblank contracts and reentrancy constraints. |
+| `printing/tests/v2_print_engine_tests.pro` | Preflight and job-runner pause/resume/cancel/cleanup behavior. |
+| `printing/tests/printing_tests.pro` | Retained DFJZH/legacy module coverage; not production build ownership. |
+| `vendor/point_cloud/tests/mesh_reconstruction_tests.pro` | Greedy/Poisson reconstruction, color transfer, memory/file equivalence, and persistence. |
 
 ## Coverage Checklist
 
-The final checklist records all documented source roots, explicit paired-source
-exceptions, and verification commands.
+- Documented maintained roots: `apps`, `camera`, `pipeline`, `printing`,
+  `settings`, `widgets`, `vendor/base`, `vendor/point_cloud`, and
+  `vendor/multiview`.
+- Each production header is named directly or paired with its implementation in
+  the module cards above. Header-only compatibility support is itemized in the
+  `camera/CommonFiles` table.
+- Test sources are represented by their qmake verification projects rather than
+  individual test-fixture classes; generated `moc_*`, `ui_*.h`, test executables,
+  and test Makefiles are excluded.
+- `pipeline/docs/superpowers/**` is project documentation nested beside source,
+  not pipeline source, and is excluded from source-path coverage.
+- Generated/local state excluded from source coverage is listed in
+  `Directory And File Roles` and is governed by `.gitignore`.
+- Final validation commands: `rg --files` coverage comparison, `git diff --check`,
+  targeted key-term checks, and the non-hardware `processing_settings_tests`
+  baseline with Qt runtime paths supplied.

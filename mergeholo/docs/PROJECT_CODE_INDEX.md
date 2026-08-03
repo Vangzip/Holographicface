@@ -512,11 +512,672 @@ inventory until a caller is added or they are deliberately retired.
 
 ## Pipeline
 
-The pipeline type index is maintained in this section.
+### Pipeline Entry, Configuration, And Input
+
+#### `runHoloPipelineCli` and `runHoloPipelineCliWithResult` (module)
+
+Source: `pipeline/HoloPipeline.h`, `pipeline/HoloPipeline.cpp`.
+
+Role: CLI boundary and five-stage orchestrator.
+
+Depends on: config parsing, all `pipeline/stages` modules, input resolution,
+timing/logging, in-memory result types, and result persistence.
+
+Used by: `main` CLI paths and `CaptureWindow` worker thread.
+
+Boundary: parses a `HoloConfig`/`CliOptions`, returns an integer exit code,
+and optionally writes `ElementalMemoryResult` and `ResultSaveReport` for the
+UI. It owns stage order and clears intermediate PCL memory when no longer
+needed.
+
+#### `HoloConfig`, `CliOptions`, and `StageTiming`
+
+Source: `pipeline/PipelineContext.h`.
+
+Role: the pipeline's central configuration, command-line selection, and
+per-stage timing records.
+
+Depends on: `PipelineInputMode`, `ResultSaveSettings`,
+`ModelMoveCameraConfig`, `MultiviewMemoryResult`, and `ElementalMemoryResult`.
+
+Used by: config parser, all stages, logger, persistence, and pipeline entry.
+
+Boundary: `HoloConfig` owns resolved paths, stage switches, dimensions, camera
+pose, output policy, and timestamp; it is mutable where multiview resolves
+derived values.
+
+#### `applyConfig`, `parseCli`, and `printUsage` (module)
+
+Source: `pipeline/PipelineConfig.h`, `pipeline/PipelineConfig.cpp`.
+
+Role: loads the pipeline INI into `HoloConfig`, parses stage/input/dry-run
+arguments, and prints CLI help.
+
+Depends on: `PipelineContext` and filesystem/standard parsing.
+
+Used by: `runHoloPipelineCliWithResult`.
+
+Boundary: converts user text and paths to the typed context; it does not run
+processing stages.
+
+#### `CaptureImportOptions` and `importCaptureForPipeline` (module)
+
+Source: `pipeline/CaptureImport.h`, `pipeline/CaptureImport.cpp`.
+
+Role: normalizes capture-session output into same-stem JPG/TIFF pipeline pairs.
+
+Depends on: Qt filesystem/string utilities.
+
+Used by: `main --import-capture` and `--capture-and-run`.
+
+Boundary: copies from `captureRoot/2d` and `captureRoot/3d` to
+`pipelineInputDir`; overwrite policy is explicit in the options.
+
+#### `PipelineInputMode`, `PipelineInputSelection`, `MultiviewInputSpec`,
+`PipelineInputFiles`, and `PipelineRunPlan`
+
+Source: `pipeline/PipelineInput.h`, `pipeline/PipelineInput.cpp`.
+
+Role: models camera, RGB/depth, mesh, or multiview external input and derives
+which stages must run for that mode.
+
+Depends on: filesystem paths and `MeshMemoryResult` for mesh preload.
+
+Used by: `ProcessingSettings`, `InputSettingsDialog`, `CaptureWindow`,
+`HoloConfig`, and `HoloPipeline`.
+
+Boundary: resolves selected input to concrete paths without mutating source
+data; `loadPipelineMeshInput` only materializes an external mesh in memory.
+
+#### `DepthMemoryResult` and `MeshMemoryResult`
+
+Source: `pipeline/DepthMeshModelMemory.h`.
+
+Role: ownership-safe in-memory handoff objects for the PCL point cloud and
+polygon mesh.
+
+Depends on: PCL `PointXYZRGB`/`PolygonMesh` and filesystem paths.
+
+Used by: depth, mesh, model, multiview, input preload, persistence, and the
+pipeline orchestrator.
+
+Boundary: each records source/output paths plus shared geometry; `clear`
+releases PCL data explicitly to bound memory lifetime between stages.
+
+#### `ExternalDepthOrientationResult` and
+`normalizeExternalDepthPointCloudAxes` (module)
+
+Source: `pipeline/ExternalDepthOrientation.h`,
+`pipeline/ExternalDepthOrientation.cpp`.
+
+Role: correlates depth image axes with reconstructed point-cloud axes and flips
+the cloud when an externally supplied RGB/depth input has opposite orientation.
+
+Depends on: OpenCV and PCL.
+
+Used by: `DepthStage` and persistence tests.
+
+Boundary: mutates the supplied PCL cloud only; result diagnostics record
+confidence, sample count, correlations, and applied X/Y flips. Its private
+`CorrelationAccumulator` is implementation-local.
+
+#### `PipelineTiming` (header/module) and `PipelineLogger` (module)
+
+Source: `pipeline/PipelineTiming.h`, `pipeline/PipelineTiming.cpp`,
+`pipeline/PipelineLogger.h`, `pipeline/PipelineLogger.cpp`.
+
+Role: measures/totals stages, formats byte/time values, prints summary output,
+and writes the final pipeline log.
+
+Depends on: `StageTiming`, `HoloConfig`, `MultiviewMemoryResult`,
+`ElementalMemoryResult`, and `ResultSaveReport`.
+
+Used by: `HoloPipeline` and `ElementalProcessor`.
+
+Boundary: `runTimedStage` only wraps a callable and appends timing records;
+`writePipelineLog` is the pipeline-level diagnostic file boundary.
+
+#### `ResultSaveSettings`, `ResultSaveWarning`, and `ResultSaveReport`
+
+Source: `pipeline/ResultSaveSettings.h`.
+
+Role: expresses which memory results should be persisted and records best-effort
+save warnings.
+
+Depends on: standard filesystem/string/vector types.
+
+Used by: `ProcessingSettings`, `HoloConfig`, `ResultPersistence`,
+`PipelineLogger`, `CaptureWindow`, and `SaveSettingsDialog`.
+
+Boundary: output persistence is optional per mesh/multiview/elemental type;
+warnings do not retroactively fail a completed in-memory pipeline result.
+
+#### `ResultPersistence` (module)
+
+Source: `pipeline/ResultPersistence.h`, `pipeline/ResultPersistence.cpp`.
+
+Role: writes timestamped mesh, multiview, and elemental result materializations
+from memory.
+
+Depends on: `HoloConfig`, PCL memory results, multiview/elemental memory
+results, and `ResultSaveReport`.
+
+Used by: `HoloPipeline` and `PipelineLogger`.
+
+Boundary: each `persist*Result` is `noexcept` and reports individual output
+failures as `ResultSaveWarning` rather than invalidating the processing result.
+
+### Stages And In-Memory Data Path
+
+#### `DepthStage` (module)
+
+Source: `pipeline/stages/DepthStage.h`, `pipeline/stages/DepthStage.cpp`.
+
+Role: reads paired RGB/TIFF input and creates a colored PCL point cloud.
+
+Depends on: `HoloConfig`, `CliOptions`, `DepthMemoryResult`,
+`depthToPlyColor`, `normalizeExternalDepthPointCloudAxes`, and `FileLibrary`.
+
+Used by: `HoloPipeline`.
+
+Boundary: writes point-cloud output under the configured input/output path and
+optionally retains the cloud in `DepthMemoryResult` for mesh reconstruction.
+
+#### `MeshStage` and `runMeshOneStage` (module)
+
+Source: `pipeline/stages/MeshStage.h`, `pipeline/stages/MeshStage.cpp`.
+
+Role: chooses exactly one point-cloud input and reconstructs a PCL polygon mesh.
+
+Depends on: `HoloConfig`, `CliOptions`, `DepthMemoryResult`,
+`MeshMemoryResult`, `ConverPointCloud`, and `FileLibrary`.
+
+Used by: `HoloPipeline`.
+
+Boundary: prefers the in-memory depth cloud when available, otherwise resolves
+one PLY. It can retain the resulting `pcl::PolygonMesh` for model/multiview
+instead of requiring an OBJ round trip.
+
+#### `ModelStage` (module)
+
+Source: `pipeline/stages/ModelStage.h`, `pipeline/stages/ModelStage.cpp`.
+
+Role: produces a textured OBJ/MTL/JPG representation when that stage is
+requested.
+
+Depends on: `HoloConfig`, `CliOptions`, `MeshMemoryResult`,
+`ConverPointCloud`, and `FileLibrary`.
+
+Used by: `HoloPipeline`.
+
+Boundary: accepts a memory mesh or mesh PLY. In the normal `all` path it is
+skipped when multiview will directly consume the memory mesh.
+
+#### `MultiviewStage` (module)
+
+Source: `pipeline/stages/MultiviewStage.h`,
+`pipeline/stages/MultiviewStage.cpp`.
+
+Role: builds an OSG scene from memory mesh or model input, creates an atlas
+render plan, renders all camera views, and exposes them in memory.
+
+Depends on: `HoloConfig`, `CliOptions`, `MeshMemoryResult`,
+`PclMeshOsgBuilder`, `MemoryFrameSink`, `MultiviewAtlasPlan`,
+`MultiviewAtlasRenderer`, `MultiviewGraphicsConfig`, `MultiviewRenderPlan`,
+`modelMoveHandler`, `PipelineTiming`, and optionally `ElementalAtlasDirectSink`.
+
+Used by: `HoloPipeline`.
+
+Boundary: default output is `MultiviewMemoryResult.sink` plus render plan.
+Direct atlas-to-elemental scatter is compiled but supplied only when an
+`ElementalMemoryResult*` is non-null; the current orchestrator fixes
+`directAtlasElemental` to `false`.
+
+#### `ElementalStage` and `processElemental` (module)
+
+Source: `pipeline/stages/ElementalStage.h`,
+`pipeline/stages/ElementalStage.cpp`, `pipeline/elemental/ElementalProcessor.h`,
+`pipeline/elemental/ElementalProcessor.cpp`.
+
+Role: transforms multiview frame memory into packed RGB elemental image memory.
+
+Depends on: `HoloConfig`, `CliOptions`, `MultiviewMemoryResult`,
+`ElementalMemoryResult`, `ElementalMemoryTransform`, and `PipelineTiming`.
+
+Used by: `HoloPipeline` after multiview; the resulting memory feeds
+`CaptureWindow` and `PrintImageSource`.
+
+Boundary: allocates the full elemental byte buffer only after validating
+dimensions/size. The private `BoundedIntQueue` supports its worker scheduling
+and is not a public component.
+
+### Elemental And Multiview Value Types
+
+#### `ElementalConfig`
+
+Source: `pipeline/elemental/ElementalConfig.h`.
+
+Role: standalone elemental dimensions, JPEG, orientation, and writer-thread
+configuration value type.
+
+Depends on: scalar values only.
+
+Used by: retained/experimental elemental code paths; active orchestration
+derives equivalent values from `HoloConfig`.
+
+Boundary: no allocation or I/O.
+
+#### `ElementalMemoryMode` and `ElementalMemoryResult`
+
+Source: `pipeline/elemental/ElementalMemoryResult.h`.
+
+Role: owns materialized packed-RGB elemental images and declares whether a
+valid result exists.
+
+Depends on: standard owned byte storage.
+
+Used by: pipeline entry/stages, persistence/logger, `CaptureWindow`,
+`Print9030Dialog`, and `PrintImageSource`.
+
+Boundary: owns `pixels`, image layout metadata, source orientation flags, and
+copy-by-index access; `clear` releases all image memory.
+
+#### `ElementalMemoryTransformConfig`,
+`ElementalMemoryTransformStatus`, and transform functions (module)
+
+Source: `pipeline/elemental/ElementalMemoryTransform.h`,
+`pipeline/elemental/ElementalMemoryTransform.cpp`.
+
+Role: validates output size, chooses bounded worker count, and performs the
+blocked source-frame to elemental-memory transpose.
+
+Depends on: standard threading/size arithmetic and byte buffers.
+
+Used by: `ElementalProcessor`, `ElementalAtlasDirectSink`, and transform tests.
+
+Boundary: caller owns source/output buffers; failures are typed as invalid
+argument or size overflow rather than partial result state.
+
+#### `ElementalAtlasDirectSink`
+
+Source: `pipeline/elemental/ElementalAtlasDirectSink.h`,
+`pipeline/elemental/ElementalAtlasDirectSink.cpp`.
+
+Role: experimental `MemoryAtlasPageSink` implementation that scatters atlas
+page readbacks directly into elemental output memory.
+
+Depends on: `ElementalMemoryResult`, `ElementalMemoryTransformConfig`,
+`MemoryAtlasPageSink`, `MultiviewAtlasPlan`, and `MultiviewRenderPlan`.
+
+Used by: `MultiviewStage` only when the disabled direct-atlas path receives a
+result pointer.
+
+Boundary: owns one page buffer and scatter timing; it does not own the output
+result.
+
+#### `MultiviewConfig` and `MultiviewMemoryResult`
+
+Source: `pipeline/multiview/MultiviewConfig.h`,
+`pipeline/multiview/MultiviewMemoryResult.h`.
+
+Role: stores multiview rendering settings and its resulting in-memory frame
+sink, render plan, model-build diagnostics, and optional direct-atlas metrics.
+
+Depends on: `ModelMoveCameraConfig`, `MemoryFrameSink`, and
+`MultiviewRenderPlan`.
+
+Used by: `HoloConfig`/multiview code and `ElementalProcessor`.
+
+Boundary: `MultiviewMemoryResult` holds shared ownership of sink/plan but not
+the originating PCL mesh.
+
+#### `PclMeshOsgBuildResult` and `buildOsgGroupFromPclMesh` (module)
+
+Source: `pipeline/multiview/PclMeshOsgBuilder.h`,
+`pipeline/multiview/PclMeshOsgBuilder.cpp`.
+
+Role: converts a PCL polygon mesh to an OSG `Group` and reports accepted/
+skipped geometry.
+
+Depends on: PCL and OSG.
+
+Used by: `MultiviewStage` when `MeshMemoryResult` is available.
+
+Boundary: returns OSG-owned scene graph plus diagnostics; it is the explicit
+PCL-to-OSG bridge that removes the default OBJ file hop.
 
 ## Printing
 
-The printing type index is maintained in this section.
+### Print Configuration And Image Sources
+
+#### `PrintAxisConfig`, `PrintMainConfig`, `Print9030Config`, and config I/O
+(module)
+
+Source: `printing/PrintConfig.h`, `printing/PrintConfig.cpp`.
+
+Role: represents per-axis motion parameters and whole-job grid/exposure values;
+loads/saves `print_9030.ini`.
+
+Depends on: Qt strings/file I/O.
+
+Used by: `Print9030Dialog`, `PrintController`, timing, preflight, motion, and
+printing tests.
+
+Boundary: `Print9030Config` is the UI-to-job configuration aggregate; it does
+not contain card-specific axis mapping, which belongs to `PrintHardwareProfile`.
+
+#### `PrintPixelFormat` and `PrintFrame`
+
+Source: `printing/PrintFrame.h`, `printing/PrintFrame.cpp`.
+
+Role: validates one BGR24/BGRA32 image frame for presentation.
+
+Depends on: Qt byte arrays.
+
+Used by: `PrintImageSet`, frame presenters, job runner, and tests.
+
+Boundary: owns packed pixels and geometry/stride metadata for one frame.
+
+#### `PrintImageSourceType`, `PrintImageSet`,
+`PrintImageFolderLoadResult`, and image-loading functions (module)
+
+Source: `printing/PrintImageSource.h`, `printing/PrintImageSource.cpp`.
+
+Role: provides immutable indexed print frames from elemental memory, a folder,
+or supplied frames; folder loading also infers a grid.
+
+Depends on: `ElementalMemoryResult`, `PrintFrame`, Qt images/filesystem types.
+
+Used by: `Print9030Dialog`, `IPrintController::start`, preflight, job runner,
+and print tests.
+
+Boundary: copies or converts source images into owned `QVector<PrintFrame>`;
+the private `FolderImageEntry` only assists folder ordering.
+
+#### `PrintHardwareProfile` and profile I/O (module)
+
+Source: `printing/PrintHardwareProfile.h`,
+`printing/PrintHardwareProfile.cpp`.
+
+Role: versioned physical IMC card/axis map, homing protocol, pulse geometry,
+and SV660N SDO profile.
+
+Depends on: Qt strings/vectors.
+
+Used by: `main` diagnostics, `PrintController`, motion, exposure, timing,
+preflight, and hardware tests.
+
+Boundary: loaded from `config/imc60g_print.ini`; it separates physical hardware
+truth from user-tunable `Print9030Config`.
+
+### Controller, Job, And Interface Contracts
+
+#### `PrintUiState`, `IPrintController`, and `PrintController`
+
+Source: `printing/PrintController.h`, `printing/PrintController.cpp`.
+
+Role: Qt-facing print state/controller contract and active IMC60G-backed
+implementation.
+
+Depends on: `Print9030Config`, `PrintImageSet`, `Imc60gApi`,
+`Imc60gMotionController`, `Sv660nExposureController`, `V2D3DFramePresenter`,
+`V2PrintTiming`, `PrintHardwarePreflight`, `PrintPositionSampler`, and
+`PrintJobRunner`.
+
+Used by: `Print9030Dialog`; tests replace `IPrintController` with recordings.
+
+Boundary: slots enqueue connection, manual motion, origin, and job commands on
+its worker thread. Signals are the only state/status/progress/position/hardware
+contract visible to the dialog. Private `PrintController::Worker` composes and
+owns the active adapters.
+
+#### `PrintJobState` and `PrintJobRunner`
+
+Source: `printing/PrintJobRunner.h`, `printing/PrintJobRunner.cpp`.
+
+Role: executes the V2 row/column print state machine, including preflight,
+presentation cadence, scan/step movement, exposure arming, pause/resume,
+cancel, and cleanup.
+
+Depends on: `IMotionController`, `IExposureController`,
+`IPrintFramePresenter`, `IPrintHardwarePreflight`, and `PrintJobSnapshot`.
+
+Used by: `PrintController::Worker` and print-engine tests.
+
+Boundary: owns the active job snapshot and copied frames; pause/cancel flags
+are thread-safe requests, while all SDK calls remain on the runner owner
+thread.
+
+#### `PrintMotionReadiness` and `IMotionController`
+
+Source: `printing/IMotionController.h`.
+
+Role: narrow already-connected motion service needed during a print job.
+
+Depends on: `PrintAxisConfig`, Qt numeric/string types, and cancellation atomics.
+
+Used by: `PrintJobRunner` and `PrintHardwarePreflight`; implemented by
+`Imc60gMotionController`.
+
+Boundary: intentionally excludes connection/homing/servo/emergency operations;
+print phase only begins after readiness proves those conditions.
+
+#### `PrintExposureReadiness` and `IExposureController`
+
+Source: `printing/IExposureController.h`.
+
+Role: abstract position-compare exposure service.
+
+Depends on: Qt numeric/string types.
+
+Used by: `PrintJobRunner` and `PrintHardwarePreflight`; implemented by
+`Sv660nExposureController`.
+
+Boundary: arm/disarm uses pulse begin/end values and exposes safe baseline
+state.
+
+#### `PrintPresenterReadiness`, `PrintRowVBlankAnchor`, and
+`IPrintFramePresenter`
+
+Source: `printing/IPrintFramePresenter.h`.
+
+Role: abstract second-screen preparation, frame display, vblank sequencing,
+row anchor, and shutdown service.
+
+Depends on: `PrintFrame` and Qt geometry/string types.
+
+Used by: `PrintJobRunner` and preflight; implemented by `V2D3DFramePresenter`.
+
+Boundary: presentation service owns display lifetime; default methods preserve
+a simple present/wait fallback for test doubles.
+
+#### `PreflightFault`, `PrintPreflightResult`, `PrintJobSnapshot`,
+`IPrintHardwarePreflight`, and `PrintHardwarePreflight`
+
+Source: `printing/PrintHardwarePreflight.h`,
+`printing/PrintHardwarePreflight.cpp`.
+
+Role: validates every hardware, timing, source, second-screen, and vblank
+prerequisite before or during a print job.
+
+Depends on: the three print service interfaces, configs/profile, `PrintImageSet`,
+and `V2PrintPlan`.
+
+Used by: `PrintJobRunner` and V2 print-engine tests.
+
+Boundary: returns a typed fault/detail rather than issuing motion/exposure
+commands itself.
+
+### Active IMC60G, Exposure, Timing, And Presentation Adapters
+
+#### `Imc60gMasterInfo`, `IImc60gApi`, and `Imc60gApi`
+
+Source: `printing/IImc60gApi.h`, `printing/Imc60gApi.h`,
+`printing/Imc60gApi.cpp`.
+
+Role: testable, narrow wrapper around the IMC60G card/EtherCAT/axis/SDO C API.
+
+Depends on: `vendor/imc60g/include/IMC_Library.h` and `errorcode.h` only in
+`Imc60gApi.cpp`.
+
+Used by: `Imc60gMotionController`, `Sv660nExposureController`,
+`PrintController`, and hardware tests with fake `IImc60gApi` implementations.
+
+Boundary: this is the only project class that directly calls the IMC SDK; all
+vendor return codes remain within this adapter interface.
+
+#### `IImc60gClock`, `Imc60gConnectionState`, `Imc60gAxisSnapshot`, and
+`Imc60gMotionController`
+
+Source: `printing/Imc60gMotionController.h`,
+`printing/Imc60gMotionController.cpp`.
+
+Role: owns card/EtherCAT startup, emergency/servo/homing protocol, manual
+motion, logical origin, print-phase axis operations, and safe cleanup.
+
+Depends on: `IImc60gApi`, `PrintHardwareProfile`, `PrintAxisConfig`, and
+`IMotionController`.
+
+Used by: `PrintController::Worker`, preflight/job runner via
+`IMotionController`, and motion safety tests.
+
+Boundary: maps logical X/Y to profile physical axes, serializes hardware state
+with a mutex/ownership guard, and exposes cancellation without allowing
+concurrent SDK calls. Private `SystemImc60gClock`, `ErrorAction`, and
+`ErrorInfo` are implementation details.
+
+#### `Sv660nExposureController`
+
+Source: `printing/Sv660nExposureController.h`,
+`printing/Sv660nExposureController.cpp`.
+
+Role: configures and verifies SV660N internal position-compare digital output
+through IMC SDO reads/writes.
+
+Depends on: `IImc60gApi`, `PrintHardwareProfile`, and `IExposureController`.
+
+Used by: `PrintController::Worker`, preflight/job runner via
+`IExposureController`, and exposure tests.
+
+Boundary: stores armed state and owns profile validation/rollback; it never
+owns an IMC card connection.
+
+#### `V2RowPlan`, `V2PrintPlan`, and `buildV2PrintPlan` (module)
+
+Source: `printing/V2PrintTiming.h`, `printing/V2PrintTiming.cpp`.
+
+Role: turns print geometry/profile/refresh rate into serpentine row movement,
+frame-order, delay, and exposure pulse plan.
+
+Depends on: `Print9030Config` and `PrintHardwareProfile`.
+
+Used by: `PrintController`, `PrintHardwarePreflight`, `PrintJobRunner`, and
+timing tests.
+
+Boundary: pure plan construction; it emits a validation error rather than
+touching motion or presentation services.
+
+#### `DisplayMonitor` and second-screen functions (module)
+
+Source: `printing/SecondScreenSelection.h`,
+`printing/SecondScreenSelection.cpp`.
+
+Role: enumerates desktop-attached Windows displays and selects an eligible
+non-primary screen for V2 presentation.
+
+Depends on: Qt geometry/containers and Windows display APIs.
+
+Used by: `V2D3DFramePresenter` and selection tests.
+
+Boundary: reports static monitor metadata; no D3D surface is created here.
+
+#### `VBlankDiagnostics`, `IVBlankWaiter`, `PresenterDiagnostics`,
+`IPresentationDispatcher`, `IV2D3DBackend`, and `V2D3DFramePresenter`
+
+Source: `printing/IVBlankWaiter.h`, `printing/V2D3DFramePresenter.h`,
+`printing/V2D3DFramePresenter.cpp`.
+
+Role: selected-screen Direct3D 11 presentation, physical vblank coordination,
+and GUI-thread dispatch for print frames.
+
+Depends on: `IPrintFramePresenter`, `IVBlankWaiter`, `DisplayMonitor`, Qt,
+Windows D3D/DXGI/D3DCompiler APIs.
+
+Used by: `PrintController::Worker`, preflight/job runner through
+`IPrintFramePresenter`, and presenter contract tests.
+
+Boundary: public diagnostics report device/present/vblank errors. Private
+`QtPresentationDispatcher` owns GUI dispatch and private `NativeD3DBackend`
+owns D3D/DXGI resources; callers receive only interface contracts.
+
+#### `PrintPositionSampler`
+
+Source: `printing/PrintPositionSampler.h`,
+`printing/PrintPositionSampler.cpp`.
+
+Role: throttles controller position polling and converts axis pulses to
+millimeters.
+
+Depends on: `PrintAxisConfig` and Qt point/time types.
+
+Used by: `PrintController::Worker` and print-engine tests.
+
+Boundary: no hardware calls; it consumes pulse snapshots supplied by motion.
+
+### Retained Legacy Printing Code
+
+The following files are project-owned and test-indexed but are not in the
+production `mergeholo.pro` source list. They describe an earlier controller/
+presentation contract and must not be re-enabled without an explicit adapter or
+interface reconciliation.
+
+#### `DfjzhMotionController`
+
+Source: `printing/DfjzhMotionController.h`, `printing/DfjzhMotionController.cpp`.
+
+Role: dynamic `DfjzhControlerDll.dll` adapter for the predecessor 9030 motion
+and exposure-window API.
+
+Depends on: `QLibrary` and historical `IMotionController` methods such as
+`initialize`, `moveTo`, and `armExposureWindow`.
+
+Used by: `printing/tests/printing_tests.pro` and module tests only.
+
+Boundary: resolves DLL symbols lazily and owns loaded-library/function-pointer
+state. Its historical interface does not match the active narrow
+`IMotionController` print-phase contract.
+
+#### `LegacyPrintTiming` and `LegacyRowPlan` (module)
+
+Source: `printing/LegacyPrintTiming.h`, `printing/LegacyPrintTiming.cpp`.
+
+Role: old pulse and serpentine-row calculation for the predecessor runner.
+
+Depends on: `Print9030Config`.
+
+Used by: legacy module tests only.
+
+Boundary: pure calculation, superseded by `V2PrintTiming`.
+
+#### `LegacyD3DImageRenderer` and `LegacySecondScreenPresenter`
+
+Source: `printing/LegacyD3DImageRenderer.h`,
+`printing/LegacyD3DImageRenderer.cpp`,
+`printing/LegacySecondScreenPresenter.h`,
+`printing/LegacySecondScreenPresenter.cpp`.
+
+Role: previous QWidget-hosted D3D swap-chain renderer and second-screen
+presenter.
+
+Depends on: `PrintFrame`, historical screen-selection functions, Qt Widgets,
+and Windows D3D11/DXGI.
+
+Used by: legacy module tests only.
+
+Boundary: renderer owns device/swap-chain/shader/texture resources; presenter
+owns display windows and renderer thread affinity. It predates the active
+`IPrintFramePresenter` vblank contract and is excluded from the production
+build.
 
 ## Maintained Vendor Modules
 

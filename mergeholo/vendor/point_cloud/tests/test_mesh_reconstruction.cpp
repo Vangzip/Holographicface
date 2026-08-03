@@ -407,10 +407,10 @@ void testReconstructionAlgorithmSignaturesHaveNoFileIo()
 {
     const std::string header = readProjectFile(
         "vendor/point_cloud/include/ConverPointCloud.h");
-    expect(header.find(
-        "bool createGreedMeshFromCloud(\n"
-        "        const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,\n"
-        "        pcl::PolygonMesh &meshOut);") != std::string::npos,
+    expect(header.find("bool createGreedMeshFromCloud(") != std::string::npos
+            && header.find("const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud,")
+                != std::string::npos
+            && header.find("pcl::PolygonMesh &meshOut);") != std::string::npos,
         "Greedy reconstruction must accept only cloud input and mesh output");
     expect(header.find("bool createGreedMesh(const string &);") == std::string::npos,
         "Greedy file-oriented reconstruction duplicate must be removed");

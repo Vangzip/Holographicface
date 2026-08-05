@@ -26,6 +26,8 @@ public:
     virtual int servoOff(unsigned int cardIndex, short axis) = 0;
     virtual int setMotionProfile(unsigned int cardIndex, short axis, double velocity,
         double acceleration, double deceleration, double startVelocity) = 0;
+    virtual int setAxisStopDec(unsigned int cardIndex, short axis,
+        double smoothStopDeceleration, double abruptStopDeceleration) = 0;
     virtual int setAxisEndVelocity(unsigned int cardIndex, short axis,
         double endVelocity) = 0;
     virtual int startPtp(unsigned int cardIndex, short axis, int target) = 0;

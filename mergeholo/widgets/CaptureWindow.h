@@ -20,6 +20,7 @@ class QPushButton;
 class QProgressBar;
 class QTimer;
 struct ElementalMemoryResult;
+struct CameraInitializationState;
 
 namespace Ui {
 class CaptureWindow;
@@ -28,7 +29,9 @@ class CaptureWindow;
 class CaptureWindow : public QMainWindow
 {
 public:
-    CaptureWindow(const QString& projectRoot, const QString& cameraConfigPath, QWidget* parent = nullptr);
+    CaptureWindow(const QString& projectRoot, const QString& cameraConfigPath,
+        std::unique_ptr<LightFieldCapture> initializedCapture = nullptr,
+        QWidget* parent = nullptr);
     ~CaptureWindow() override;
 
 protected:
@@ -47,6 +50,10 @@ private:
 
     void buildUi();
     void startCamera();
+    void startCameraInitialization(const LightFieldCapture::HoloInData& config);
+    void finishCameraInitialization();
+    void handleCameraInitializationTimeout();
+    void abandonCameraInitialization();
     void releaseCamera();
     void pollCameraFrame();
     void captureFrame();
@@ -54,6 +61,7 @@ private:
     void startProcessing();
     void openProcessingSettings();
     void openPrintSettings();
+    bool restartForCameraMode(QString* errorMessage);
     bool testCameraConnection(const CameraCaptureSettings& camera, QString* message);
     void showResultSaveWarnings();
     bool preparePipelineInput(QString* errorMessage);
@@ -87,11 +95,14 @@ private:
     QPushButton* retakeButton_ = nullptr;
     QPushButton* settingsButton_ = nullptr;
     QTimer* frameTimer_ = nullptr;
+    QTimer* cameraInitPollTimer_ = nullptr;
+    QTimer* cameraInitTimeoutTimer_ = nullptr;
     QThread* pipelineThread_ = nullptr;
     std::atomic<int> pipelineExitCode_{0};
     std::atomic<bool> pipelineNormalExit_{true};
 
     std::unique_ptr<LightFieldCapture> capture_;
+    std::shared_ptr<CameraInitializationState> cameraInitialization_;
     State state_ = State::Starting;
     bool hasLiveFrame_ = false;
 

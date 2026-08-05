@@ -40,6 +40,7 @@ public:
     bool cardOpened = false;
     bool cardClosed = false;
     bool ptpStarted = false;
+    bool recordPrintCommands = false;
     unsigned int masterStatus = 6;
     short masterAxisCount = 2;
     short emergency = 0;
@@ -49,6 +50,9 @@ public:
     int lastPtpTarget = 0;
     double lastProfileVelocity = 0;
     QHash<short, int> plannedPositions;
+    int plannedPositionCalls = 0;
+    int encoderPositionCalls = 0;
+    int axisStatusCalls = 0;
     QHash<short, int> returningBusyPolls;
     QHash<short, int> currentPositionSetCounts;
     QHash<short, int> syncPositionCounts;
@@ -175,19 +179,32 @@ public:
         double acceleration, double deceleration, double startVelocity) override
     {
         Q_UNUSED(cardIndex);
-        Q_UNUSED(axis);
-        Q_UNUSED(acceleration);
-        Q_UNUSED(deceleration);
-        Q_UNUSED(startVelocity);
+        if (recordPrintCommands) {
+            events << QString("profile:%1:%2:%3:%4:%5")
+                          .arg(axis).arg(velocity).arg(acceleration)
+                          .arg(deceleration).arg(startVelocity);
+        }
         lastProfileVelocity = velocity;
         return result("profile");
+    }
+
+    int setAxisStopDec(unsigned int cardIndex, short axis,
+        double smoothStopDeceleration, double abruptStopDeceleration) override
+    {
+        Q_UNUSED(cardIndex);
+        if (recordPrintCommands) {
+            events << QString("stop_dec:%1:%2:%3")
+                          .arg(axis).arg(smoothStopDeceleration)
+                          .arg(abruptStopDeceleration);
+        }
+        return result("stop_dec");
     }
 
     int setAxisEndVelocity(unsigned int cardIndex, short axis, double endVelocity) override
     {
         Q_UNUSED(cardIndex);
-        Q_UNUSED(axis);
-        Q_UNUSED(endVelocity);
+        if (recordPrintCommands)
+            events << QString("end_velocity:%1:%2").arg(axis).arg(endVelocity);
         return result("end_velocity");
     }
 
@@ -201,6 +218,7 @@ public:
             events << QString("backoff:%1:%2").arg(axis).arg(target);
             return result(QString("backoff%1").arg(axis));
         }
+        if (recordPrintCommands) events << QString("ptp:%1:%2").arg(axis).arg(target);
         if (target == 0 && returningBusyPolls.contains(axis)) {
             returningAxes.insert(axis);
         } else {
@@ -235,6 +253,7 @@ public:
     int axisStatus(unsigned int cardIndex, short axis, unsigned int* status) override
     {
         Q_UNUSED(cardIndex);
+        ++axisStatusCalls;
         if (result("axis_status") != 0) {
             return result("axis_status");
         }
@@ -266,6 +285,7 @@ public:
     int plannedPosition(unsigned int cardIndex, short axis, int* position) override
     {
         Q_UNUSED(cardIndex);
+        ++plannedPositionCalls;
         *position = plannedPositions.value(axis);
         return result("planned");
     }
@@ -273,6 +293,7 @@ public:
     int encoderPosition(unsigned int cardIndex, short axis, int* position) override
     {
         Q_UNUSED(cardIndex);
+        ++encoderPositionCalls;
         *position = homingAxes.contains(axis) ? 100 : 0;
         return result("encoder");
     }
@@ -449,6 +470,46 @@ void testManualMotionValidationAndMapping()
     controller.setPrintActive(false);
     controller.disconnect();
     expectRejected(PrintHardwareProfile::LogicalAxis::X, 1.0, axisX, "disconnected state");
+}
+
+void testPreparedYScanUsesV2CachedProfileApplySequence()
+{
+    RecordingImc60gApi api;
+    Imc60gMotionController controller(&api, PrintHardwareProfile());
+    QString error;
+    expect(controller.connectAndHome(&error), "fixture must connect: " + error);
+    expect(controller.beginPrint(&error), "fixture must acquire print ownership: " + error);
+    api.recordPrintCommands = true;
+
+    PrintAxisConfig axisY;
+    axisY.speedOfMovement = 60000;
+    axisY.acceleratedVelocity = 150000;
+    axisY.startSpeed = 0;
+    axisY.stopSpeed = 0;
+    api.events.clear();
+    expect(controller.prepareYScan(140000, axisY, &error),
+        "V2 Y preparation must configure the motion profile: " + error);
+    expect(api.events == QStringList({
+               "profile:0:1000:150000:1000:0", "stop_dec:0:1000:1000",
+               "profile:0:1000:150000:150000:0", "stop_dec:0:150000:150000",
+               "profile:0:60000:150000:150000:0", "stop_dec:0:150000:150000",
+               "profile:0:60000:150000:150000:0", "stop_dec:0:150000:150000"}),
+        "V2 PrepareYMoveNoStart must apply the cached profile after setting acceleration, "
+        "deceleration, velocity, and stop velocity");
+
+    api.events.clear();
+    const int plannedBeforeStart = api.plannedPositionCalls;
+    const int encoderBeforeStart = api.encoderPositionCalls;
+    const int statusBeforeStart = api.axisStatusCalls;
+    expect(controller.startPreparedYScan(&error),
+        "V2 prepared Y scan must start: " + error);
+    expect(api.events == QStringList({"profile:0:60000:150000:150000:0",
+               "stop_dec:0:150000:150000", "ptp:0:140000"}),
+        "V2 Motion_StartAxis must reapply Y profile immediately before IMC_StartPtpMove");
+    expect(api.plannedPositionCalls == plannedBeforeStart + 1
+            && api.encoderPositionCalls == encoderBeforeStart + 1
+            && api.axisStatusCalls == statusBeforeStart + 1,
+        "V2 Motion_StartAxis must issue its post-start planned, encoder, and status reads");
 }
 
 void testSdkOwnershipIsExclusive()
@@ -641,6 +702,7 @@ int main(int argc, char** argv)
     testLifecycleAndHomingOrder();
     testLifecycleFailuresCloseSafely();
     testManualMotionValidationAndMapping();
+    testPreparedYScanUsesV2CachedProfileApplySequence();
     testSdkOwnershipIsExclusive();
     testSnapshotsAndExplicitStops();
     testPrintReadinessUsesLiveHardwareState();

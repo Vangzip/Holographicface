@@ -20,6 +20,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QProgressBar>
+#include <QProcess>
 #include <QPushButton>
 #include <QPixmap>
 #include <QSizePolicy>
@@ -30,6 +31,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <thread>
+#include <objbase.h>
 #include <vector>
 
 #include <opencv2/imgcodecs.hpp>
@@ -187,7 +190,18 @@ bool sameCameraSettings(const CameraCaptureSettings& left, const CameraCaptureSe
 
 } // namespace
 
-CaptureWindow::CaptureWindow(const QString& projectRoot, const QString& cameraConfigPath, QWidget* parent)
+struct CameraInitializationState
+{
+    std::mutex mutex;
+    std::unique_ptr<LightFieldCapture> capture;
+    bool finished = false;
+    bool success = false;
+    bool timedOut = false;
+    bool abandoned = false;
+};
+
+CaptureWindow::CaptureWindow(const QString& projectRoot, const QString& cameraConfigPath,
+    std::unique_ptr<LightFieldCapture> initializedCapture, QWidget* parent)
     : QMainWindow(parent)
     , projectRoot_(QDir(projectRoot).absolutePath())
     , settingsPaths_(ProcessingSettingsPaths::fromProjectRoot(projectRoot_))
@@ -199,8 +213,21 @@ CaptureWindow::CaptureWindow(const QString& projectRoot, const QString& cameraCo
         QMessageBox::warning(this, QString::fromUtf8("读取设置失败"),
             QString::fromUtf8("将使用内置默认值。\n") + settingsError);
     }
-    setState(State::Starting);
-    QTimer::singleShot(0, this, [this] { startCamera(); });
+    capture_ = std::move(initializedCapture);
+    if (settings_.input.isExternal()) {
+        setState(State::Frozen);
+        setProgress(0, QString::fromUtf8("正在使用外部输入"));
+    }
+    else if (capture_) {
+        hasLiveFrame_ = false;
+        setState(State::Live);
+        setProgress(0, QString::fromUtf8("等待相机画面"));
+        frameTimer_->start();
+    }
+    else {
+        setState(State::Error);
+        setProgress(0, QString::fromUtf8("相机初始化失败"));
+    }
 }
 
 CaptureWindow::~CaptureWindow()
@@ -212,6 +239,7 @@ CaptureWindow::~CaptureWindow()
         thread->wait();
         delete thread;
     }
+    abandonCameraInitialization();
     releaseCamera();
 }
 
@@ -232,6 +260,17 @@ void CaptureWindow::buildUi()
     frameTimer_ = new QTimer(this);
     frameTimer_->setInterval(30);
     connect(frameTimer_, &QTimer::timeout, this, [this] { pollCameraFrame(); });
+
+    cameraInitPollTimer_ = new QTimer(this);
+    cameraInitPollTimer_->setInterval(50);
+    connect(cameraInitPollTimer_, &QTimer::timeout,
+        this, [this] { finishCameraInitialization(); });
+
+    cameraInitTimeoutTimer_ = new QTimer(this);
+    cameraInitTimeoutTimer_->setSingleShot(true);
+    connect(cameraInitTimeoutTimer_, &QTimer::timeout,
+        this, [this] { handleCameraInitializationTimeout(); });
+
     connect(captureButton_, &QPushButton::clicked, this, [this] { captureFrame(); });
     connect(confirmButton_, &QPushButton::clicked, this, [this] { startProcessing(); });
     connect(retakeButton_, &QPushButton::clicked, this, [this] { resetCapture(); });
@@ -245,26 +284,157 @@ void CaptureWindow::startCamera()
         setState(State::Frozen);
         return;
     }
+    if (cameraInitialization_) {
+        setState(State::Error);
+        setProgress(0, QString::fromUtf8("上一轮相机初始化仍未返回，请稍后再试"));
+        return;
+    }
     setState(State::Starting);
-    setProgress(0, "正在初始化相机");
+    setProgress(0, QString::fromUtf8("正在初始化相机"));
 
     LightFieldCapture::HoloInData config = makeCameraInput(settings_.camera);
-
     capture_ = std::make_unique<LightFieldCapture>();
     if (!capture_->initialize(&config)) {
-        releaseCamera();
-        hasLiveFrame_ = false;
+        capture_.reset();
         setState(State::Error);
-        setProgress(0, "相机初始化失败");
-        QMessageBox::warning(this, "相机初始化失败",
-            "无法初始化相机，请检查相机连接和配置目录:\n" + settings_.camera.configDirectory);
+        setProgress(0, QString::fromUtf8("相机初始化失败"));
+        QMessageBox::warning(this, QString::fromUtf8("相机初始化失败"),
+            QString::fromUtf8("无法打开相机。请检查连接和相机设置。"));
         return;
     }
 
     hasLiveFrame_ = false;
     setState(State::Live);
-    setProgress(0, "等待相机画面");
+    setProgress(0, QString::fromUtf8("等待相机画面"));
     frameTimer_->start();
+}
+
+void CaptureWindow::startCameraInitialization(const LightFieldCapture::HoloInData& config)
+{
+    cameraInitialization_ = std::make_shared<CameraInitializationState>();
+    const std::shared_ptr<CameraInitializationState> initialization = cameraInitialization_;
+    std::thread([initialization, config] {
+        const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        auto capture = std::make_unique<LightFieldCapture>();
+        bool success = false;
+        try {
+            success = capture->initialize(&config);
+        }
+        catch (...) {
+            success = false;
+        }
+
+        std::lock_guard<std::mutex> lock(initialization->mutex);
+        if (!initialization->abandoned) {
+            initialization->capture = std::move(capture);
+            initialization->success = success;
+            initialization->finished = true;
+        }
+        if (SUCCEEDED(comResult)) {
+            CoUninitialize();
+        }
+    }).detach();
+
+    cameraInitPollTimer_->start();
+    cameraInitTimeoutTimer_->start(15000);
+}
+
+void CaptureWindow::finishCameraInitialization()
+{
+    const std::shared_ptr<CameraInitializationState> initialization = cameraInitialization_;
+    if (!initialization) {
+        return;
+    }
+
+    std::unique_ptr<LightFieldCapture> initializedCapture;
+    bool success = false;
+    bool timedOut = false;
+    {
+        std::lock_guard<std::mutex> lock(initialization->mutex);
+        if (!initialization->finished) {
+            return;
+        }
+        initializedCapture = std::move(initialization->capture);
+        success = initialization->success;
+        timedOut = initialization->timedOut;
+        initialization->abandoned = true;
+    }
+
+    cameraInitPollTimer_->stop();
+    cameraInitTimeoutTimer_->stop();
+    cameraInitialization_.reset();
+
+    if (timedOut) {
+        setState(State::Error);
+        setProgress(0, QString::fromUtf8("相机初始化超时，现可重新拍照"));
+        return;
+    }
+
+    if (!success || !initializedCapture) {
+        hasLiveFrame_ = false;
+        setState(State::Error);
+        setProgress(0, QString::fromUtf8("相机初始化失败"));
+        QMessageBox::warning(this, QString::fromUtf8("相机初始化失败"),
+            QString::fromUtf8("无法初始化相机，请检查相机连接和配置目录:\n")
+                + settings_.camera.configDirectory);
+        return;
+    }
+
+    if (settings_.input.isExternal()) {
+        setState(State::Frozen);
+        return;
+    }
+
+    capture_ = std::move(initializedCapture);
+    hasLiveFrame_ = false;
+    setState(State::Live);
+    setProgress(0, QString::fromUtf8("等待相机画面"));
+    frameTimer_->start();
+}
+
+void CaptureWindow::handleCameraInitializationTimeout()
+{
+    const std::shared_ptr<CameraInitializationState> initialization = cameraInitialization_;
+    if (!initialization) {
+        return;
+    }
+
+    bool finished = false;
+    {
+        std::lock_guard<std::mutex> lock(initialization->mutex);
+        finished = initialization->finished;
+        if (!finished) {
+            initialization->timedOut = true;
+        }
+    }
+    if (finished) {
+        finishCameraInitialization();
+        return;
+    }
+
+    setState(State::Error);
+    setProgress(0, QString::fromUtf8("相机初始化超过 15 秒，仍在等待设备响应"));
+    QMessageBox::warning(this, QString::fromUtf8("相机初始化超时"),
+        QString::fromUtf8("相机没有在 15 秒内完成初始化。窗口仍可操作；"
+            "请检查连接，待当前初始化返回后再重新拍照。"));
+}
+
+void CaptureWindow::abandonCameraInitialization()
+{
+    if (cameraInitPollTimer_) {
+        cameraInitPollTimer_->stop();
+    }
+    if (cameraInitTimeoutTimer_) {
+        cameraInitTimeoutTimer_->stop();
+    }
+    if (!cameraInitialization_) {
+        return;
+    }
+
+    const std::shared_ptr<CameraInitializationState> initialization = cameraInitialization_;
+    std::lock_guard<std::mutex> lock(initialization->mutex);
+    initialization->abandoned = true;
+    cameraInitialization_.reset();
 }
 
 void CaptureWindow::releaseCamera()
@@ -435,7 +605,11 @@ void CaptureWindow::openProcessingSettings()
             }
         }
         else {
-            clearInputSettingsAndResumeCamera();
+            if (!restartForCameraMode(&errorMessage)) {
+                setState(State::Error);
+                QMessageBox::warning(this, QString::fromUtf8("重新启动失败"), errorMessage);
+            }
+            return;
         }
     }
     else if (!cameraReinitialized && !settings_.input.isExternal()
@@ -444,10 +618,35 @@ void CaptureWindow::openProcessingSettings()
     }
 }
 
+bool CaptureWindow::restartForCameraMode(QString* errorMessage)
+{
+    QStringList arguments = QCoreApplication::arguments();
+    if (!arguments.isEmpty()) {
+        arguments.removeFirst();
+    }
+
+    if (!QProcess::startDetached(QCoreApplication::applicationFilePath(), arguments,
+            QCoreApplication::applicationDirPath())) {
+        if (errorMessage) {
+            *errorMessage = QString::fromUtf8("无法重新启动程序以初始化相机。");
+        }
+        return false;
+    }
+
+    close();
+    return true;
+}
+
 bool CaptureWindow::testCameraConnection(
     const CameraCaptureSettings& camera,
     QString* message)
 {
+    if (cameraInitialization_) {
+        if (message) {
+            *message = QString::fromUtf8("上一轮相机初始化仍未返回，暂时不能重复测试");
+        }
+        return false;
+    }
     const State previousState = state_;
     releaseCamera();
 

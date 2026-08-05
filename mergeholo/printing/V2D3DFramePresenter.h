@@ -11,6 +11,8 @@
 #include <functional>
 #include <memory>
 
+class V2RowVBlankCounter;
+
 struct PresenterDiagnostics {
     bool ready = false;
     QString selectedOutputDeviceName;
@@ -38,6 +40,14 @@ public:
         QString* errorMessage = nullptr) = 0;
 };
 
+struct V2PreparedRowFrame {
+    QByteArray packedBgra;
+    int width = 0;
+    int height = 0;
+    int rowPitch = 0;
+    QSize targetSize;
+};
+
 class IV2D3DBackend
 {
 public:
@@ -49,6 +59,13 @@ public:
     virtual bool uploadAndPresent(const QByteArray& packedBgra, int width, int height,
         int rowPitch, const QSize& targetSize, PresenterDiagnostics* diagnostics,
         QString* errorMessage = nullptr) = 0;
+    virtual bool prepareRow(const QVector<V2PreparedRowFrame>& frames,
+        PresenterDiagnostics* diagnostics, QString* errorMessage = nullptr) = 0;
+    virtual bool presentPreparedRowFrame(int cacheIndex,
+        PresenterDiagnostics* diagnostics, QString* errorMessage = nullptr) = 0;
+    virtual void sampleFrameStatistics(PresenterDiagnostics*) {}
+    virtual void sampleFrameStatisticsMedia(PrintFrameStatisticsMedia*) {}
+    virtual void clearPreparedRow() = 0;
     virtual void shutdown() = 0;
 };
 
@@ -71,10 +88,21 @@ public:
         QString* errorMessage = nullptr) override;
     bool presentRowAnchor(const PrintFrame& frame, const QSize& targetSize,
         QString* errorMessage = nullptr) override;
+    bool prepareRow(const QVector<PrintFrame>& rowFrames,
+        const QVector<QSize>& targetSizes, QString* errorMessage = nullptr) override;
+    bool presentPreparedRowFrame(int logicalFrame,
+        QString* errorMessage = nullptr) override;
+    void clearPreparedRow() override;
     bool waitForDisplayFrame(QString* errorMessage = nullptr) override;
     bool acquireRowAnchor(V2RowVBlankAnchor* anchor, QString* errorMessage = nullptr) override;
     bool waitForRowSlot(int slot, V2RowVBlankAnchor* anchor,
         QString* errorMessage = nullptr) override;
+    void sampleFrameStatistics() override;
+    PrintFrameStatisticsMedia sampleFrameStatisticsMedia() override;
+    bool prepareRowVBlankCounter(QString* errorMessage = nullptr) override;
+    void beginRowVBlankCounter(qint64 frameZeroQpcUs) override;
+    PrintRowVBlankCounterSnapshot rowVBlankCounterSnapshot() const override;
+    void stopRowVBlankCounter() override;
     void shutdown() override;
 
     bool refreshAttachedDisplays(QString* errorMessage = nullptr);
@@ -93,10 +121,17 @@ private:
     std::shared_ptr<IV2D3DBackend> backend_;
     std::shared_ptr<IVBlankWaiter> vblankWaiter_;
     std::shared_ptr<IPresentationDispatcher> dispatcher_;
+    // D3D11's immediate context may move between threads, but it must have one
+    // caller at a time. Startup/shutdown use the GUI thread; the V2 cached path
+    // uses the high-priority row display thread directly.
+    mutable QMutex rendererMutex_;
     mutable QMutex stateMutex_;
     PresenterDiagnostics diagnostics_;
     DisplayMonitor selectedMonitor_;
     bool backendActive_ = false;
     bool ready_ = false;
+    int preparedRowSize_ = 0;
+    quint64 preparedRowGeneration_ = 1;
     quint64 generation_ = 1;
+    std::unique_ptr<V2RowVBlankCounter> rowVBlankCounter_;
 };

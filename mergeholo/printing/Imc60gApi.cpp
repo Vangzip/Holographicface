@@ -113,6 +113,13 @@ int Imc60gApi::setMotionProfile(unsigned int cardIndex, short axis, double veloc
     return rc;
 }
 
+int Imc60gApi::setAxisStopDec(unsigned int cardIndex, short axis,
+    double smoothStopDeceleration, double abruptStopDeceleration)
+{
+    return IMC_SetAxStopDec(cardNumber(cardIndex), axis,
+        smoothStopDeceleration, abruptStopDeceleration);
+}
+
 int Imc60gApi::setAxisEndVelocity(
     unsigned int cardIndex, short axis, double endVelocity)
 {

@@ -6,6 +6,7 @@
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFileInfo>
 #include <QImage>
 #include <QLabel>
 #include <QPushButton>
@@ -14,6 +15,10 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QThread>
+
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 
 #include <cstdlib>
 #include <functional>
@@ -80,6 +85,31 @@ bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 5000)
         QThread::msleep(1);
     }
     return predicate();
+}
+
+QStringList nativeV2FileOrder(const QString& directory)
+{
+    QStringList files;
+#ifdef Q_OS_WIN
+    const QString pattern = QDir::toNativeSeparators(
+        QDir(directory).absoluteFilePath(QStringLiteral("*.*")));
+    WIN32_FIND_DATAW data {};
+    HANDLE search = FindFirstFileW(
+        reinterpret_cast<LPCWSTR>(pattern.utf16()), &data);
+    expect(search != INVALID_HANDLE_VALUE,
+        "native folder fixture must enumerate");
+    do {
+        const QString name = QString::fromWCharArray(data.cFileName);
+        if (name != QStringLiteral(".") && name != QStringLiteral("..")
+            && (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+            files.append(QDir(directory).absoluteFilePath(name));
+        }
+    } while (FindNextFileW(search, &data));
+    FindClose(search);
+#else
+    Q_UNUSED(directory);
+#endif
+    return files;
 }
 
 void testOpeningIsHardwareSilentAndExplicitConnectOwnsStartup()
@@ -250,7 +280,7 @@ void testValidSourceAndFieldsRoundTripIntoStart()
     }
 }
 
-void testFolderGridMetadataOrdersRrrCccFrames()
+void testFolderLoaderPreservesNativeOrderWithoutGridInference()
 {
     QTemporaryDir root;
     expect(root.isValid(), "temporary folder must exist");
@@ -268,24 +298,36 @@ void testFolderGridMetadataOrdersRrrCccFrames()
         expect(image.save(QDir(root.path()).filePath(fixture.name)),
             "grid fixture image must save");
     }
+    const QStringList expectedPaths = nativeV2FileOrder(root.path());
+    expect(expectedPaths.size() == 6,
+        "native discovery must find every folder fixture");
 
     QString error;
     const PrintImageFolderLoadResult result =
         loadPrintImagesFromFolderWithGridInfo(root.path(), &error);
-    expect(error.isEmpty() && result.images.isValid(), "RRRCCC folder must load");
-    expect(result.hasInferredGrid() && result.gridRows == 2 && result.gridColumns == 3,
-        "RRRCCC folder must infer its complete grid dimensions");
-    const int expectedRed[] = {11, 12, 13, 21, 22, 23};
-    for (int index = 0; index < 6; ++index) {
+    expect(error.isEmpty() && result.images.isValid(),
+        "coordinate-looking folder names must load without special handling");
+    expect(!result.hasInferredGrid() && result.gridWarning.isEmpty(),
+        "V2 folder loading must not infer a grid or produce a filename warning");
+    for (int index = 0; index < expectedPaths.size(); ++index) {
         PrintFrame frame;
         expect(result.images.copyFrame(index, &frame, &error) && frame.isValid(),
-            "inferred grid frame must be available");
-        expect(static_cast<unsigned char>(frame.pixels.at(2)) == expectedRed[index],
-            "inferred grid frames must be row-major");
+            "native-order folder frame must remain decodable");
+        const QString expectedName = QFileInfo(expectedPaths.at(index)).fileName();
+        int expectedRed = -1;
+        for (const Fixture& fixture : fixtures) {
+            if (expectedName == QString::fromLatin1(fixture.name)) {
+                expectedRed = fixture.red;
+                break;
+            }
+        }
+        expect(expectedRed >= 0
+                && static_cast<unsigned char>(frame.pixels.at(2)) == expectedRed,
+            "folder frames must remain in native discovery order");
     }
 }
 
-void testFolderGridMetadataLeavesManualDimensionsForOrdinaryNames()
+void testFolderLoaderDoesNotWarnForOrdinaryNames()
 {
     QTemporaryDir root;
     expect(root.isValid(), "temporary folder must exist");
@@ -300,8 +342,8 @@ void testFolderGridMetadataLeavesManualDimensionsForOrdinaryNames()
     const PrintImageFolderLoadResult result =
         loadPrintImagesFromFolderWithGridInfo(root.path(), &error);
     expect(error.isEmpty() && result.images.isValid(), "ordinary folder must load");
-    expect(!result.hasInferredGrid() && !result.gridWarning.isEmpty(),
-        "ordinary folder names must leave manual grid dimensions in place");
+    expect(!result.hasInferredGrid() && result.gridWarning.isEmpty(),
+        "ordinary folder names must not infer dimensions or produce a warning");
 }
 
 void testManualFolderLoadsAsynchronouslyAndAlignsPrintParameters()
@@ -322,6 +364,8 @@ void testManualFolderLoadsAsynchronouslyAndAlignsPrintParameters()
     dialog.show();
     controller.publishState(PrintUiState::Ready);
     QCoreApplication::processEvents();
+    dialog.findChild<QSpinBox*>("gridRowsSpin")->setValue(7);
+    dialog.findChild<QSpinBox*>("gridColumnsSpin")->setValue(9);
     dialog.setManualImageFolder(root.path());
     expect(!button(dialog, "startButton")->isEnabled(),
         "Start must stay disabled while a folder is loading");
@@ -334,10 +378,12 @@ void testManualFolderLoadsAsynchronouslyAndAlignsPrintParameters()
 
     expect(dialog.findChild<QRadioButton*>("folderSourceRadio")->isChecked(),
         "completed folder load must select the folder source");
-    expect(dialog.findChild<QSpinBox*>("gridRowsSpin")->value() == 2,
-        "recognized row count must populate the dialog");
-    expect(dialog.findChild<QSpinBox*>("gridColumnsSpin")->value() == 3,
-        "recognized column count must populate the dialog");
+    expect(dialog.findChild<QSpinBox*>("gridRowsSpin")->value() == 7,
+        "successful V2 folder load must preserve configured row count");
+    expect(dialog.findChild<QSpinBox*>("gridColumnsSpin")->value() == 9,
+        "successful V2 folder load must preserve configured column count");
+    expect(dialog.findChild<QLabel*>("errorDetailLabel")->text().isEmpty(),
+        "successful V2 folder load must not show a filename-grid warning");
 
     auto* rowSpacing = dialog.findChild<QDoubleSpinBox*>("rowSpacingSpin");
     auto* columnSpacing = dialog.findChild<QDoubleSpinBox*>("columnSpacingSpin");
@@ -375,8 +421,8 @@ int main(int argc, char* argv[])
     testRetainedButtonsMapOnceAndStatesGateCommands();
     testOriginControlsDispatchRenderPositionsAndGateWithState();
     testValidSourceAndFieldsRoundTripIntoStart();
-    testFolderGridMetadataOrdersRrrCccFrames();
-    testFolderGridMetadataLeavesManualDimensionsForOrdinaryNames();
+    testFolderLoaderPreservesNativeOrderWithoutGridInference();
+    testFolderLoaderDoesNotWarnForOrdinaryNames();
     testManualFolderLoadsAsynchronouslyAndAlignsPrintParameters();
     testCloseDuringPrintWaitsForSafeStopCompletion();
     std::cout << "print 9030 dialog tests passed" << std::endl;

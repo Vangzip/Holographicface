@@ -65,6 +65,9 @@ public:
     void endPrint() override;
     bool startYScan(qint32 absoluteTarget, const PrintAxisConfig& config,
         QString* errorMessage = nullptr) override;
+    bool prepareYScan(qint32 absoluteTarget, const PrintAxisConfig& config,
+        QString* errorMessage = nullptr) override;
+    bool startPreparedYScan(QString* errorMessage = nullptr) override;
     bool waitYStopped(int timeoutMs, const std::atomic_bool& cancelRequested,
         QString* errorMessage = nullptr) override;
     bool stepX(qint32 relativePulses, const PrintAxisConfig& config,
@@ -80,6 +83,9 @@ public:
         const PrintAxisConfig& yConfig, int timeoutMs,
         QString* errorMessage = nullptr);
     bool verifyLogicalZero(QString* errorMessage = nullptr) override;
+    PrintMappedAxisTelemetry sampleMappedAxisTelemetry() override;
+    bool readMappedYPlannedPosition(qint32* position,
+        QString* errorMessage = nullptr) override;
 
 private:
     bool homeAxis(PrintHardwareProfile::LogicalAxis logicalAxis, QString* errorMessage);
@@ -94,10 +100,22 @@ private:
     bool acquireOwnership(QString* errorMessage);
     void releaseOwnership();
     void poisonOwnership(const QString& reason);
+    bool preparePrintMove(short axis, const PrintAxisConfig& config,
+        QString* errorMessage);
     bool startPrintMove(short axis, qint32 absoluteTarget,
         const PrintAxisConfig& config, QString* errorMessage);
     bool waitPrintAxisStopped(short axis, int timeoutMs,
         const std::atomic_bool* cancelRequested, QString* errorMessage);
+
+    struct V2AxisMoveCache {
+        double velocity = 1000.0;
+        double acceleration = 1000.0;
+        double deceleration = 1000.0;
+        double startVelocity = 0.0;
+        double stopVelocity = 0.0;
+    };
+    V2AxisMoveCache& v2PrintMoveCache(short axis);
+    bool applyV2PrintMoveCache(short axis, QString* errorMessage);
 
     IImc60gApi* api_;
     PrintHardwareProfile profile_;
@@ -109,5 +127,9 @@ private:
     bool printActive_ = false;
     bool cardOpened_ = false;
     bool ethercatTouched_ = false;
+    bool yScanPrepared_ = false;
+    qint32 preparedYTarget_ = 0;
+    PrintAxisConfig preparedYConfig_;
     bool servoEnabled_[2] = {false, false};
+    V2AxisMoveCache printMoveCache_[2];
 };

@@ -102,6 +102,7 @@ public:
     {
         return 0;
     }
+    int setAxisStopDec(unsigned int, short, double, double) override { return 0; }
     int setAxisEndVelocity(unsigned int, short, double) override { return 0; }
     int startPtp(unsigned int, short, int) override { return 0; }
     int configureJog(unsigned int, short) override { return 0; }

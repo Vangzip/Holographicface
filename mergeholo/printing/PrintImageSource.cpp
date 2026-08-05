@@ -4,11 +4,19 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QImageReader>
-#include <QRegularExpression>
-#include <QSet>
+
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#include <atlimage.h>
+#endif
 
 #include <algorithm>
+#include <condition_variable>
+#include <cstdlib>
+#include <deque>
 #include <limits>
+#include <mutex>
+#include <thread>
 
 namespace {
 
@@ -24,6 +32,45 @@ void setError(QString* errorMessage, const QString& message)
 
 bool decodeFrame(const QString& path, PrintFrame* destination, QString* errorMessage)
 {
+#ifdef Q_OS_WIN
+    CImage decoded;
+    const HRESULT hr = decoded.Load(
+        reinterpret_cast<LPCWSTR>(path.utf16()));
+    if (FAILED(hr)) {
+        setError(errorMessage, "Cannot decode print image: " + path);
+        return false;
+    }
+    const int bytesPerPixel = decoded.GetBPP() / 8;
+    const int width = decoded.GetWidth();
+    const int height = decoded.GetHeight();
+    const int pitch = decoded.GetPitch();
+    const auto* bits = reinterpret_cast<const unsigned char*>(decoded.GetBits());
+    if ((decoded.GetBPP() != 24 && decoded.GetBPP() != 32)
+        || width <= 0 || height <= 0 || pitch == 0 || !bits) {
+        setError(errorMessage, "Unsupported V2 CImage frame: " + path);
+        return false;
+    }
+    const qint64 rowBytes64 = static_cast<qint64>(width) * bytesPerPixel;
+    const qint64 packedBytes64 = rowBytes64 * height;
+    if (packedBytes64 <= 0 || packedBytes64 > std::numeric_limits<int>::max()) {
+        setError(errorMessage, "Decoded print image has unsupported dimensions: " + path);
+        return false;
+    }
+    PrintFrame frame;
+    frame.width = width;
+    frame.height = height;
+    frame.stride = static_cast<int>(rowBytes64);
+    frame.format = decoded.GetBPP() == 24
+        ? PrintPixelFormat::Bgr24 : PrintPixelFormat::Bgra32;
+    frame.pixels.resize(static_cast<int>(packedBytes64));
+    for (int row = 0; row < height; ++row) {
+        std::memcpy(frame.pixels.data() + row * frame.stride,
+            bits + static_cast<ptrdiff_t>(row) * pitch,
+            static_cast<size_t>(frame.stride));
+    }
+    *destination = std::move(frame);
+    return true;
+#else
     QImageReader reader(path);
     reader.setAutoTransform(true);
     const QImage decoded = reader.read();
@@ -51,46 +98,232 @@ bool decodeFrame(const QString& path, PrintFrame* destination, QString* errorMes
     }
     *destination = std::move(frame);
     return true;
+#endif
 }
 
-struct FolderImageEntry {
-    QFileInfo info;
-    int row = 0;
-    int column = 0;
-};
-
-bool inferGridOrder(QVector<FolderImageEntry>* entries, int* rows, int* columns)
+bool discoverV2FolderFiles(const QDir& directory, QStringList* files,
+    QString* errorMessage)
 {
-    if (!entries || entries->isEmpty() || !rows || !columns) return false;
-    const QRegularExpression namePattern(QStringLiteral("^(\\d{3})(\\d{3})$"));
-    QSet<quint64> cells;
-    int maxRow = 0;
-    int maxColumn = 0;
-    for (FolderImageEntry& entry : *entries) {
-        const QRegularExpressionMatch match =
-            namePattern.match(entry.info.completeBaseName());
-        if (!match.hasMatch()) return false;
-        entry.row = match.captured(1).toInt();
-        entry.column = match.captured(2).toInt();
-        if (entry.row <= 0 || entry.column <= 0) return false;
-        const quint64 cell = (static_cast<quint64>(entry.row) << 32)
-            | static_cast<quint32>(entry.column);
-        if (cells.contains(cell)) return false;
-        cells.insert(cell);
-        maxRow = qMax(maxRow, entry.row);
-        maxColumn = qMax(maxColumn, entry.column);
+    if (!files) {
+        setError(errorMessage, "Print image folder discovery destination is unavailable.");
+        return false;
     }
-    const qint64 expectedCount = static_cast<qint64>(maxRow) * maxColumn;
-    if (expectedCount != entries->size()) return false;
-    std::sort(entries->begin(), entries->end(),
-        [](const FolderImageEntry& left, const FolderImageEntry& right) {
-            return left.row == right.row ? left.column < right.column
-                                         : left.row < right.row;
-        });
-    *rows = maxRow;
-    *columns = maxColumn;
+    files->clear();
+#ifdef Q_OS_WIN
+    const QByteArray pattern = QDir::toNativeSeparators(
+        directory.absoluteFilePath(QStringLiteral("*.*"))).toLocal8Bit();
+    WIN32_FIND_DATAA data {};
+    HANDLE search = FindFirstFileA(pattern.constData(), &data);
+    if (search == INVALID_HANDLE_VALUE) {
+        setError(errorMessage, "Cannot enumerate image folder: "
+            + directory.absolutePath());
+        return false;
+    }
+    do {
+        const QString name = QString::fromLocal8Bit(data.cFileName);
+        if (name == QStringLiteral(".") || name == QStringLiteral("..")
+            || (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            continue;
+        }
+        files->append(directory.absoluteFilePath(name));
+    } while (FindNextFileA(search, &data));
+    FindClose(search);
     return true;
+#else
+    Q_UNUSED(directory);
+    setError(errorMessage,
+        "V2 folder discovery requires Windows FindFirstFile/FindNextFile semantics.");
+    return false;
+#endif
 }
+
+class BoundedPrintImageQueue final : public IPrintImageQueue
+{
+public:
+    BoundedPrintImageQueue(QVector<PrintFrame> frames, QStringList files)
+        : frames_(std::move(frames))
+        , files_(std::move(files))
+    {
+    }
+
+    ~BoundedPrintImageQueue() override
+    {
+        stop();
+    }
+
+    bool start(QString* errorMessage) override
+    {
+        clearError(errorMessage);
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (started_) return true;
+        if (producer_.joinable()) {
+            setError(errorMessage, "Print image queue producer was not joined.");
+            return false;
+        }
+        if (!producerError_.isEmpty()) {
+            setError(errorMessage, producerError_);
+            return false;
+        }
+        stopRequested_ = false;
+        started_ = true;
+        const size_t consumedCount = nextIndex_ >= queued_.size()
+            ? nextIndex_ - queued_.size() : 0;
+        const size_t remainingCount = sourceCount()
+            - std::min(consumedCount, sourceCount());
+        const size_t preloadTarget = std::min(
+            static_cast<size_t>(900), remainingCount);
+        if (producerFinished_ || nextIndex_ >= sourceCount()) {
+            producerFinished_ = true;
+            condition_.notify_all();
+        } else {
+            producer_ = std::thread([this] { produce(); });
+        }
+        condition_.wait(lock, [this, preloadTarget] {
+            return queued_.size() >= preloadTarget
+                || !producerError_.isEmpty() || producerFinished_;
+        });
+        if (!producerError_.isEmpty()) {
+            setError(errorMessage, producerError_);
+            return false;
+        }
+        if (queued_.size() < preloadTarget) {
+            setError(errorMessage,
+                "Print image source ended before the V2 preload target was available.");
+            return false;
+        }
+        return true;
+    }
+
+    bool takeRow(int columnCount, QVector<PrintFrame>* row,
+        QString* errorMessage) override
+    {
+        clearError(errorMessage);
+        if (!row || columnCount <= 0) {
+            setError(errorMessage, "Print image queue row request is invalid.");
+            return false;
+        }
+        row->clear();
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (!started_) {
+            setError(errorMessage, "Print image queue is not started.");
+            return false;
+        }
+        condition_.wait(lock, [this, columnCount] {
+            return static_cast<int>(queued_.size()) >= columnCount
+                || !producerError_.isEmpty() || producerFinished_
+                || stopRequested_;
+        });
+        if (static_cast<int>(queued_.size()) < columnCount) {
+            if (!producerError_.isEmpty()) {
+                setError(errorMessage, producerError_);
+            } else if (stopRequested_) {
+                setError(errorMessage, "Print image queue was stopped.");
+            } else {
+                setError(errorMessage,
+                    QString("Print image source ended before a complete row of %1 frames.")
+                        .arg(columnCount));
+            }
+            return false;
+        }
+        row->reserve(columnCount);
+        for (int column = 0; column < columnCount; ++column) {
+            row->append(std::move(queued_.front()));
+            queued_.pop_front();
+        }
+        condition_.notify_all();
+        return true;
+    }
+
+    void stop() override
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopRequested_ = true;
+            started_ = false;
+            condition_.notify_all();
+        }
+        if (producer_.joinable()) producer_.join();
+    }
+
+private:
+    size_t sourceCount() const
+    {
+        return files_.isEmpty()
+            ? static_cast<size_t>(frames_.size())
+            : static_cast<size_t>(files_.size());
+    }
+
+    bool readFrame(size_t index, PrintFrame* frame, QString* errorMessage)
+    {
+        if (!files_.isEmpty()) {
+            return decodeFrame(files_.at(static_cast<int>(index)), frame,
+                errorMessage);
+        }
+        if (index >= static_cast<size_t>(frames_.size())) {
+            setError(errorMessage, "Print image queue index is outside the source.");
+            return false;
+        }
+        *frame = frames_.at(static_cast<int>(index));
+        return frame->isValid();
+    }
+
+    void produce()
+    {
+#ifdef Q_OS_WIN
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+        for (;;) {
+            size_t index = 0;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                condition_.wait(lock, [this] {
+                    return stopRequested_
+                        || static_cast<int>(queued_.size()) < 900;
+                });
+                if (stopRequested_) return;
+                if (nextIndex_ >= sourceCount()) {
+                    producerFinished_ = true;
+                    condition_.notify_all();
+                    return;
+                }
+                index = nextIndex_;
+            }
+
+            PrintFrame frame;
+            QString error;
+            if (!readFrame(index, &frame, &error)) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                producerError_ = error.isEmpty()
+                    ? QString("Cannot read print image %1.").arg(
+                        static_cast<qulonglong>(index))
+                    : error;
+                producerFinished_ = true;
+                condition_.notify_all();
+                return;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                queued_.push_back(std::move(frame));
+                ++nextIndex_;
+                condition_.notify_all();
+                if (stopRequested_) return;
+            }
+        }
+    }
+
+    const QVector<PrintFrame> frames_;
+    const QStringList files_;
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    std::deque<PrintFrame> queued_;
+    std::thread producer_;
+    size_t nextIndex_ = 0;
+    bool started_ = false;
+    bool stopRequested_ = false;
+    bool producerFinished_ = false;
+    QString producerError_;
+};
 
 } // namespace
 
@@ -115,13 +348,31 @@ PrintImageSet PrintImageSet::fromFrames(const QVector<PrintFrame>& frames,
     return result;
 }
 
+PrintImageSet PrintImageSet::fromFolderFiles(const QStringList& files,
+    const QString& sourcePath, QString* errorMessage)
+{
+    clearError(errorMessage);
+    if (files.isEmpty()) {
+        setError(errorMessage, "Print image folder file list is empty.");
+        return {};
+    }
+    PrintImageSet result;
+    result.files_ = files;
+    result.sourceType_ = PrintImageSourceType::Folder;
+    result.sourcePath_ = sourcePath;
+    return result;
+}
+
 size_t PrintImageSet::imageCount() const
 {
-    return static_cast<size_t>(frames_.size());
+    return files_.isEmpty()
+        ? static_cast<size_t>(frames_.size())
+        : static_cast<size_t>(files_.size());
 }
 
 bool PrintImageSet::isValid() const
 {
+    if (!files_.isEmpty()) return sourceType_ == PrintImageSourceType::Folder;
     if (frames_.isEmpty()) return false;
     for (const PrintFrame& frame : frames_) if (!frame.isValid()) return false;
     return true;
@@ -130,6 +381,12 @@ bool PrintImageSet::isValid() const
 bool PrintImageSet::copyImageBytes(size_t index, QByteArray* destination) const
 {
     if (!destination || index >= imageCount()) return false;
+    if (!files_.isEmpty()) {
+        PrintFrame frame;
+        if (!copyFrame(index, &frame)) return false;
+        *destination = frame.pixels;
+        return true;
+    }
     *destination = frames_.at(static_cast<int>(index)).pixels;
     return true;
 }
@@ -147,6 +404,10 @@ bool PrintImageSet::copyFrame(size_t index, PrintFrame* destination,
         setError(errorMessage, "Print frame index is outside the immutable set.");
         return false;
     }
+    if (!files_.isEmpty()) {
+        return decodeFrame(files_.at(static_cast<int>(index)), destination,
+            errorMessage);
+    }
     const PrintFrame& frame = frames_.at(static_cast<int>(index));
     if (!frame.isValid()) {
         setError(errorMessage, "Stored immutable print frame is invalid or truncated.");
@@ -158,6 +419,12 @@ bool PrintImageSet::copyFrame(size_t index, PrintFrame* destination,
 
 PrintImageSourceType PrintImageSet::sourceType() const { return sourceType_; }
 QString PrintImageSet::sourcePath() const { return sourcePath_; }
+
+std::unique_ptr<IPrintImageQueue> PrintImageSet::createQueue() const
+{
+    if (!isValid()) return {};
+    return std::make_unique<BoundedPrintImageQueue>(frames_, files_);
+}
 
 PrintImageSet makePrintImageSetFromElementalMemory(
     const ElementalMemoryResult& result, QString* errorMessage)
@@ -220,29 +487,24 @@ PrintImageFolderLoadResult loadPrintImagesFromFolderWithGridInfo(const QString& 
         return result;
     }
     QDir dir(info.absoluteFilePath());
-    const QStringList filters = {"*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tif", "*.tiff"};
-    const QFileInfoList fileEntries = dir.entryInfoList(filters,
-        QDir::Files | QDir::Readable, QDir::Name | QDir::IgnoreCase);
-    QVector<FolderImageEntry> entries;
-    entries.reserve(fileEntries.size());
-    for (const QFileInfo& entry : fileEntries) entries.append({entry});
-    if (entries.isEmpty()) {
-        setError(errorMessage, "Image folder has no supported images: " + folderPath);
+    QStringList files;
+    if (!discoverV2FolderFiles(dir, &files, errorMessage)) return result;
+    if (files.isEmpty()) {
+        setError(errorMessage, "Image folder has no files: " + folderPath);
         return result;
     }
-    if (!inferGridOrder(&entries, &result.gridRows, &result.gridColumns)) {
-        result.gridWarning = QStringLiteral(
-            "Image names do not form a complete RRRCCC grid; keep manual row and column values.");
-    }
-    QVector<PrintFrame> frames;
-    frames.reserve(entries.size());
-    for (const FolderImageEntry& entry : entries) {
-        PrintFrame frame;
-        if (!decodeFrame(entry.info.absoluteFilePath(), &frame, errorMessage)) return {};
-        frames.append(std::move(frame));
-    }
-    result.images = PrintImageSet::fromFrames(frames, errorMessage,
-        PrintImageSourceType::Folder, dir.absolutePath());
+    result.images = PrintImageSet::fromFolderFiles(
+        files, dir.absolutePath(), errorMessage);
+    const QString filename = QFileInfo(files.last()).fileName();
+    const int jpgPos = filename.indexOf(QStringLiteral(".jpg"));
+    const QString stem = jpgPos < 0 ? filename : filename.left(jpgPos);
+    const int half = stem.size() / 2;
+    const auto v2Atoi = [](const QString& value) {
+        const QByteArray local = value.toLocal8Bit();
+        return static_cast<int>(std::strtol(local.constData(), nullptr, 10));
+    };
+    result.gridRows = v2Atoi(stem.left(half));
+    result.gridColumns = v2Atoi(stem.mid(half, half));
     return result;
 }
 

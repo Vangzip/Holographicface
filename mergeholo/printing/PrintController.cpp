@@ -4,6 +4,7 @@
 #include "Imc60gMotionController.h"
 #include "PrintHardwarePreflight.h"
 #include "PrintHardwareProfile.h"
+#include "PrintFlowLogger.h"
 #include "PrintJobRunner.h"
 #include "PrintPositionSampler.h"
 #include "Sv660nExposureController.h"
@@ -30,7 +31,11 @@ public:
         , motion_(&api_, profile_)
         , exposure_(api_, profile_)
         , preflight_(motion_, exposure_, presenter_)
-        , runner_(new PrintJobRunner(motion_, exposure_, presenter_, preflight_, this))
+        , runner_(new PrintJobRunner(motion_, exposure_, presenter_, preflight_,
+              PrintImageQueueFactory(),
+              std::make_shared<AsyncPrintFlowLogger>(
+                  QDir(projectRoot).filePath("print_flow.log")),
+              this))
         , pollTimer_(new QTimer(this))
         , config_(loadPrint9030Config(
               QDir(projectRoot).filePath("config/print_9030.ini")))

@@ -65,6 +65,7 @@ QString projectFile(const QString& relativePath)
 {
     const QStringList candidates = {
         QDir(QCoreApplication::applicationDirPath()).filePath("../../../" + relativePath),
+        QDir::current().filePath("../../../" + relativePath),
         QDir::current().filePath("../../" + relativePath),
         QDir::current().filePath(relativePath)
     };
@@ -563,6 +564,25 @@ void testMainWindowUsesUnifiedSettingsEntry()
         "runtime pipeline template must expose unified settings placeholders");
 }
 
+void testMainWindowInitializesCameraBeforeEventLoop()
+{
+    const QByteArray source = readFile(projectFile("widgets/CaptureWindow.cpp"));
+    const QByteArray entryPoint = readFile(projectFile("apps/mergeholo_main.cpp"));
+    expect(!source.contains("QTimer::singleShot(0, this, [this] { startCamera(); });"),
+        "the first camera initialization must not be queued after the Qt event loop begins");
+    expect(entryPoint.indexOf("capture->initialize(&input)")
+            < entryPoint.indexOf("CaptureWindow window"),
+        "the camera SDK must initialize before the capture window is constructed");
+    expect(source.contains("正在使用外部输入"),
+        "external input must report its active mode instead of camera initialization failure");
+    expect(source.contains("if (settings_.input.isExternal())"),
+        "capture-window startup must branch on external input before reporting camera failure");
+    expect(source.contains("restartForCameraMode"),
+        "switching to camera mode must relaunch instead of initializing the SDK in the active GUI");
+    expect(source.contains("QProcess::startDetached"),
+        "camera-mode restart must launch a fresh MergeHolo process");
+}
+
 void testCliCaptureUsesUnifiedCameraSettings()
 {
     const QByteArray sessionSource = readFile(projectFile("camera/CaptureSession.cpp"));
@@ -617,6 +637,7 @@ int main(int argc, char* argv[])
     testDevicePageBindingsAndBusyState();
     testCameraInputUsesTypedSettings();
     testMainWindowUsesUnifiedSettingsEntry();
+    testMainWindowInitializesCameraBeforeEventLoop();
     testCliCaptureUsesUnifiedCameraSettings();
     renderDialogWhenRequested();
     std::cout << "processing settings tests passed" << std::endl;

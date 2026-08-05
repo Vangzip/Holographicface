@@ -51,6 +51,8 @@ void testDefaultTwoByThreeGoldenPlan()
     expect(plan.totalPulse == 43000,
         "total pulse must include exposure, two ramps, and addTemp");
     expect(plan.framesPerImage == 1, "60 kHz at 60 Hz is one VBlank per image");
+    expect(plan.presentPredictPulse == 1000,
+        "V2's first-image selector must predict one 60 Hz refresh of Y travel");
     expect(plan.rows.size() == 2, "golden plan must contain two rows");
 
     const V2RowPlan& forward = plan.rows[0];
@@ -124,6 +126,12 @@ void testProfileConstantsAndReverseDelayBoundaries()
     plan = build(config, 60.0, &error);
     expect(error.isEmpty() && plan.rows[1].startDelayFrames == 10,
         "lead pulse must be subtracted exactly from reverse display delay");
+
+    config.main.addTempPulse = 16000;
+    config.main.leadPulse = -5000;
+    plan = build(config, 60.0, &error);
+    expect(error.isEmpty() && plan.rows[1].startDelayFrames == 15,
+        "negative lead pulse must be subtracted as signed input: " + error);
 }
 
 void testVBlankFitAndVerifiedOutputHold()
@@ -146,6 +154,8 @@ void testVBlankFitAndVerifiedOutputHold()
     plan = build(config, 60.0, &error);
     expect(error.isEmpty() && plan.framesPerImage == 2,
         QString("exact two-VBlank cadence failed: %1").arg(error));
+    expect(plan.presentPredictPulse == 500,
+        "V2's predictive Y selector must use speed / refreshHz, not image step");
     expect(plan.rows[0].holdFramesAfterPresent == 1,
         "verified physical-output path holds framesPerImage-1");
     expect(plan.rows[0].startDelayFrames == 8,
@@ -235,6 +245,10 @@ void testInvalidConfigurationFailsClosed()
     config = defaultPrint9030Config();
     config.main.columnSpacingMm = 0.4;
     expectInvalid(config, 60.0, "stepPulse");
+
+    config = defaultPrint9030Config();
+    config.main.addTempPulse = -1;
+    expectInvalid(config, 60.0, "addTempPulse");
 
     config = defaultPrint9030Config();
     expectInvalid(config, 0.0, "refresh");

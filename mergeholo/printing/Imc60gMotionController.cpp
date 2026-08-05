@@ -994,6 +994,47 @@ bool Imc60gMotionController::readMappedPlannedPositions(int* xPulses, int* yPuls
     return true;
 }
 
+PrintMappedAxisTelemetry Imc60gMotionController::sampleMappedAxisTelemetry()
+{
+    PrintMappedAxisTelemetry telemetry;
+    Imc60gAxisSnapshot x;
+    Imc60gAxisSnapshot y;
+    QString error;
+    if (!readSnapshot(PrintHardwareProfile::LogicalAxis::X, &x, &error)
+        || !readSnapshot(PrintHardwareProfile::LogicalAxis::Y, &y, &error)) {
+        return telemetry;
+    }
+    telemetry.available = true;
+    telemetry.xPlannedPosition = x.plannedPosition;
+    telemetry.xEncoderPosition = x.encoderPosition;
+    telemetry.yPlannedPosition = y.plannedPosition;
+    telemetry.yEncoderPosition = y.encoderPosition;
+    return telemetry;
+}
+
+bool Imc60gMotionController::readMappedYPlannedPosition(qint32* position,
+    QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    if (errorMessage) errorMessage->clear();
+    if (!position) {
+        setError(errorMessage, "IMC60G Y planned-position destination is null.");
+        return false;
+    }
+    const short axis = static_cast<short>(profile_.axisY);
+    if (state_ != Imc60gConnectionState::Ready || axis < 0) {
+        setError(errorMessage, "Cannot read mapped Y position before connectAndHome().");
+        return false;
+    }
+    int value = 0;
+    if (!callSucceeded(api_->plannedPosition(profile_.cardIndex, axis, &value),
+            "IMC_GetAxPrfPos32", axis, errorMessage)) {
+        return false;
+    }
+    *position = value;
+    return true;
+}
+
 bool Imc60gMotionController::setCurrentPositionAsLogicalOrigin(QString* errorMessage)
 {
     QMutexLocker locker(&mutex_);
@@ -1163,9 +1204,10 @@ void Imc60gMotionController::endPrint()
 {
     QMutexLocker locker(&mutex_);
     printActive_ = false;
+    yScanPrepared_ = false;
 }
 
-bool Imc60gMotionController::startPrintMove(short axis, qint32 absoluteTarget,
+bool Imc60gMotionController::preparePrintMove(short axis,
     const PrintAxisConfig& config, QString* errorMessage)
 {
     if (state_ != Imc60gConnectionState::Ready || !printActive_) {
@@ -1179,16 +1221,53 @@ bool Imc60gMotionController::startPrintMove(short axis, qint32 absoluteTarget,
         setError(errorMessage, "IMC60G print motion profile is invalid.");
         return false;
     }
+
+    // Keep the device command order byte-for-byte equivalent to V2's
+    // Motion_SetAxis* + ApplyImc60gMovePara path.  In particular, each
+    // setter that reaches Apply emits both SetAxMvPara and SetAxStopDec;
+    // start velocity is cached only, and a zero end velocity is not sent.
+    V2AxisMoveCache& cached = v2PrintMoveCache(axis);
+    cached.acceleration = config.acceleratedVelocity;
+    if (!applyV2PrintMoveCache(axis, errorMessage)) return false;
+    cached.deceleration = config.acceleratedVelocity;
+    if (!applyV2PrintMoveCache(axis, errorMessage)) return false;
+    cached.velocity = config.speedOfMovement;
+    if (!applyV2PrintMoveCache(axis, errorMessage)) return false;
+    cached.startVelocity = config.startSpeed;
+    cached.stopVelocity = config.stopSpeed;
+    if (!applyV2PrintMoveCache(axis, errorMessage)) return false;
+    return true;
+}
+
+Imc60gMotionController::V2AxisMoveCache& Imc60gMotionController::v2PrintMoveCache(short axis)
+{
+    // The connected IMC60G profile contains exactly the two print axes.
+    return printMoveCache_[axis == profile_.axisX ? 0 : 1];
+}
+
+bool Imc60gMotionController::applyV2PrintMoveCache(short axis, QString* errorMessage)
+{
+    const V2AxisMoveCache& cached = v2PrintMoveCache(axis);
     if (!callSucceeded(api_->setMotionProfile(profile_.cardIndex, axis,
-            config.speedOfMovement, config.acceleratedVelocity,
-            config.acceleratedVelocity, config.startSpeed),
-            "IMC_SetAxMvPara", axis, errorMessage)) {
+            cached.velocity, cached.acceleration, cached.deceleration,
+            cached.startVelocity), "IMC_SetAxMvPara", axis, errorMessage)) {
         return false;
     }
-    if (!callSucceeded(api_->setAxisEndVelocity(profile_.cardIndex, axis,
-            config.stopSpeed), "IMC_SetAxEndVel", axis, errorMessage)) {
-        return false;
+    // V2 deliberately ignores IMC_SetAxStopDec and IMC_SetAxEndVel return
+    // values after a successful IMC_SetAxMvPara.
+    api_->setAxisStopDec(profile_.cardIndex, axis,
+        cached.deceleration, cached.deceleration);
+    if (cached.stopVelocity > 0.0) {
+        api_->setAxisEndVelocity(profile_.cardIndex, axis, cached.stopVelocity);
     }
+    return true;
+}
+
+bool Imc60gMotionController::startPrintMove(short axis, qint32 absoluteTarget,
+    const PrintAxisConfig& config, QString* errorMessage)
+{
+    if (!preparePrintMove(axis, config, errorMessage)) return false;
+    if (!applyV2PrintMoveCache(axis, errorMessage)) return false;
     return callSucceeded(api_->startPtp(profile_.cardIndex, axis, absoluteTarget),
         "IMC_StartPtpMove", axis, errorMessage);
 }
@@ -1200,6 +1279,52 @@ bool Imc60gMotionController::startYScan(qint32 absoluteTarget,
     if (errorMessage) errorMessage->clear();
     return startPrintMove(static_cast<short>(profile_.axisY), absoluteTarget,
         config, errorMessage);
+}
+
+bool Imc60gMotionController::prepareYScan(qint32 absoluteTarget,
+    const PrintAxisConfig& config, QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    if (errorMessage) errorMessage->clear();
+    if (!preparePrintMove(static_cast<short>(profile_.axisY), config, errorMessage)) {
+        yScanPrepared_ = false;
+        return false;
+    }
+    preparedYTarget_ = absoluteTarget;
+    preparedYConfig_ = config;
+    yScanPrepared_ = true;
+    return true;
+}
+
+bool Imc60gMotionController::startPreparedYScan(QString* errorMessage)
+{
+    QMutexLocker locker(&mutex_);
+    if (errorMessage) errorMessage->clear();
+    const short axis = static_cast<short>(profile_.axisY);
+    if (state_ != Imc60gConnectionState::Ready || !printActive_ || !yScanPrepared_) {
+        setError(errorMessage, "IMC60G has no prepared Y scan to start.");
+        return false;
+    }
+    // V2 Motion_StartAxis applies the cached move profile once more immediately
+    // before IMC_StartPtpMove. Keep that device-side command order intact.
+    if (!applyV2PrintMoveCache(axis, errorMessage)) return false;
+    yScanPrepared_ = false;
+    if (!callSucceeded(api_->startPtp(profile_.cardIndex, axis, preparedYTarget_),
+            "IMC_StartPtpMove", axis, errorMessage)) {
+        return false;
+    }
+
+    // Motion_StartAxis in V2 immediately reads planned position, encoder
+    // position, and axis status after StartPtp. Those SDK calls are part of
+    // the physical start phase (not merely optional reporting), so preserve
+    // their ordering and intentionally ignore their return values as V2 does.
+    int plannedPosition = 0;
+    int encoderPosition = 0;
+    unsigned int axisStatus = 0;
+    api_->plannedPosition(profile_.cardIndex, axis, &plannedPosition);
+    api_->encoderPosition(profile_.cardIndex, axis, &encoderPosition);
+    api_->axisStatus(profile_.cardIndex, axis, &axisStatus);
+    return true;
 }
 
 bool Imc60gMotionController::waitPrintAxisStopped(short axis, int timeoutMs,

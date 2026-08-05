@@ -18,6 +18,7 @@ struct V2RowPlan {
     qint64 compareEnd = 0;
     QVector<int> logicalFrameOrder;
     int startDelayFrames = 0;
+    qint64 effectiveDisplayDelayPulse = 0;
     int holdFramesAfterPresent = 0;
 };
 
@@ -26,6 +27,7 @@ struct V2PrintPlan {
     qint64 accelerationPulse = 0;
     qint64 exposurePulse = 0;
     qint64 totalPulse = 0;
+    qint64 presentPredictPulse = 0;
     int framesPerImage = 0;
     QVector<V2RowPlan> rows;
 };

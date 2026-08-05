@@ -26,6 +26,8 @@ public:
     int servoOff(unsigned int cardIndex, short axis) override;
     int setMotionProfile(unsigned int cardIndex, short axis, double velocity,
         double acceleration, double deceleration, double startVelocity) override;
+    int setAxisStopDec(unsigned int cardIndex, short axis,
+        double smoothStopDeceleration, double abruptStopDeceleration) override;
     int setAxisEndVelocity(unsigned int cardIndex, short axis,
         double endVelocity) override;
     int startPtp(unsigned int cardIndex, short axis, int target) override;

@@ -57,35 +57,6 @@ PrintPreflightResult PrintHardwarePreflight::check(
             || job.plan.rows.size() != job.config.main.gridRows) {
             return fail(PreflightFault::TimingPlan, "V2 print plan row count is invalid.");
         }
-        qint64 requiredCount = static_cast<qint64>(job.config.main.gridRows)
-            * static_cast<qint64>(job.config.main.gridColumns);
-        if (requiredCount <= 0
-            || static_cast<quint64>(requiredCount) != static_cast<quint64>(job.images.imageCount())) {
-            return fail(PreflightFault::ImageCount,
-                QString("Image count must exactly equal rows*columns: required=%1 actual=%2.")
-                    .arg(requiredCount).arg(static_cast<qulonglong>(job.images.imageCount())));
-        }
-        int expectedWidth = -1;
-        int expectedHeight = -1;
-        PrintPixelFormat expectedFormat = PrintPixelFormat::Bgr24;
-        for (qint64 index = 0; index < requiredCount; ++index) {
-            PrintFrame frame;
-            QString frameError;
-            if (!job.images.copyFrame(static_cast<size_t>(index), &frame, &frameError)
-                || !frame.isValid()) {
-                return fail(PreflightFault::ImageFrame,
-                    QString("Image frame %1 is invalid or truncated: %2").arg(index).arg(frameError));
-            }
-            if (index == 0) {
-                expectedWidth = frame.width;
-                expectedHeight = frame.height;
-                expectedFormat = frame.format;
-            } else if (frame.width != expectedWidth || frame.height != expectedHeight
-                || frame.format != expectedFormat) {
-                return fail(PreflightFault::ImageFrame,
-                    QString("Image frame %1 dimensions or pixel format mismatch the first frame.").arg(index));
-            }
-        }
         for (int rowIndex = 0; rowIndex < job.plan.rows.size(); ++rowIndex) {
             const V2RowPlan& row = job.plan.rows.at(rowIndex);
             if (row.logicalFrameOrder.size() != job.config.main.gridColumns

@@ -8,7 +8,19 @@
 #include <QVector>
 
 #include <cstddef>
+#include <functional>
 #include <memory>
+
+class IPrintImageQueue
+{
+public:
+    virtual ~IPrintImageQueue() = default;
+    virtual bool start(QString* errorMessage = nullptr) = 0;
+    virtual bool takeRow(int columnCount, QVector<PrintFrame>* row,
+        QString* errorMessage = nullptr) = 0;
+    // stop() also joins the background producer before it returns.
+    virtual void stop() = 0;
+};
 
 enum class PrintImageSourceType {
     None,
@@ -23,6 +35,9 @@ public:
         QString* errorMessage = nullptr,
         PrintImageSourceType sourceType = PrintImageSourceType::ImmutableFrames,
         const QString& sourcePath = QString());
+    static PrintImageSet fromFolderFiles(const QStringList& files,
+        const QString& sourcePath = QString(),
+        QString* errorMessage = nullptr);
 
     size_t imageCount() const;
     bool isValid() const;
@@ -31,12 +46,17 @@ public:
         QString* errorMessage = nullptr) const;
     PrintImageSourceType sourceType() const;
     QString sourcePath() const;
+    std::unique_ptr<IPrintImageQueue> createQueue() const;
 
 private:
     QVector<PrintFrame> frames_;
+    QStringList files_;
     PrintImageSourceType sourceType_ = PrintImageSourceType::None;
     QString sourcePath_;
 };
+
+using PrintImageQueueFactory =
+    std::function<std::unique_ptr<IPrintImageQueue>(const PrintImageSet&)>;
 
 struct PrintImageFolderLoadResult {
     PrintImageSet images;

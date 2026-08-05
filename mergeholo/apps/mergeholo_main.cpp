@@ -17,6 +17,7 @@
 #include <QStringList>
 #include <QTextStream>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -293,7 +294,29 @@ int main(int argc, char* argv[])
     }
 
     if (args.size() <= 1 || args.at(1) == "--ui") {
-        CaptureWindow window(projectRoot(), optionValue(args, "--camera-config", defaultCameraConfig()));
+        const QString root = projectRoot();
+        const QString cameraConfig = optionValue(args, "--camera-config", defaultCameraConfig());
+        ProcessingSettings settings = defaultProcessingSettings(root, cameraConfig);
+        QString settingsError;
+        if (!loadProcessingSettings(
+                ProcessingSettingsPaths::fromProjectRoot(root), &settings, &settingsError)) {
+            qWarning() << "Cannot load unified camera settings:" << settingsError;
+        }
+
+        // The vendor SDK must open the GigE device before the first QWidget is
+        // constructed. Initializing it after a native window exists can block
+        // forever even though the same device works in the vendor application.
+        std::unique_ptr<LightFieldCapture> capture;
+        if (!settings.input.isExternal()) {
+            capture = std::make_unique<LightFieldCapture>();
+            const LightFieldCapture::HoloInData input = makeCameraInput(settings.camera);
+            if (!capture->initialize(&input)) {
+                capture.reset();
+                qWarning() << "Camera initialization failed before UI startup.";
+            }
+        }
+
+        CaptureWindow window(root, cameraConfig, std::move(capture));
         window.show();
         return app.exec();
     }

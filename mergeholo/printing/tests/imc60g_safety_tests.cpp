@@ -250,6 +250,15 @@ public:
         return result(QString("profile%1").arg(axis));
     }
 
+    int setAxisStopDec(unsigned int card, short axis, double smoothStopDeceleration,
+        double abruptStopDeceleration) override
+    {
+        Q_UNUSED(card);
+        record(QString("stop_dec:%1:%2:%3").arg(axis)
+            .arg(smoothStopDeceleration).arg(abruptStopDeceleration));
+        return result(QString("stop_dec%1").arg(axis));
+    }
+
     int setAxisEndVelocity(unsigned int card, short axis, double velocity) override
     {
         Q_UNUSED(card);

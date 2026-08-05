@@ -186,11 +186,10 @@ V2PrintPlan buildV2PrintPlan(
                 .arg(config.main.widthScale)
                 .arg(config.main.heightScale));
     }
-    if (config.main.addTempPulse < 0 || config.main.leadPulse < 0) {
+    if (config.main.addTempPulse < 0) {
         return fail(errorMessage,
-            QString("addTempPulse and leadPulse must be non-negative; values=%1,%2")
-                .arg(config.main.addTempPulse)
-                .arg(config.main.leadPulse));
+            QString("addTempPulse must be non-negative; value=%1")
+                .arg(config.main.addTempPulse));
     }
 
     const PrintAxisConfig& y = config.axisY;
@@ -345,7 +344,8 @@ V2PrintPlan buildV2PrintPlan(
                 .arg(pulsePerRefreshFrame, 0, 'g', 17));
     }
 
-    auto delayFrames = [&](qint64 delayPulse, int* frames) -> bool {
+    auto delayFrames = [&](qint64 delayPulse, int* frames,
+                           qint64* effectivePulse) -> bool {
         const double rounded =
             static_cast<double>(delayPulse) / pulsePerRefreshFrame + 0.5;
         if (!checkedRoundedInt(rounded, frames)) {
@@ -355,19 +355,25 @@ V2PrintPlan buildV2PrintPlan(
             *frames = 0;
         }
 
-        qint64 effectivePulse = 0;
+        qint64 roundedEffectivePulse = 0;
         if (!checkedRoundedQint64(
                 static_cast<double>(*frames) * pulsePerRefreshFrame + 0.5,
-                &effectivePulse)) {
+                &roundedEffectivePulse)) {
             return false;
         }
-        return isSdkPosition(effectivePulse);
+        if (!isSdkPosition(roundedEffectivePulse)) return false;
+        *effectivePulse = roundedEffectivePulse;
+        return true;
     };
 
     int forwardDelayFrames = 0;
     int reverseDelayFrames = 0;
-    if (!delayFrames(profile.forwardDelayPulse, &forwardDelayFrames)
-        || !delayFrames(reverseDelayPulse, &reverseDelayFrames)) {
+    qint64 forwardEffectiveDelayPulse = 0;
+    qint64 reverseEffectiveDelayPulse = 0;
+    if (!delayFrames(profile.forwardDelayPulse, &forwardDelayFrames,
+            &forwardEffectiveDelayPulse)
+        || !delayFrames(reverseDelayPulse, &reverseDelayFrames,
+            &reverseEffectiveDelayPulse)) {
         return fail(errorMessage,
             QString("startDelayFrames arithmetic overflow; forwardPulse=%1 reversePulse=%2")
                 .arg(profile.forwardDelayPulse)
@@ -379,6 +385,7 @@ V2PrintPlan buildV2PrintPlan(
     plan.accelerationPulse = accelerationPulse;
     plan.exposurePulse = exposurePulse;
     plan.totalPulse = totalPulse;
+    plan.presentPredictPulse = static_cast<qint64>(pulsePerRefreshFrame + 0.5);
     plan.framesPerImage = framesPerImage;
     plan.rows.reserve(config.main.gridRows);
 
@@ -477,6 +484,8 @@ V2PrintPlan buildV2PrintPlan(
         }
         row.startDelayFrames =
             reverse ? reverseDelayFrames : forwardDelayFrames;
+        row.effectiveDisplayDelayPulse =
+            reverse ? reverseEffectiveDelayPulse : forwardEffectiveDelayPulse;
         // Task 5 describes the production IMC path after presenter preflight;
         // active V2's verified-output VBlank branch holds framesPerImage-1.
         row.holdFramesAfterPresent = framesPerImage - 1;

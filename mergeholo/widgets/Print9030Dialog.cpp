@@ -352,17 +352,6 @@ void Print9030Dialog::startPrint()
         ui_->errorDetailLabel->setText(QStringLiteral("请选择有效打印图像源。"));
         return;
     }
-    const qint64 required = static_cast<qint64>(config_.main.gridRows)
-        * static_cast<qint64>(config_.main.gridColumns);
-    if (required <= 0
-        || static_cast<quint64>(required) != static_cast<quint64>(active.imageCount())) {
-        ui_->errorDetailLabel->setText(
-            QStringLiteral("图像数量必须严格等于行数×列数：需要 %1，实际 %2。")
-                .arg(required)
-                .arg(static_cast<qulonglong>(active.imageCount())));
-        ui_->gridRowsSpin->setFocus(Qt::OtherFocusReason);
-        return;
-    }
     controller_->start(config_, active);
 }
 

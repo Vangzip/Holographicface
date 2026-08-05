@@ -1,6 +1,8 @@
 #include "V2D3DFramePresenter.h"
 
 #include <QApplication>
+#include <QDir>
+#include <QFile>
 #include <QImage>
 #include <QMutex>
 #include <QPainter>
@@ -154,9 +156,34 @@ public:
         return true;
     }
 
+    bool prepareRow(const QVector<V2PreparedRowFrame>& frames,
+        PresenterDiagnostics*, QString*) override
+    {
+        cachedRowSize = frames.size();
+        for (const V2PreparedRowFrame& preparedFrame : frames) {
+            ++rowUploadCalls;
+            events.push_back(QStringLiteral("prepare_row:%1")
+                .arg(static_cast<unsigned char>(preparedFrame.packedBgra.at(0))));
+        }
+        return true;
+    }
+
+    bool presentPreparedRowFrame(int cacheIndex, PresenterDiagnostics*, QString*) override
+    {
+        ++cachedPresentCalls;
+        events.push_back(QStringLiteral("present_cached:%1").arg(cacheIndex));
+        return cacheIndex >= 0 && cacheIndex < cachedRowSize;
+    }
+
+    void clearPreparedRow() override
+    {
+        cachedRowSize = 0;
+    }
+
     void shutdown() override
     {
         ++shutdownCalls;
+        shutdownOnGuiThread = QThread::currentThread() == qApp->thread();
         events.push_back(QStringLiteral("shutdown"));
         preparedMonitor = 0;
         allocatedResources = 0;
@@ -171,7 +198,11 @@ public:
     mutable int matchCalls = 0;
     int prepareCalls = 0;
     int uploadCalls = 0;
+    int rowUploadCalls = 0;
+    int cachedPresentCalls = 0;
+    int cachedRowSize = 0;
     int shutdownCalls = 0;
+    bool shutdownOnGuiThread = false;
     quintptr preparedMonitor = 0;
     QByteArray uploaded;
     int uploadedWidth = 0;
@@ -214,6 +245,60 @@ PrintFrame validBgr(unsigned char firstBlue = 1)
     bytes[6] = 99;
     bytes[7] = 98;
     return frame(2, 1, 8, PrintPixelFormat::Bgr24, bytes);
+}
+
+QString repositorySourcePath(const QString& relativePath)
+{
+    QDir candidate = QDir::current();
+    for (int depth = 0; depth < 8; ++depth) {
+        const QString path = candidate.filePath(relativePath);
+        if (QFile::exists(path)) return path;
+        if (!candidate.cdUp()) break;
+    }
+    return {};
+}
+
+QString nativePresenterSourcePath()
+{
+    return repositorySourcePath(QStringLiteral("printing/V2D3DFramePresenter.cpp"));
+}
+
+class LegacyOnlyPresenter final : public IPrintFramePresenter
+{
+public:
+    PrintPresenterReadiness printReadiness(QString*) const override { return {}; }
+    bool prepare(const PrintFrame&, const QSize&, QString*) override
+    {
+        ++prepareCalls;
+        return true;
+    }
+    bool present(const PrintFrame&, const QSize&, QString*) override { return true; }
+    bool waitForDisplayFrame(QString*) override { return true; }
+    void shutdown() override {}
+
+    int prepareCalls = 0;
+};
+
+void testDefaultPreparedRowContractFailsClosed()
+{
+    LegacyOnlyPresenter presenter;
+    QString error;
+    const QVector<PrintFrame> frames = {validBgr(1), validBgr(2)};
+    const QVector<QSize> sizes(frames.size(), QSize(2, 1));
+
+    expect(!presenter.prepareRow(frames, sizes, &error),
+        "a presenter without explicit row support must reject row preparation");
+    expect(presenter.prepareCalls == 0,
+        "default row preparation must not prepare only the first frame");
+    expect(error.contains(QStringLiteral("unsupported"), Qt::CaseInsensitive),
+        "default row preparation must explain that prepared rows are unsupported");
+
+    error.clear();
+    expect(!presenter.presentPreparedRowFrame(0, &error),
+        "a presenter without explicit row support must reject cached presentation");
+    expect(error.contains(QStringLiteral("unsupported"), Qt::CaseInsensitive),
+        "default cached presentation must explain that prepared rows are unsupported");
+    presenter.clearPreparedRow();
 }
 
 void testDisplaySelection()
@@ -323,6 +408,178 @@ void testInvalidFramesFailBeforeUpload()
     expect(f.backend->uploadCalls == uploads, "invalid target size must not upload");
 }
 
+void testPreparedRowUploadsBeforeCachedPresentation()
+{
+    Fixture f;
+    QString error;
+    expect(f.presenter.prepare(validBgr(), QSize(2, 1), &error), "fixture prepare must succeed");
+    f.backend->events.clear();
+
+    const QVector<PrintFrame> row = {validBgr(10), validBgr(11), validBgr(12)};
+    const QVector<QSize> sizes(row.size(), QSize(2, 1));
+    expect(f.presenter.prepareRow(row, sizes, &error), "row preparation must succeed");
+    expect(f.presenter.presentPreparedRowFrame(1, &error), "cached row frame must present");
+    expect(f.presenter.presentPreparedRowFrame(1, &error), "cached row frame may be held");
+    expect(f.backend->rowUploadCalls == 3 && f.backend->cachedPresentCalls == 2,
+        "all uploads must finish before cached VBlank presentation");
+    expect(f.backend->events == QStringList({
+               QStringLiteral("prepare_row:10"),
+               QStringLiteral("prepare_row:11"),
+               QStringLiteral("prepare_row:12"),
+               QStringLiteral("present_cached:1"),
+               QStringLiteral("present_cached:1")
+           }),
+        "cached presentation must reuse the selected prepared row entry");
+    expect(!f.presenter.presentPreparedRowFrame(3, &error),
+        "out-of-range cached frame must fail closed");
+}
+
+void testFrameHotPathDoesNotRevalidateOutput()
+{
+    Fixture cached;
+    QString error;
+    expect(cached.presenter.prepare(validBgr(), QSize(2, 1), &error),
+        "fixture prepare must succeed");
+    const QVector<PrintFrame> row = {validBgr(10), validBgr(11)};
+    const QVector<QSize> sizes(row.size(), QSize(2, 1));
+    expect(cached.presenter.prepareRow(row, sizes, &error),
+        "row preparation must succeed");
+    const int matchesBeforeFrames = cached.backend->matchCalls;
+    expect(cached.presenter.waitForDisplayFrame(&error), "VBlank wait must succeed");
+    expect(cached.presenter.presentPreparedRowFrame(1, &error),
+        "cached Present must succeed");
+    expect(cached.backend->matchCalls == matchesBeforeFrames,
+        "V2's cached WaitForVBlank/Present path must not revalidate the output");
+
+    Fixture direct;
+    expect(direct.presenter.prepare(validBgr(), QSize(2, 1), &error),
+        "direct-present fixture prepare must succeed");
+    const int matchesBeforePresent = direct.backend->matchCalls;
+    expect(direct.presenter.present(validBgr(12), QSize(2, 1), &error),
+        "direct Present must succeed");
+    expect(direct.backend->matchCalls == matchesBeforePresent,
+        "V2's direct Present path must not revalidate the output");
+}
+
+void testNativeRendererReturnsImmediatelyAfterV2Present()
+{
+    const QString sourcePath = nativePresenterSourcePath();
+    expect(!sourcePath.isEmpty(), "native presenter source must be available for the V2 D3D contract");
+    if (sourcePath.isEmpty()) return;
+
+    QFile sourceFile(sourcePath);
+    expect(sourceFile.open(QIODevice::ReadOnly | QIODevice::Text),
+        "native presenter source must be readable for the V2 D3D contract");
+    if (!sourceFile.isOpen()) return;
+    const QString source = QString::fromUtf8(sourceFile.readAll());
+
+    expect(source.contains(QStringLiteral(
+               "CreateSwapChainForHwnd(device_.Get(), hwnd_, &desc, nullptr, nullptr, &swapChain1)")),
+        "V2 swap-chain creation must not restrict the swap chain to a DXGI output");
+
+    const int renderBegin = source.indexOf(QStringLiteral("bool renderShaderResource("));
+    const int renderEnd = source.indexOf(QStringLiteral("\n    bool failPrepare("), renderBegin);
+    expect(renderBegin >= 0 && renderEnd > renderBegin,
+        "native renderShaderResource boundary must be identifiable");
+    if (renderBegin < 0 || renderEnd <= renderBegin) return;
+    const QString renderBody = source.mid(renderBegin, renderEnd - renderBegin);
+    expect(!renderBody.contains(QStringLiteral("collectTelemetry")),
+        "V2 Present must return after unbinding the shader resource, without post-Present telemetry");
+}
+
+void testV2MediaStatisticsAreSampledOnlyAfterPresentSnapshot()
+{
+    const QString sourcePath = repositorySourcePath(QStringLiteral("printing/PrintJobRunner.cpp"));
+    expect(!sourcePath.isEmpty(), "print job source must be available for the V2 media-statistics contract");
+    if (sourcePath.isEmpty()) return;
+
+    QFile sourceFile(sourcePath);
+    expect(sourceFile.open(QIODevice::ReadOnly | QIODevice::Text),
+        "print job source must be readable for the V2 media-statistics contract");
+    if (!sourceFile.isOpen()) return;
+    const QString source = QString::fromUtf8(sourceFile.readAll());
+    const int afterPresentSnapshot = source.indexOf(
+        QStringLiteral("const PrintRowVBlankCounterSnapshot counterAfterPresent"));
+    const int mediaStatistics = source.indexOf(
+        QStringLiteral("presenter_.sampleFrameStatisticsMedia();"), afterPresentSnapshot);
+    const int presentLog = source.indexOf(
+        QStringLiteral("media_present_refresh_count=%"), mediaStatistics);
+    expect(afterPresentSnapshot >= 0 && mediaStatistics > afterPresentSnapshot
+            && presentLog > mediaStatistics,
+        "V2 media statistics must be sampled after frame_after_present and before its log record");
+}
+
+void testSchedulingThreadCachedPathNeverInvokesDispatcher()
+{
+    Fixture f;
+    QString error;
+    expect(f.presenter.prepare(validBgr(), QSize(2, 1), &error),
+        "fixture prepare must succeed");
+    const int startupDispatcherCalls = f.dispatcher->calls;
+    const QVector<PrintFrame> row = {validBgr(10), validBgr(11)};
+    const QVector<QSize> sizes(row.size(), QSize(2, 1));
+
+    bool prepared = false;
+    bool waited = false;
+    bool presented = false;
+    std::thread schedulingThread([&] {
+        QString workerError;
+        prepared = f.presenter.prepareRow(row, sizes, &workerError);
+        waited = prepared && f.presenter.waitForDisplayFrame(&workerError);
+        presented = waited && f.presenter.presentPreparedRowFrame(1, &workerError);
+    });
+    schedulingThread.join();
+
+    expect(prepared && waited && presented,
+        "the scheduling thread must prepare, VBlank-wait, and present its cached row");
+    expect(f.dispatcher->calls == startupDispatcherCalls,
+        "cached row preparation/VBlank/Present must not invoke the Qt dispatcher");
+}
+
+void testClearInvalidatesPreparedRow()
+{
+    Fixture f;
+    QString error;
+    expect(f.presenter.prepare(validBgr(), QSize(2, 1), &error),
+        "fixture prepare must succeed");
+    const QVector<PrintFrame> row = {validBgr(10), validBgr(11), validBgr(12)};
+    const QVector<QSize> sizes(row.size(), QSize(2, 1));
+    expect(f.presenter.prepareRow(row, sizes, &error),
+        "row preparation must succeed before explicit cache clear");
+    f.presenter.clearPreparedRow();
+
+    expect(f.backend->cachedRowSize == 0,
+        "clear must release the physical prepared-row cache");
+    expect(!f.presenter.presentPreparedRowFrame(0, &error),
+        "an invalidated row preparation must leave the logical cache empty");
+    expect(f.backend->cachedPresentCalls == 0,
+        "cached presentation must fail before reaching the backend after invalidation");
+}
+
+void testRejectedDestructorCleanupReturnsToGuiThread()
+{
+    auto backend = std::make_shared<RecordingBackend>();
+    auto waiter = std::make_shared<RecordingVBlankWaiter>();
+    auto dispatcher = std::make_shared<RejectingDispatcher>();
+    auto presenter = std::make_unique<V2D3DFramePresenter>(
+        QVector<DisplayMonitor>{primaryDisplay(), printDisplay()}, backend, waiter, dispatcher);
+    QString error;
+    expect(presenter->prepare(validBgr(), QSize(2, 1), &error),
+        "fixture prepare must succeed");
+    dispatcher->reject.store(true);
+
+    std::thread worker([ownedPresenter = std::move(presenter)]() mutable {
+        ownedPresenter.reset();
+    });
+    worker.join();
+    qApp->processEvents(QEventLoop::AllEvents, 20);
+
+    expect(backend->shutdownCalls == 1,
+        "rejected destructor cleanup must be rescheduled to the GUI thread");
+    expect(backend->shutdownOnGuiThread,
+        "destructor cleanup must not physically release GUI-affine resources on a worker");
+}
+
 void testVBlankFailureIsExactAndHasNoFallback()
 {
     Fixture f;
@@ -423,15 +680,14 @@ void testDispatcherRejectionFailsClosedAndInvalidatesAnchor()
     V2RowVBlankAnchor vblankAnchor;
     expect(vblankCase->presenter.acquireRowAnchor(&vblankAnchor, &error), "anchor acquisition must succeed");
     vblankCase->dispatcher->reject.store(true);
-    expect(!vblankCase->presenter.waitForDisplayFrame(&error), "a rejected VBlank dispatch must fail");
-    expect(error.contains(QStringLiteral("dispatcher"), Qt::CaseInsensitive),
-        "rejected VBlank dispatch must report an explicit dispatcher failure");
-    expect(vblankCase->presenter.diagnostics().dispatcherFailure.contains(
-               QStringLiteral("VBlank"), Qt::CaseInsensitive),
-        "rejected VBlank dispatch must remain in structured diagnostics");
-    expect(!vblankCase->presenter.isReady(), "rejected VBlank dispatch must clear readiness");
-    expect(!vblankCase->presenter.waitForRowSlot(0, &vblankAnchor, &error),
-        "rejected VBlank dispatch must invalidate an acquired anchor generation");
+    expect(vblankCase->presenter.waitForDisplayFrame(&error),
+        "physical VBlank must bypass a rejected GUI dispatcher");
+    expect(vblankCase->presenter.diagnostics().dispatcherFailure.isEmpty(),
+        "dispatcher-independent VBlank must not record a dispatcher failure");
+    expect(vblankCase->presenter.isReady(),
+        "dispatcher-independent VBlank must preserve readiness");
+    expect(vblankCase->presenter.waitForRowSlot(0, &vblankAnchor, &error),
+        "dispatcher-independent VBlank must preserve the acquired anchor");
 
     auto shutdownCase = makePresenter();
     expect(shutdownCase->presenter.prepare(validBgr(), QSize(2, 1), &error), "fixture prepare must succeed");
@@ -582,6 +838,7 @@ void testSerializedCommandsCannotOvertake()
 
 int runContractTests()
 {
+    testDefaultPreparedRowContractFailsClosed();
     testDisplaySelection();
     testSelectedRefreshRateIsExactAndFailClosed();
     testInactiveShutdownDoesNotDispatchToGui();
@@ -589,6 +846,13 @@ int runContractTests()
     testPrimaryOnlyFailsBeforeBackendConstructionWork();
     testBgrAndBgraUploadBytesAndStride();
     testInvalidFramesFailBeforeUpload();
+    testPreparedRowUploadsBeforeCachedPresentation();
+    testFrameHotPathDoesNotRevalidateOutput();
+    testNativeRendererReturnsImmediatelyAfterV2Present();
+    testV2MediaStatisticsAreSampledOnlyAfterPresentSnapshot();
+    testSchedulingThreadCachedPathNeverInvokesDispatcher();
+    testClearInvalidatesPreparedRow();
+    testRejectedDestructorCleanupReturnsToGuiThread();
     testVBlankFailureIsExactAndHasNoFallback();
     testRowAnchorConsumesExactlyOnePhysicalWait();
     testFaultInvalidatesAcquiredRowAnchor();

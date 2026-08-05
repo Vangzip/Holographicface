@@ -14,7 +14,9 @@ SOURCES += \
     ../PrintHardwareProfile.cpp \
     ../PrintImageSource.cpp \
     ../PrintHardwarePreflight.cpp \
+    ../PrintFlowLogger.cpp \
     ../PrintJobRunner.cpp \
+    ../V2RowDisplaySequence.cpp \
     ../V2PrintTiming.cpp
 
 HEADERS += \
@@ -27,5 +29,7 @@ HEADERS += \
     ../PrintHardwarePreflight.h \
     ../PrintHardwareProfile.h \
     ../PrintImageSource.h \
+    ../PrintFlowLogger.h \
     ../PrintJobRunner.h \
+    ../V2RowDisplaySequence.h \
     ../V2PrintTiming.h

@@ -20,9 +20,11 @@ SOURCES += \
     printing/Sv660nExposureController.cpp \
     printing/V2D3DFramePresenter.cpp \
     printing/V2PrintTiming.cpp \
+    printing/V2RowDisplaySequence.cpp \
     printing/PrintConfig.cpp \
     printing/PrintPositionSampler.cpp \
     printing/PrintImageSource.cpp \
+    printing/PrintFlowLogger.cpp \
     printing/PrintJobRunner.cpp \
     printing/PrintController.cpp \
     printing/SecondScreenSelection.cpp \
@@ -69,12 +71,14 @@ HEADERS += \
     printing/IMotionController.h \
     printing/IVBlankWaiter.h \
     printing/V2PrintTiming.h \
+    printing/V2RowDisplaySequence.h \
     printing/V2D3DFramePresenter.h \
     printing/PrintConfig.h \
     printing/PrintPositionSampler.h \
     printing/PrintHardwarePreflight.h \
     printing/PrintFrame.h \
     printing/PrintImageSource.h \
+    printing/PrintFlowLogger.h \
     printing/PrintJobRunner.h \
     printing/PrintController.h \
     printing/SecondScreenSelection.h \

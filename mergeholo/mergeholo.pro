@@ -43,6 +43,7 @@ SOURCES += \
     vendor/multiview/modelMoveHandler.cpp \
     vendor/point_cloud/src/ConverPointCloud.cpp \
     vendor/point_cloud/src/depth_io.cpp \
+    vendor/point_cloud/src/filter_by_z.cpp \
     vendor/point_cloud/src/modifiedPclFunctions.cpp \
     vendor/point_cloud/src/OdmTexturing.cpp \
     vendor/point_cloud/src/poissonmesh.cpp \
@@ -101,6 +102,7 @@ HEADERS += \
     vendor/multiview/modelMoveHandler.h \
     vendor/point_cloud/include/ConverPointCloud.h \
     vendor/point_cloud/include/depth_io.h \
+    vendor/point_cloud/include/filter_by_z.h \
     vendor/point_cloud/include/modifiedPclFunctions.hpp \
     vendor/point_cloud/include/OdmTexturing.hpp \
     vendor/point_cloud/include/poissonmesh.hpp \

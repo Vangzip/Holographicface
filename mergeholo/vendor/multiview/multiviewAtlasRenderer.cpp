@@ -1,5 +1,5 @@
 #include "multiviewAtlasRenderer.h"
-#include "multiviewOrbitMatrices.h"
+#include "multiviewCameraOrbit.h"
 
 #include <osg/Scissor>
 
@@ -11,6 +11,20 @@ namespace {
 double secondsBetween(std::chrono::high_resolution_clock::time_point start,
                       std::chrono::high_resolution_clock::time_point end) {
     return std::chrono::duration<double>(end - start).count();
+}
+
+osg::Matrixd orbitViewMatrix(const osg::Vec3d& center,
+                             const osg::Vec3d& eyeDirection,
+                             const osg::Vec3d& up,
+                             const osg::Vec3d& right,
+                             double distance,
+                             const MultiviewOrbitAngles& angles)
+{
+    const double yaw = osg::DegreesToRadians(angles.yawDegrees);
+    const double pitch = osg::DegreesToRadians(angles.pitchDegrees);
+    const osg::Vec3d horizontal = eyeDirection * std::cos(yaw) + right * std::sin(yaw);
+    const osg::Vec3d offset = horizontal * std::cos(pitch) + up * std::sin(pitch);
+    return osg::Matrixd::lookAt(center + offset * distance, center, up);
 }
 
 class AtlasCaptureDrawCallback : public osg::Camera::DrawCallback {
@@ -209,8 +223,32 @@ void MultiviewAtlasRenderer::buildFrameViewMatrices() {
     osg::Vec3d viewCenter;
     osg::Vec3d up;
     viewer_->getCamera()->getViewMatrixAsLookAt(eye, viewCenter, up);
-    frameViewMatrices_ = buildMultiviewOrbitMatrices(
-        eye, viewCenter, up, renderPlan_);
+    const osg::Vec3d orbitCenter = modelTransform_->getBound().center();
+    osg::Vec3d eyeDirection = eye - orbitCenter;
+    const double distance = eyeDirection.length();
+    if (distance <= 0.000001 || up.normalize() <= 0.000001) {
+        throw std::runtime_error("invalid multiview camera basis");
+    }
+    eyeDirection /= distance;
+    osg::Vec3d right = up ^ eyeDirection;
+    if (right.normalize() <= 0.000001) {
+        throw std::runtime_error("multiview camera up is parallel to its eye direction");
+    }
+    up = eyeDirection ^ right;
+    up.normalize();
+
+    for (int row = 0; row < renderPlan_.samplesPerAxis(); ++row) {
+        for (int column = 0; column < renderPlan_.samplesPerAxis(); ++column) {
+            const MultiviewOrbitAngles angles = multiviewOrbitAngles(
+                renderPlan_.angle(),
+                renderPlan_.samplesPerAxis(),
+                renderPlan_.stepDegrees(),
+                row,
+                column);
+            frameViewMatrices_.push_back(
+                orbitViewMatrix(orbitCenter, eyeDirection, up, right, distance, angles));
+        }
+    }
 }
 
 osg::Camera* MultiviewAtlasRenderer::createTileCamera(

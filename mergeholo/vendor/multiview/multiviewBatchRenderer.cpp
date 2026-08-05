@@ -1,5 +1,5 @@
 #include "multiviewBatchRenderer.h"
-#include "multiviewOrbitMatrices.h"
+#include "multiviewCameraOrbit.h"
 
 #include <chrono>
 #include <cmath>
@@ -9,6 +9,20 @@ namespace {
 double secondsBetween(std::chrono::high_resolution_clock::time_point start,
                       std::chrono::high_resolution_clock::time_point end) {
     return std::chrono::duration<double>(end - start).count();
+}
+
+osg::Matrixd orbitViewMatrix(const osg::Vec3d& center,
+                             const osg::Vec3d& eyeDirection,
+                             const osg::Vec3d& up,
+                             const osg::Vec3d& right,
+                             double distance,
+                             const MultiviewOrbitAngles& angles)
+{
+    const double yaw = osg::DegreesToRadians(angles.yawDegrees);
+    const double pitch = osg::DegreesToRadians(angles.pitchDegrees);
+    const osg::Vec3d horizontal = eyeDirection * std::cos(yaw) + right * std::sin(yaw);
+    const osg::Vec3d offset = horizontal * std::cos(pitch) + up * std::sin(pitch);
+    return osg::Matrixd::lookAt(center + offset * distance, center, up);
 }
 
 class MemoryCaptureDrawCallback : public osg::Camera::DrawCallback {
@@ -120,8 +134,19 @@ MultiviewBatchStats MultiviewBatchRenderer::renderAll() {
     osg::Vec3d viewCenter;
     osg::Vec3d up;
     viewer_->getCamera()->getViewMatrixAsLookAt(eye, viewCenter, up);
-    const std::vector<osg::Matrixd> frameViewMatrices =
-        buildMultiviewOrbitMatrices(eye, viewCenter, up, plan_);
+    const osg::Vec3d orbitCenter = modelTransform_->getBound().center();
+    osg::Vec3d eyeDirection = eye - orbitCenter;
+    const double distance = eyeDirection.length();
+    if (distance <= 0.000001 || up.normalize() <= 0.000001) {
+        throw std::runtime_error("invalid multiview camera basis");
+    }
+    eyeDirection /= distance;
+    osg::Vec3d right = up ^ eyeDirection;
+    if (right.normalize() <= 0.000001) {
+        throw std::runtime_error("multiview camera up is parallel to its eye direction");
+    }
+    up = eyeDirection ^ right;
+    up.normalize();
 
     osg::ref_ptr<MemoryCaptureDrawCallback> captureCallback =
         new MemoryCaptureDrawCallback(plan_.resolution());
@@ -139,8 +164,14 @@ MultiviewBatchStats MultiviewBatchRenderer::renderAll() {
     try {
         for (int row = 0; row < plan_.samplesPerAxis(); ++row) {
             for (int column = 0; column < plan_.samplesPerAxis(); ++column) {
-                viewer_->getCamera()->setViewMatrix(frameViewMatrices.at(
-                    static_cast<std::size_t>(frameIndex)));
+                const MultiviewOrbitAngles angles = multiviewOrbitAngles(
+                    plan_.angle(),
+                    plan_.samplesPerAxis(),
+                    plan_.stepDegrees(),
+                    row,
+                    column);
+                viewer_->getCamera()->setViewMatrix(
+                    orbitViewMatrix(orbitCenter, eyeDirection, up, right, distance, angles));
                 captureCallback->setTarget(sink_->frameData(frameIndex));
 
                 const auto renderStart = std::chrono::high_resolution_clock::now();

@@ -1,5 +1,4 @@
 ﻿#include "depth_io.h"
-#include "filter_by_z.h"
 #include <cmath>
 
 
@@ -338,14 +337,13 @@ pcl::PointCloud<pcl::PointXYZRGB>::Ptr depthImage::depthToPointCloudColor(
             << depth.type() << ", channels=" << depth.channels() << endl;
         return PointCloud::Ptr();
     }
-    const cv::Mat filteredDepth = FilterByZ(depth, 0.10f, 0.76f);
 
     PointCloud::Ptr cloud(new PointCloud);
     for (int m = 0; m < depth.rows; m++)
     {
         for (int n = 0; n < depth.cols; n++)
         {
-            cv::Vec3f xyz = filteredDepth.at<cv::Vec3f>(m, n);
+            cv::Vec3f xyz = depth.at<cv::Vec3f>(m, n);
 
             float X = xyz[0];
             float Y = xyz[1];
@@ -515,13 +513,12 @@ bool depthImage::depthToPlyColor(const std::string &depthImageSrc, const std::st
             << depth.type() << ", channels=" << depth.channels() << endl;
         return false;
     }
-    const cv::Mat filteredDepth = FilterByZ(depth, 0.10f, 0.76f);
 
     for (int m = 0; m < depth.rows; m++)
     {
         for (int n = 0; n < depth.cols; n++)
         {
-            cv::Vec3f xyz = filteredDepth.at<cv::Vec3f>(m, n);
+            cv::Vec3f xyz = depth.at<cv::Vec3f>(m, n);
 
             float X = xyz[0];
             float Y = xyz[1];

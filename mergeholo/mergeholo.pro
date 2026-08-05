@@ -88,6 +88,7 @@ HEADERS += \
     vendor/multiview/memoryAtlasPageSink.h \
     vendor/multiview/memoryFrameSink.h \
     vendor/multiview/multiviewCameraOrbit.h \
+    vendor/multiview/multiviewOrbitMatrices.h \
     vendor/multiview/multiviewAtlasPlan.h \
     vendor/multiview/multiviewAtlasRenderer.h \
     vendor/multiview/multiviewBatchRenderer.h \

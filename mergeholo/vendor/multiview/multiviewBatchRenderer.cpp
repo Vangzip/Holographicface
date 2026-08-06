@@ -134,7 +134,7 @@ MultiviewBatchStats MultiviewBatchRenderer::renderAll() {
     osg::Vec3d viewCenter;
     osg::Vec3d up;
     viewer_->getCamera()->getViewMatrixAsLookAt(eye, viewCenter, up);
-    const osg::Vec3d orbitCenter = viewCenter;
+    const osg::Vec3d orbitCenter = modelTransform_->getBound().center();
     osg::Vec3d eyeDirection = eye - orbitCenter;
     const double distance = eyeDirection.length();
     if (distance <= 0.000001 || up.normalize() <= 0.000001) {

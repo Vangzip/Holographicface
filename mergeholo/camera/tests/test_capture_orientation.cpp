@@ -281,14 +281,16 @@ void testCaptureConsumersUseSharedOrientation()
     expect(atlasRenderer.contains("rotateX(matrix, -renderPlan_.stepDegrees())")
             == false
             && atlasRenderer.contains("multiviewOrbitAngles")
-            && atlasRenderer.contains("modelTransform_->getBound().center()")
+            && atlasRenderer.contains("const osg::Vec3d orbitCenter = viewCenter;")
+            && atlasRenderer.contains("modelTransform_->getBound().center()") == false
             && atlasRenderer.contains("eye - orbitCenter")
             && atlasRenderer.contains("originalPostDrawCallback")
             && atlasRenderer.contains("restorePackState"),
         "atlas multiview must use absolute camera orbit poses");
     expect(batchRenderer.contains("advanceRow()") == false
             && batchRenderer.contains("multiviewOrbitAngles")
-            && batchRenderer.contains("modelTransform_->getBound().center()")
+            && batchRenderer.contains("const osg::Vec3d orbitCenter = viewCenter;")
+            && batchRenderer.contains("modelTransform_->getBound().center()") == false
             && batchRenderer.contains("eye - orbitCenter")
             && batchRenderer.contains("originalPostDrawCallback")
             && batchRenderer.contains("restoreViewerState"),

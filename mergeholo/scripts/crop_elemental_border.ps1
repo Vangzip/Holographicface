@@ -62,5 +62,6 @@ for ($row = $firstRow; $row -le $lastRow; ++$row) {
     }
 }
 
-Write-Output ("Cropped {0}x{1} to {2}x{3}: removed {4} rows from top/bottom and {5} columns from left/right." -f 
-    $maxRow, $maxColumn, ($lastRow - $firstRow + 1), ($lastColumn - $firstColumn + 1), $verticalTrim, $horizontalTrim)
+$message = "Cropped {0}x{1} to {2}x{3}: removed {4} rows from top/bottom and {5} columns from left/right." -f `
+    $maxRow, $maxColumn, ($lastRow - $firstRow + 1), ($lastColumn - $firstColumn + 1), $verticalTrim, $horizontalTrim
+Write-Output $message
